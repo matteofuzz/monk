@@ -11,6 +11,28 @@ module Monk
         @routes ||= []
       end
 
+      def freeze!
+        routes.each do |route|
+          begin
+            Ractor.make_shareable(route[:block])
+          rescue ArgumentError => e
+            raise UnshareableRouteError, "#{route[:verb]} #{route[:path]} is not Ractor-shareable: #{e.message}"
+          end
+        end
+
+        error_handlers.each do |matcher, block|
+          begin
+            Ractor.make_shareable(block)
+          rescue ArgumentError => e
+            raise UnshareableRouteError, "error handler for #{matcher.inspect} is not Ractor-shareable: #{e.message}"
+          end
+        end
+
+        Ractor.make_shareable(routes)
+        Ractor.make_shareable(error_handlers)
+        self
+      end
+
       def error(matcher, &block)
         error_handlers << [matcher, block]
       end
@@ -20,6 +42,8 @@ module Monk
       end
 
       def call(env)
+        freeze! unless Ractor.shareable?(routes)
+
         start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         status, headers, body = dispatch(env)
         log_request(env, status, start)
@@ -53,6 +77,9 @@ module Monk
 
         duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000).round(1)
         $stdout.puts "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
+        # Each worker Ractor buffers $stdout independently; without an explicit
+        # flush, lines only surface when the process exits, not in real time.
+        $stdout.flush
       end
 
       def not_found_response
@@ -100,6 +127,15 @@ module Monk
           end
         end
       end
+    end
+
+    def call(env)
+      self.class.call(env)
+    end
+
+    def freeze!
+      self.class.freeze!
+      self
     end
   end
 end

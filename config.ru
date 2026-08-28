@@ -12,4 +12,4 @@ class DemoApp < Monk::Base
   error(404) { json(error: "not found") }
 end
 
-run DemoApp
+run Monk.boot(DemoApp)
