@@ -16,7 +16,9 @@ module Monk
         return [404, {}, [""]] unless route
 
         context = Context.new(params)
-        [200, {}, [context.instance_exec(&route[:block])]]
+        catch(:monk_halt) do
+          [200, {}, [context.instance_exec(context, &route[:block])]]
+        end
       end
 
       private
