@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# Note: until Phase 4 (Boot/fail-fast) lands, ractor mode 500s per request
+# (DemoApp isn't Ractor.shareable? yet). Pass --mode threaded to get working
+# responses in the meantime, or --check to see kino's own shareability report.
+exec bundle exec kino -p "${PORT:-9293}" "$@" config.ru
