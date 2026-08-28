@@ -11,17 +11,43 @@ module Monk
         @routes ||= []
       end
 
+      def error(matcher, &block)
+        error_handlers << [matcher, block]
+      end
+
+      def error_handlers
+        @error_handlers ||= []
+      end
+
       def call(env)
         route, params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
-        return [404, {}, [""]] unless route
+        return not_found_response unless route
 
         context = Context.new(params)
         catch(:monk_halt) do
-          [200, {}, [context.instance_exec(context, &route[:block])]]
+          begin
+            [200, {}, [context.instance_exec(context, &route[:block])]]
+          rescue StandardError => e
+            handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
+            if handler
+              context.status = 500
+              [500, {}, [context.instance_exec(context, &handler.last)]]
+            else
+              [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
+            end
+          end
         end
       end
 
       private
+
+      def not_found_response
+        handler = error_handlers.find { |matcher, _| matcher == 404 }
+        return [404, {}, [""]] unless handler
+
+        context = Context.new({}, status: 404)
+        catch(:monk_halt) { [404, {}, [context.instance_exec(context, &handler.last)]] }
+      end
 
       def find_route(verb, path)
         path_segments = path.split("/")

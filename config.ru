@@ -6,6 +6,10 @@ class DemoApp < Monk::Base
   get("/files/*") { params[:splat] }
   get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }
   get("/protected") { halt 401, "nope" }
+  get("/boom") { raise "unhandled" }
+  get("/known-boom") { raise ArgumentError, "bad input" }
+  error(ArgumentError) { json(error: "bad input, handled") }
+  error(404) { json(error: "not found") }
 end
 
 run DemoApp
