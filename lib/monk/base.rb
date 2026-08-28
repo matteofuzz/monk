@@ -11,6 +11,28 @@ module Monk
         @routes ||= []
       end
 
+      def freeze!
+        routes.each do |route|
+          begin
+            Ractor.make_shareable(route[:block])
+          rescue ArgumentError => e
+            raise UnshareableRouteError, "#{route[:verb]} #{route[:path]} is not Ractor-shareable: #{e.message}"
+          end
+        end
+
+        error_handlers.each do |matcher, block|
+          begin
+            Ractor.make_shareable(block)
+          rescue ArgumentError => e
+            raise UnshareableRouteError, "error handler for #{matcher.inspect} is not Ractor-shareable: #{e.message}"
+          end
+        end
+
+        Ractor.make_shareable(routes)
+        Ractor.make_shareable(error_handlers)
+        self
+      end
+
       def error(matcher, &block)
         error_handlers << [matcher, block]
       end
@@ -20,6 +42,8 @@ module Monk
       end
 
       def call(env)
+        freeze! unless Ractor.shareable?(routes)
+
         route, params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
         return not_found_response unless route
 
@@ -86,6 +110,15 @@ module Monk
           end
         end
       end
+    end
+
+    def call(env)
+      self.class.call(env)
+    end
+
+    def freeze!
+      self.class.freeze!
+      self
     end
   end
 end

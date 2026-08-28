@@ -1,5 +1,10 @@
 require_relative "monk/context"
+require_relative "monk/unshareable_route_error"
 require_relative "monk/base"
 
 module Monk
+  def self.boot(app)
+    app.freeze!
+    app
+  end
 end
