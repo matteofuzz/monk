@@ -8,6 +8,5 @@ group :test do
 end
 
 group :development do
-  gem "rackup"
-  gem "puma"
+  gem "kino"
 end
