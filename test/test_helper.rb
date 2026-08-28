@@ -1,4 +1,6 @@
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+ENV["MONK_ENV"] ||= "production"
+
 require "minitest/autorun"
 require "stringio"
 require "monk"

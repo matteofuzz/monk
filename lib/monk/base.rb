@@ -44,6 +44,15 @@ module Monk
       def call(env)
         freeze! unless Ractor.shareable?(routes)
 
+        start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        status, headers, body = dispatch(env)
+        log_request(env, status, start)
+        [status, headers, body]
+      end
+
+      private
+
+      def dispatch(env)
         route, params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
         return not_found_response unless route
 
@@ -63,7 +72,12 @@ module Monk
         end
       end
 
-      private
+      def log_request(env, status, start)
+        return if ENV["MONK_ENV"] == "production"
+
+        duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000).round(1)
+        $stdout.puts "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
+      end
 
       def not_found_response
         handler = error_handlers.find { |matcher, _| matcher == 404 }
