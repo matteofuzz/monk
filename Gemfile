@@ -6,3 +6,8 @@ group :test do
   gem "minitest"
   gem "rake"
 end
+
+group :development do
+  gem "rackup"
+  gem "puma"
+end
