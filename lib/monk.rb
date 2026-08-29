@@ -1,3 +1,4 @@
+require_relative "monk/version"
 require_relative "monk/context"
 require_relative "monk/unshareable_route_error"
 require_relative "monk/unshareable_block_error"
