@@ -1,4 +1,4 @@
-require_relative "lib/monk"
+require "monk"
 
 class DemoApp < Monk::Base
   hits = Monk::StateRactor.new(0)
