@@ -88,6 +88,15 @@ bin/server --check            # reports Ractor-shareability without serving
 PORT=9999 bin/server          # change the port (default 9293)
 ```
 
+## Running in Docker
+
+```
+docker build -t monk .
+docker run --rm -p 9293:9293 monk
+```
+
+This serves `config.ru` via `bin/server`, bound to `0.0.0.0` so it's reachable from outside the container (kino's own default, `127.0.0.1`, wouldn't be). Change the published port with `-p <host-port>:9293`, e.g. `docker run --rm -p 9999:9293 monk`.
+
 ## Development
 
 ```

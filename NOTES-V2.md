@@ -42,3 +42,5 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 -
 
 ## Ideas
+
+- A lightweight layering convention, echoing Rails' MVC but deliberately simpler: a clean separation between business logic, data rendering, and the persistence layer, without pulling in a full ActiveRecord/ActionView-style stack. Needs its own design pass (naming, how it plugs into `Context`/routes, how it relates to the Postgres-support and templating candidates above) before it becomes a concrete feature.
