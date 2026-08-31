@@ -92,4 +92,14 @@ class BootTest < Minitest::Test
     assert_equal 200, status
     assert_equal "hi", body.join
   end
+
+  # Regression: Monk::VERSION used to be a plain, unfrozen String constant
+  # -- unreadable from a real worker Ractor (Ractor::IsolationError), which
+  # 500'd every request under kino, not just ones touching VERSION
+  # directly. See docs/persistence-ractor-connections.md, "Phase 6 result."
+  def test_version_is_readable_from_a_real_worker_ractor
+    result = Ractor.new { Monk::VERSION }.value
+
+    assert_equal Monk::VERSION, result
+  end
 end
