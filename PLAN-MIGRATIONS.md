@@ -1,7 +1,7 @@
 # Monk schema & migrations — implementation plan
 
-Branch: not yet created (`main_dev/add_migrations`, once work starts).
-Depends on: `Monk::Persistence::Pg` (`main`, done). No companion design doc
+Branch: `main_dev/25-add-a-basic-support-for-schema-and-migrations-management`
+(issue #25). Depends on: `Monk::Persistence::Pg` (`main`, done). No companion design doc
 yet — the decisions below are locked in here directly, since the surface
 is small enough not to need a separate rationale doc the way persistence
 did.
@@ -57,7 +57,7 @@ test against its seam, then the minimum code to pass it.
   of `PLAN-PERSISTENCE.md` Seam H — proves the gem is usable from outside
   the repo, not just against its own test suite.
 
-## Phase 1 — Migration file discovery (Seam I, part 1)
+## Phase 1 — Migration file discovery (Seam I, part 1) — done
 
 1. `Migrator.new(db_name:, dir:)` (default `dir:` "db/migrate") lists
    `<version>_<name>.up.sql` / `.down.sql` pairs found in `dir`.
@@ -69,7 +69,7 @@ test against its seam, then the minimum code to pass it.
 3. Discovered migrations are exposed in ascending version order,
    regardless of the directory listing's own order.
 
-## Phase 2 — Applying migrations (Seam I, part 2)
+## Phase 2 — Applying migrations (Seam I, part 2) — done
 
 4. `Migrator#migrate!` creates `schema_migrations` on first use if it
    doesn't already exist (`CREATE TABLE IF NOT EXISTS`).
@@ -85,7 +85,7 @@ test against its seam, then the minimum code to pass it.
 7. Calling `Migrator#migrate!` again with nothing pending is a no-op:
    returns `[]`, issues no `INSERT`s.
 
-## Phase 3 — Rolling back (Seam I, part 3)
+## Phase 3 — Rolling back (Seam I, part 3) — done
 
 8. `Migrator#rollback!(steps: 1)` runs `.down.sql` for the most recently
    applied migration(s), most-recent-first, removing each from
@@ -96,7 +96,7 @@ test against its seam, then the minimum code to pass it.
 10. `steps:` greater than the number of applied migrations rolls back
     everything applied and stops cleanly (not an error).
 
-## Phase 4 — Status introspection (Seam I, part 4)
+## Phase 4 — Status introspection (Seam I, part 4) — done
 
 11. `Migrator#pending` returns not-yet-applied versions in ascending
     order, with no side effects (dry-run visibility before calling
@@ -104,7 +104,7 @@ test against its seam, then the minimum code to pass it.
 12. `Migrator#applied` returns already-applied versions in the order
     `schema_migrations` recorded them.
 
-## Phase 5 — Consumer-facing entrypoint (Seam J)
+## Phase 5 — Consumer-facing entrypoint (Seam J) — done
 
 13. Add `bin/migrate` to `monk-consumer-test` (`migrate` / `rollback [N]` /
     `status` subcommands over `Monk::Persistence::Pg::Migrator`), reusing
