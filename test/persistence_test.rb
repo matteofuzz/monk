@@ -1,6 +1,8 @@
 require_relative "test_helper"
 
 class PersistenceTest < Minitest::Test
+  include PersistenceTestHelpers
+
   DB_NAME = :persistence_test_db
 
   def setup
@@ -66,31 +68,5 @@ class PersistenceTest < Minitest::Test
 
     value = Monk::Persistence.checkout(DB_NAME, timeout: 0.1) { |conn| conn.exec("SELECT 2 AS two").getvalue(0, 0) }
     assert_equal 2, value
-  end
-
-  private
-
-  def skip_unless_postgres_available
-    skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
-      "(set MONK_TEST_PG_* env vars, or start one -- see docs/persistence-ractor-connections.md)" unless postgres_available?
-  end
-
-  def postgres_available?
-    return @postgres_available if defined?(@postgres_available)
-
-    PG.connect(**pg_test_opts).finish
-    @postgres_available = true
-  rescue PG::Error
-    @postgres_available = false
-  end
-
-  def pg_test_opts
-    {
-      host: ENV.fetch("MONK_TEST_PG_HOST", "127.0.0.1"),
-      port: ENV.fetch("MONK_TEST_PG_PORT", "5432").to_i,
-      user: ENV.fetch("MONK_TEST_PG_USER", "postgres"),
-      password: ENV.fetch("MONK_TEST_PG_PASSWORD", "postgres"),
-      dbname: ENV.fetch("MONK_TEST_PG_DATABASE", "monk_test"),
-    }
   end
 end
