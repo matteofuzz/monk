@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require_relative "../config/persistence"
+require "monk/persistence/pg/migrator"
+
+migrator = Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.expand_path("../db/migrate", __dir__))
+
+case ARGV[0]
+when nil, "migrate"
+  applied = migrator.migrate!
+  puts applied.empty? ? "Nothing to migrate." : "Applied: #{applied.join(", ")}"
+when "rollback"
+  reverted = migrator.rollback!(steps: (ARGV[1] || 1).to_i)
+  puts reverted.empty? ? "Nothing to roll back." : "Reverted: #{reverted.join(", ")}"
+when "status"
+  puts "Applied: #{migrator.applied.join(", ")}"
+  puts "Pending: #{migrator.pending.join(", ")}"
+else
+  warn "Usage: bin/migrate [migrate|rollback [N]|status]"
+  exit 1
+end
