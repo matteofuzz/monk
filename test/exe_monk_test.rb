@@ -44,18 +44,11 @@ class ExeMonkTest < Minitest::Test
     assert_match(/usage/i, stderr)
   end
 
-  def test_no_arguments_prints_usage_and_exits_non_zero
-    _stdout, stderr, status = run_monk
-
-    refute status.success?
-    assert_match(/usage/i, stderr)
-  end
-
   def test_help_variants_print_help_to_stdout_and_exit_successfully
-    %w[help --help -h].each do |flag|
-      stdout, _stderr, status = run_monk(flag)
+    [[], ["help"], ["--help"], ["-h"]].each do |args|
+      stdout, _stderr, status = run_monk(*args)
 
-      assert status.success?, "expected `monk #{flag}` to exit successfully"
+      assert status.success?, "expected `monk #{args.join(" ")}` to exit successfully"
       assert_match(/Usage: monk new APP_NAME/, stdout)
       assert_match(/--postgres/, stdout)
       assert_match(/bin\/migrate/, stdout)

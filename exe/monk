@@ -39,7 +39,7 @@ end
 command, *rest = ARGV
 
 case command
-when "help", "--help", "-h"
+when nil, "help", "--help", "-h"
   puts HELP
 when "new"
   app_name = rest.find { |arg| !arg.start_with?("-") }
