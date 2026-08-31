@@ -128,7 +128,18 @@ query, both succeeded with no Ractor errors. Full detail:
     independent of any registry state) and is kept. Full reasoning:
     `docs/persistence-ractor-connections.md` → "Phase 4 finding."
 
-## Phase 5 — Real Ractor integration against live Postgres (Seam G)
+## Phase 5 — Real Ractor integration against live Postgres (Seam G) — done
+
+**Found a second instance of Phase 4's bug before writing any of the
+planned tests below**: `Monk::Persistence`'s own `@configs` registry is a
+plain, unfrozen `Hash` on a Module (always shareable regardless of its
+ivars, per the Phase 4 finding) — so `Monk::Persistence[]`/`.checkout`,
+and therefore every `Model` method, was completely unusable from any real
+worker Ractor, despite all of Phases 1–4's tests passing (none had ever
+run outside the main Ractor). Fixed with `Monk::Persistence.
+freeze_registry!` (freezes `@configs` itself), called from `Base#freeze!`
+alongside `Model.freeze_all!`. Full detail:
+`docs/persistence-ractor-connections.md` → "Phase 5 finding."
 
 15. Multiple real Ractors calling `Model.find`/`.where` concurrently,
     against the live (Dockerized) Postgres from Phase 0, all succeed with
@@ -137,12 +148,12 @@ query, both succeeded with no Ractor errors. Full detail:
 16. Multiple real Ractors calling `Model.create` with distinct data
     concurrently never lose or corrupt a write — mirrors `PLAN.md` step
     20's race-safety proof, but for connections instead of `StateRactor`.
-17. Two real threads inside the *same* Ractor both calling into a `Model`
-    method concurrently against the `Mutex`-guarded connection — confirm
-    serialized correctness (no corrupted results), and force the timeout
-    path (e.g. an artificially slow query holding the lock) to confirm
-    `Monk::PersistenceTimeoutError` actually triggers under real
-    contention, not just against a mocked failure.
+17. Two real threads inside the *same* (really spawned) Ractor, contending
+    for that Ractor's own connection slot via `Monk::Persistence.checkout`
+    directly — confirms `Monk::PersistenceTimeoutError` actually fires
+    under real contention (not a simulated one in the main Ractor, as
+    Phase 1's own test used), and that the slot is usable again,
+    correctly, once released.
 
 ## Phase 6 — `monk-consumer-test` end-to-end proof (Seam H)
 

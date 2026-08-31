@@ -180,6 +180,40 @@ actually booting. The shareability check doesn't have this problem (it's
 a pure property of the class, independent of any registry's current
 state), so it's kept; the registration check is dropped.
 
+## Phase 5 finding: the same bug, one level up — `Monk::Persistence` itself (2026-08-31)
+
+Phase 4's finding turned out to be incomplete: it fixed `Model` subclasses'
+own `db_name`/`table_name`, but `Monk::Persistence`'s connect-options
+registry (`@configs`) has the identical problem, one layer below —
+`Monk::Persistence` is itself a Module (always shareable regardless of its
+ivars, per the Phase 4 finding), and `@configs` is a plain, unfrozen
+`Hash`. Verified empirically before writing Phase 5's tests: with only
+Phase 1–4 code in place, `Monk::Persistence[:some_db]` called from inside
+a real, separately-spawned `Ractor.new` raised `Ractor::IsolationError:
+can not get unshareable values from instance variables of classes/modules
+from non-main Ractors (@configs from Monk::Persistence)` — meaning **every
+`Model` method, and `Monk::Persistence[]`/`.checkout` directly, was
+completely unusable from any real worker Ractor**, despite all of Phases
+1–4's tests passing, because none of them had ever run outside the main
+Ractor. This is exactly the failure mode Seam G (`PLAN-PERSISTENCE.md`)
+exists to catch — "the only place that proves the premise holds under real
+parallelism" — and it caught it on the first real spike.
+
+Fix: the same one as Phase 4, one level up. `Monk::Persistence.
+freeze_registry!` freezes the `@configs` Hash itself (`Ractor.
+make_shareable(configs)`) — called from `Base#freeze!` alongside `Model.
+freeze_all!`. Once the registry value is frozen, `Monk::Persistence.
+register` calls after boot correctly raise `FrozenError` (the same
+precedent `routes` already sets: nothing can be registered after
+`.freeze!`, by design), and reads from any Ractor succeed.
+
+Confirmed working end-to-end: real `Ractor.new` calls doing concurrent
+`Model.find`/`.create` against a live Postgres container, and two real
+threads inside one spawned Ractor contending for that Ractor's own
+connection slot (proving `Monk::PersistenceTimeoutError` fires under real
+contention, not just a simulated one in the main Ractor) — see
+`PLAN-PERSISTENCE.md` Phase 5.
+
 ## Resolved design (superseded — see "Phase 0 result" and "Phase 0 follow-up," above)
 
 **Scope & positioning**

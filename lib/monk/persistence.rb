@@ -35,6 +35,18 @@ module Monk
         e.slot << true if token
       end
 
+      # Called from Base#freeze! (Seam B). Without this, #register'd
+      # configs are unreachable from any worker Ractor at all: @configs is
+      # a plain, unfrozen Hash, and reading an unfrozen value from a
+      # class/module instance variable raises Ractor::IsolationError from
+      # any non-main Ractor -- the same restriction Model.freeze_all!
+      # exists for, just on the connect-options registry instead of a
+      # Model's own config. Freezing the value (not the module) fixes it,
+      # the same way it did there.
+      def freeze_registry!
+        @configs = Ractor.make_shareable(configs)
+      end
+
       # Test-only: drops all registered configs and this Ractor's cached
       # connections. Not part of the app-facing API.
       def reset!
