@@ -51,6 +51,17 @@ class ExeMonkTest < Minitest::Test
     assert_match(/usage/i, stderr)
   end
 
+  def test_help_variants_print_help_to_stdout_and_exit_successfully
+    %w[help --help -h].each do |flag|
+      stdout, _stderr, status = run_monk(flag)
+
+      assert status.success?, "expected `monk #{flag}` to exit successfully"
+      assert_match(/Usage: monk new APP_NAME/, stdout)
+      assert_match(/--postgres/, stdout)
+      assert_match(/bin\/migrate/, stdout)
+    end
+  end
+
   private
 
   def run_monk(*args)
