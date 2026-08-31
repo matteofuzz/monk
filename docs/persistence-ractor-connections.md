@@ -7,6 +7,52 @@ longer describes the plan going forward; see "Phase 0 result" for the
 finding and its consequences. Implementation plan: `PLAN-PERSISTENCE.md`.
 Working branch: `main_dev/add_db_support`. No ADR yet.
 
+## Usage: two steps
+
+**1. Opt in and register a database.** A backend is never auto-loaded by
+`require "monk"` — require it explicitly, then register a name for each
+database you want to use:
+
+```ruby
+require "monk/persistence/pg"
+
+Monk::Persistence::Pg.register(:primary, host: "...", dbname: "...", ...)
+```
+
+**2. Reach the database — two ways.**
+
+- **`Model` declaration** (the primary, recommended pattern) — fixes a
+  `Model` class to one registered name permanently, at load time:
+
+  ```ruby
+  require "monk/persistence/pg/model"
+
+  class User < Monk::Persistence::Pg::Model
+    self.db_name = :primary
+    self.table_name = "users"
+  end
+
+  User.create(email: "...", full_name: "...")
+  User.where(email: "...")
+  ```
+
+- **Direct registry access** — bypasses `Model` entirely, choosing the
+  registered name at the call site instead of fixing it on a class. The
+  escape hatch for when the target database can't be known at
+  class-definition time (e.g. per-request tenant/shard routing):
+
+  ```ruby
+  Monk::Persistence::Pg[:primary]                       # raw PG::Connection
+  Monk::Persistence::Pg.checkout(:primary) { |conn| conn.exec_params(...) }
+  ```
+
+Requiring `monk/persistence/pg/model` also pulls in `monk/persistence/pg`
+transitively (the former needs the latter to exist). That's harmless
+(`require` is idempotent) but not a substitute for requiring it directly:
+any file that itself calls `Monk::Persistence::Pg.register`/`.checkout`/
+`[]` should require `monk/persistence/pg` explicitly, rather than relying
+on some other file's load order having pulled it in first.
+
 ## Phase 0 result (2026-08-31)
 
 Ran against a disposable `postgres:16` Docker container, Ruby 4.0.6,
