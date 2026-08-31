@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+require_relative "../lib/monk/scaffold"
+
+USAGE = "Usage: monk new APP_NAME [--postgres]".freeze
+
+def usage_error!
+  warn USAGE
+  exit 1
+end
+
+command, *rest = ARGV
+usage_error! unless command == "new"
+
+app_name = rest.find { |arg| !arg.start_with?("-") }
+usage_error! if app_name.nil?
+
+Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres")).write!
+
+puts "Created #{app_name}. Next steps:"
+puts "  cd #{app_name}"
+puts "  bundle install"
