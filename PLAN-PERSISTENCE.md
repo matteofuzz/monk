@@ -2,8 +2,20 @@
 
 Branch: `main_dev/add_db_support`. Companion doc:
 `docs/persistence-ractor-connections.md` (design rationale, facts gathered,
-resolved decisions). This plan assumes that doc's "Resolved design" section
-as given and doesn't re-argue it.
+resolved decisions).
+
+**Phase 0 ran on 2026-08-31 and failed for Sequel**: `Sequel.connect` from
+any non-main Ractor raises `Ractor::IsolationError` on `Sequel::ADAPTER_MAP`,
+with no workaround found (pre-loading the adapter in the main Ractor first
+doesn't help — the map is read on every connect, not just written once).
+Raw `pg` was tested as the pivot target and works cleanly across Ractors.
+Per the pivot criteria below: **Phases 1+ restart with raw `pg` in place of
+Sequel**, and the Phase 3 (`DatasetProxy`) design needs to change, since it
+was built around delegating to Sequel dataset methods that no longer exist
+in this path — see the companion doc's "Phase 0 result" section for the
+open question this raises. Phases 1–6 below are left as originally
+written (for the record of what was planned pre-spike); do not implement
+against them as-is until that open question is resolved.
 
 Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
@@ -54,6 +66,14 @@ Steps:
 3. Record the result (pass/fail, exact error class/message if it fails) in
    `docs/persistence-ractor-connections.md` under a new "Phase 0 result"
    heading.
+
+**Result (2026-08-31): failed, no workaround, pivot triggered.** Sequel
+raises `Ractor::IsolationError: can not access non-shareable objects in
+constant Sequel::ADAPTER_MAP by non-main ractor.` from any non-main
+Ractor, in every configuration tried, including pre-loading the adapter in
+the main Ractor first. Raw `pg` was verified as the fallback and works
+cleanly across Ractors. Full detail: `docs/persistence-ractor-connections.md`
+→ "Phase 0 result." See the top of this file for what changes as a result.
 
 **Pivot criteria** (per the design doc's "exploratory, ready to change
 approach" framing): if Phase 0 fails and there's no viable workaround

@@ -1,11 +1,56 @@
 # Persistence & database connections under Ractor isolation
 
-Status: decided, pending the live spike in Phase 0. Resolved via an interview
-session on 2026-08-29/31 — see "Resolved design" below. Implementation plan:
-`PLAN-PERSISTENCE.md`. Working branch: `main_dev/add_db_support`. No ADR yet;
-one should be written once Phase 0's spike confirms the approach holds.
+Status: Phase 0 spike ran on 2026-08-31 — **Sequel is not usable inside a
+non-main Ractor, confirmed empirically**. The "Resolved design" below is
+kept as the record of *why* Sequel was chosen and what it bought, but it no
+longer describes the plan going forward; see "Phase 0 result" for the
+finding and its consequences. Implementation plan: `PLAN-PERSISTENCE.md`.
+Working branch: `main_dev/add_db_support`. No ADR yet.
 
-## Resolved design
+## Phase 0 result (2026-08-31)
+
+Ran against a disposable `postgres:16` Docker container, Ruby 4.0.6,
+`pg` 1.6.3, `sequel` 5.107.0. Script and raw output are not committed
+(throwaway, per the plan); summarized here.
+
+**Sequel: fails outright, every configuration tried.** `Sequel.connect`
+called from *any* non-main Ractor — first call, second call, two Ractors
+spawned concurrently, and even after the main Ractor pre-loads the
+postgres adapter (`Sequel::Database.load_adapter(:postgres)`) before
+spawning any workers — raises the same error every time:
+
+```
+Ractor::IsolationError: can not access non-shareable objects in constant
+Sequel::ADAPTER_MAP by non-main ractor.
+```
+
+This is stronger than the risk flagged during research: `ADAPTER_MAP` is
+*read* on every `connect` call (to look up the already-loaded adapter
+class), not just written once on first load, so pre-warming it in the main
+Ractor doesn't help — every subsequent read from a worker Ractor still
+hits the same isolation error. There is no configuration-level workaround;
+this is Sequel's own adapter-loading architecture, unrelated to anything
+Monk controls.
+
+**Raw `pg`: works cleanly.** Two separate Ractors, each calling
+`PG.connect(...)` and running a real round-trip query
+(`SELECT 1`) against the container, both succeed with no Ractor errors —
+consistent with `pg`'s own documented "fresh connection per Ractor"
+pattern from the earlier research pass.
+
+**Consequence — this reopens Q1 and Q4, not just Q2's engine pick.** The
+whole point of choosing Sequel (Q1: "no separate adapter interface, Sequel
+*is* the agnostic layer") and `DatasetProxy` (Q4: delegates to Sequel
+dataset methods like `.where`/`.all` via `method_missing`) assumed a query
+layer that no longer applies. Raw `pg` has no dataset/query-builder
+abstraction — only `exec`/`exec_params` returning a `PG::Result` — and is
+Postgres-specific, so "agnostic" can no longer mean "delegate to Sequel's
+own multi-adapter system"; if agnosticism is still wanted, Monk itself
+would now have to own that abstraction (the option Q1 explicitly declined).
+This needs a decision, not a silent substitution — see the message
+accompanying this update for the actual question.
+
+## Resolved design (superseded in part — see "Phase 0 result," above)
 
 **Scope & positioning**
 - First-class Monk primitive (`Monk::Persistence`), not just a documented
