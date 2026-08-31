@@ -214,6 +214,43 @@ connection slot (proving `Monk::PersistenceTimeoutError` fires under real
 contention, not just a simulated one in the main Ractor) — see
 `PLAN-PERSISTENCE.md` Phase 5.
 
+## Phase 6 result: end-to-end proof in `monk-consumer-test` (2026-08-31)
+
+A `User` model (`id`/`email`/`full_name`) added to the sibling
+`monk-consumer-test` app: `db/schema.sql`, a shared `config/persistence.rb`
+(the single `Monk::Persistence.register(:primary, ...)` call, reused by
+`config.ru`, `bin/console`, and `bin/setup_db`), `models/user.rb`, a
+`GET /users` route returning `json(User.where({}))`, plus `kino` added as
+a dependency so the app can actually be served under a real Ractor worker
+pool, not just `rackup`. Full setup/testing instructions in
+`monk-consumer-test/README.md`.
+
+Verified against a disposable `postgres:16` container:
+- **Console**: `User.where({})`, `.find`, `.create`, `.where(...)` all work
+  correctly via `bin/console` / a plain `ruby -e` one-liner.
+- **`rackup` (single process)**: `GET /users` returns the seeded rows as
+  JSON.
+- **`kino` (real Ractor worker pool, 8 workers × 1 thread)**: `GET /users`
+  returns correct JSON across repeated real HTTP requests — this is the
+  actual proof the whole branch exists for: `Model` reads working from
+  inside genuine worker Ractors, served over real HTTP, not just
+  `Ractor.new` in a test.
+
+**Separate finding, not part of this branch**: under `kino`, the
+pre-existing `GET /hello` route (unrelated to persistence, present before
+this branch) returned `500`. Root cause confirmed directly:
+`Monk::VERSION` (`lib/monk/version.rb`, `VERSION = "0.1.0"`) is a plain,
+unfrozen String constant — reading it from a non-main Ractor raises
+`Ractor::IsolationError: can not access non-shareable objects in constant
+Monk::VERSION by non-main Ractor`, the same class of bug as Phases 4/5,
+just on a top-level constant instead of a class ivar. This landed with the
+gem-packaging work (`package-monk-as-local-gem`, PR #18) on `main`, before
+this branch existed, and was never caught because the test suite only
+ever calls `App.call(env)` directly in the main Ractor, and real-Kino
+verification has always been manual (`PLAN.md` step 21). Left unfixed
+here deliberately — it's a `main` bug, not a persistence-branch one, and
+out of Phase 6's stated scope.
+
 ## Resolved design (superseded — see "Phase 0 result" and "Phase 0 follow-up," above)
 
 **Scope & positioning**

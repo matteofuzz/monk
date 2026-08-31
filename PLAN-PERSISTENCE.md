@@ -155,15 +155,22 @@ alongside `Model.freeze_all!`. Full detail:
     Phase 1's own test used), and that the slot is usable again,
     correctly, once released.
 
-## Phase 6 — `monk-consumer-test` end-to-end proof (Seam H)
+## Phase 6 — `monk-consumer-test` end-to-end proof (Seam H) — done
 
-18. Add a route to `monk-consumer-test`'s `config.ru` defining a `Model`
-    subclass and using `.create`/`.find` against the Dockerized Postgres.
-19. Boot it for real via `bundle exec rackup config.ru` (or under Kino, if
-    `monk-consumer-test` is extended to depend on it) and hit it with
-    `curl`, confirming the response reflects real data round-tripped
-    through Postgres. Manual smoke test, not CI — mirrors `PLAN.md` step
-    21's treatment of Kino verification.
+18. Added `User < Monk::Persistence::Model` (`id`/`email`/`full_name`) to
+    `monk-consumer-test`: `db/schema.sql`, `config/persistence.rb`
+    (registration, shared by `config.ru`/`bin/console`/`bin/setup_db`),
+    `models/user.rb`, and `GET /users` returning `json(User.where({}))`.
+    `kino` added as a dependency so the app can be served under a real
+    Ractor worker pool.
+19. Verified manually against a disposable `postgres:16` container:
+    console (`bin/console`), `rackup` (single process), and `kino`
+    (8 workers × 1 thread) all correctly return the seeded rows through
+    `GET /users`. Full detail, including a separate pre-existing bug found
+    on `main` (unrelated to persistence — `Monk::VERSION` isn't
+    Ractor-shareable, breaks `GET /hello` under real `kino`, deliberately
+    left unfixed here): `docs/persistence-ractor-connections.md` → "Phase
+    6 result."
 
 ## Explicitly out of scope for this plan
 
