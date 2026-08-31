@@ -4,6 +4,17 @@ Branch: `main_dev/add_db_support`. Companion doc:
 `docs/persistence-ractor-connections.md` (design rationale, facts gathered,
 resolved decisions).
 
+**Superseded by a multi-backend refactor on `main_dev/add_db_support_multi`**
+(2026-08-31, after this branch's Phase 6 completed): every class name below
+written as `Monk::Persistence`/`Monk::Persistence::Model` is now
+`Monk::Persistence::Pg`/`Monk::Persistence::Pg::Model` — pg-specific code
+split out behind an explicit namespace, backend-agnostic mechanics
+extracted into a reusable `Monk::Persistence::Registry` mixin, and
+persistence backends made opt-in (`require "monk/persistence/pg"`
+explicitly; `require "monk"` alone no longer loads `pg`). All behavior and
+test outcomes below are otherwise unchanged — see the companion doc's
+"Multi-backend refactor" section for the full rationale and design.
+
 **Phase 0 ran on 2026-08-31 and failed for Sequel**: `Sequel.connect` from
 any non-main Ractor raises `Ractor::IsolationError` on `Sequel::ADAPTER_MAP`,
 with no workaround found (pre-loading the adapter in the main Ractor first

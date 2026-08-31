@@ -251,6 +251,58 @@ verification has always been manual (`PLAN.md` step 21). Left unfixed
 here deliberately — it's a `main` bug, not a persistence-branch one, and
 out of Phase 6's stated scope.
 
+## Multi-backend refactor (2026-08-31, branch `main_dev/add_db_support_multi`)
+
+Follow-up work off the now-complete `main_dev/add_db_support` branch,
+prompted by two separate questions: whether `Monk::Persistence` should be
+explicitly namespaced as pg-specific to leave room for other adapters, and
+whether the repository pattern could support fundamentally different
+storage backends (e.g. OpenSearch/Elasticsearch) alongside SQL in the
+future. Research found no usable off-the-shelf gem for either — a
+standalone, connection-management-free, multi-dialect SQL builder doesn't
+exist in a maintained form (Arel is now internal to `activerecord`;
+Sequel's SQL generation isn't cleanly separable from the same
+`ADAPTER_MAP` code path already found Ractor-unsafe), and there's no
+existing abstraction unifying SQL with non-SQL backends like OpenSearch —
+any such abstraction is necessarily something Monk would own.
+
+**What changed**: split every pg-specific line out of the previously
+single `Monk::Persistence` module into an explicitly-named
+`Monk::Persistence::Pg`, while keeping the genuinely backend-agnostic
+mechanics (registration, per-Ractor memoized checkout, boot-time
+shareability freezing) in a reusable `Monk::Persistence::Registry` mixin.
+A future backend (e.g. a hypothetical `Monk::Persistence::OpenSearch`)
+would `extend` the same mixin, implement `connect`/`disconnect`, and get
+registration/checkout/freezing for free — without touching
+`persistence.rb`, `base.rb`, or the `Pg` module. `Model`'s SQL-generating
+CRUD methods moved the same way, into `Monk::Persistence::Pg::Model <
+Monk::Persistence::Model` — the base class keeps only the boot-integration
+plumbing (`inherited`/`subclasses`/`freeze_all!`), which was already
+provably backend-agnostic (`persistence_boot_test.rb`'s tests exercise it
+with zero pg involvement).
+
+Two designs were considered for how `Base#freeze!` reaches every backend
+without hardcoding backend names: a single shared registry with an
+`adapter:` dispatch key in `register`, versus each backend owning an
+independent registry via the shared mixin with a generic `freeze_hooks`
+list `Base#freeze!` iterates. Went with the latter — the former can't hold
+two *different* backend types registered simultaneously (a hard
+requirement for the pg-alongside-OpenSearch scenario that motivated this
+in the first place), since `connect`/`disconnect` would be singleton
+methods with only one implementation loaded at a time.
+
+**Persistence backends are now opt-in**: `require "monk"` no longer loads
+`pg` or defines `Monk::Persistence::Pg` at all — an app requires
+`monk/persistence/pg` (and `monk/persistence/pg/model` for the `Model`
+subclass) explicitly. `pg` moved from `monk.gemspec`'s runtime
+dependencies to a development dependency (still needed to run monk's own
+test suite); consuming apps declare `gem "pg"` themselves now, mirroring
+how ActiveRecord doesn't hard-depend on any specific DB driver.
+`monk-consumer-test` updated accordingly (explicit `gem "pg"`,
+`Monk::Persistence::Pg::Model`, explicit backend requires) and reverified
+end-to-end under real Kino Ractor workers — behaviorally identical to
+Phase 6, just restructured.
+
 ## Resolved design (superseded — see "Phase 0 result" and "Phase 0 follow-up," above)
 
 **Scope & positioning**

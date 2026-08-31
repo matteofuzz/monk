@@ -1,18 +1,30 @@
-require "pg"
-
 module Monk
-  # Owns per-Ractor Postgres connections: each Ractor lazily opens and
-  # memoizes its own PG::Connection on first access, never shared across
-  # Ractors (mirrors pg's own documented Ractor pattern). Concurrent access
-  # from sibling threads within the same Ractor is serialized through
-  # #checkout, since a bare PG::Connection isn't safe for two threads to
-  # issue commands on at once.
+  # Backend-agnostic persistence. Concrete backends (e.g.
+  # Monk::Persistence::Pg, loaded separately -- persistence backends are
+  # opt-in, not required by `require "monk"`) extend Registry below and
+  # register themselves into .freeze_hooks automatically, so Base#freeze!
+  # can seal every backend actually in use without needing to know their
+  # names.
   module Persistence
-    DEFAULT_CHECKOUT_TIMEOUT = 5 # seconds
+    def self.freeze_hooks
+      @freeze_hooks ||= []
+    end
 
-    Entry = Struct.new(:conn, :slot)
+    # Shared by every backend module: per-Ractor connection lifecycle, a
+    # registry of named configs, and boot-time shareability sealing. A
+    # backend `extend`s this and implements #connect(**opts) /
+    # #disconnect(conn) (both private); registration, lookup, serialized
+    # checkout, and freezing are identical across backends and live here
+    # once.
+    module Registry
+      DEFAULT_CHECKOUT_TIMEOUT = 5 # seconds
 
-    class << self
+      Entry = Struct.new(:conn, :slot)
+
+      def self.extended(base)
+        Monk::Persistence.freeze_hooks << base
+      end
+
       def register(name, **opts)
         configs[name] = opts
       end
@@ -35,14 +47,14 @@ module Monk
         e.slot << true if token
       end
 
-      # Called from Base#freeze! (Seam B). Without this, #register'd
-      # configs are unreachable from any worker Ractor at all: @configs is
-      # a plain, unfrozen Hash, and reading an unfrozen value from a
-      # class/module instance variable raises Ractor::IsolationError from
-      # any non-main Ractor -- the same restriction Model.freeze_all!
-      # exists for, just on the connect-options registry instead of a
-      # Model's own config. Freezing the value (not the module) fixes it,
-      # the same way it did there.
+      # Called from Base#freeze! (Seam B), via Monk::Persistence.freeze_hooks.
+      # Without this, #register'd configs are unreachable from any worker
+      # Ractor at all: @configs is a plain, unfrozen Hash, and reading an
+      # unfrozen value from a class/module instance variable raises
+      # Ractor::IsolationError from any non-main Ractor -- the same
+      # restriction Model.freeze_all! exists for, just on the
+      # connect-options registry instead of a Model's own config. Freezing
+      # the value (not the module) fixes it, the same way it did there.
       def freeze_registry!
         @configs = Ractor.make_shareable(configs)
       end
@@ -51,8 +63,8 @@ module Monk
       # connections. Not part of the app-facing API.
       def reset!
         Ractor.current[:monk_persistence]&.each_value do |e|
-          e.conn.finish
-        rescue PG::Error
+          disconnect(e.conn)
+        rescue StandardError
         end
         Ractor.current[:monk_persistence] = {}
         @configs = {}
@@ -76,16 +88,21 @@ module Monk
         opts = configs.fetch(name) do
           raise Monk::UnknownPersistenceError,
             "no database registered as #{name.inspect} -- call " \
-            "Monk::Persistence.register(#{name.inspect}, ...) first"
+            "#{self}.register(#{name.inspect}, ...) first"
         end
-
-        conn = PG.connect(**opts)
-        conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)
 
         slot = SizedQueue.new(1)
         slot << true
 
-        Entry.new(conn, slot)
+        Entry.new(connect(**opts), slot)
+      end
+
+      def connect(**opts)
+        raise NotImplementedError, "#{self} must implement #connect(**opts)"
+      end
+
+      def disconnect(conn)
+        raise NotImplementedError, "#{self} must implement #disconnect(conn)"
       end
     end
   end

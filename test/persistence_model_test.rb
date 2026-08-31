@@ -1,20 +1,21 @@
 require_relative "test_helper"
+require "monk/persistence/pg/model"
 
 class PersistenceModelTest < Minitest::Test
   include PersistenceTestHelpers
 
   DB_NAME = :persistence_model_test_db
 
-  class Widget < Monk::Persistence::Model
+  class Widget < Monk::Persistence::Pg::Model
     self.db_name = DB_NAME
     self.table_name = "widgets"
   end
 
   def setup
-    Monk::Persistence.reset!
+    Monk::Persistence::Pg.reset!
     skip_unless_postgres_available
-    Monk::Persistence.register(DB_NAME, **pg_test_opts)
-    Monk::Persistence.checkout(DB_NAME) do |conn|
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       conn.exec("DROP TABLE IF EXISTS widgets")
       conn.exec(
         "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0)"
@@ -24,9 +25,9 @@ class PersistenceModelTest < Minitest::Test
 
   def teardown
     if postgres_available?
-      Monk::Persistence.checkout(DB_NAME) { |conn| conn.exec("DROP TABLE IF EXISTS widgets") }
+      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("DROP TABLE IF EXISTS widgets") }
     end
-    Monk::Persistence.reset!
+    Monk::Persistence::Pg.reset!
   end
 
   def test_create_inserts_and_returns_the_row_as_a_symbol_keyed_hash

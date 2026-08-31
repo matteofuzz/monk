@@ -10,6 +10,9 @@ require_relative "monk/persistence"
 require_relative "monk/persistence/model"
 require_relative "monk/base"
 
+# Persistence backends (Monk::Persistence::Pg, and any future adapter) are
+# opt-in -- require them explicitly, e.g. `require "monk/persistence/pg"`.
+
 module Monk
   def self.boot(app)
     app.freeze!

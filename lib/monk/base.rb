@@ -28,7 +28,7 @@ module Monk
           end
         end
 
-        Monk::Persistence.freeze_registry!
+        Monk::Persistence.freeze_hooks.each(&:freeze_registry!)
         Monk::Persistence::Model.freeze_all!
 
         Ractor.make_shareable(routes)
