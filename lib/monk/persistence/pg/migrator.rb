@@ -46,7 +46,42 @@ module Monk
           applied
         end
 
+        # Runs .down.sql for the `steps` most recently applied migrations,
+        # most-recent-first, each inside its own transaction, removing the
+        # version from schema_migrations only after that transaction
+        # commits. `steps` beyond the number actually applied rolls back
+        # everything and stops cleanly. Returns the versions reverted.
+        def rollback!(steps: 1)
+          reverted = []
+
+          Monk::Persistence::Pg.checkout(@db_name) do |conn|
+            ensure_schema_migrations_table(conn)
+
+            recently_applied(conn, steps).each do |version|
+              migration = migrations.find { |m| m.version == version }
+              unless migration
+                raise Monk::MalformedMigrationError,
+                  "applied migration #{version.inspect} has no matching .down.sql file on disk"
+              end
+
+              conn.transaction do
+                conn.exec(File.read(migration.down_path))
+                conn.exec_params("DELETE FROM schema_migrations WHERE version = $1", [version])
+              end
+              reverted << version
+            end
+          end
+
+          reverted
+        end
+
         private
+
+        def recently_applied(conn, steps)
+          conn.exec_params(
+            "SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT $1", [steps]
+          ).map { |row| row["version"] }
+        end
 
         def ensure_schema_migrations_table(conn)
           conn.exec(<<~SQL)

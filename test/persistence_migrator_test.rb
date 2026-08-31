@@ -75,6 +75,83 @@ class PersistenceMigratorTest < Minitest::Test
     end
   end
 
+  def test_rollback_bang_reverts_the_most_recently_applied_migration_by_default
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+    migrator.migrate!
+
+    reverted = migrator.rollback!
+
+    assert_equal ["2"], reverted
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
+      assert_equal ["1"], versions
+      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
+      assert_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
+    end
+  end
+
+  def test_rollback_bang_with_steps_reverts_multiple_most_recent_first
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+      "3_create_things" => { up: "CREATE TABLE things (id SERIAL PRIMARY KEY)", down: "DROP TABLE things" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+    migrator.migrate!
+
+    reverted = migrator.rollback!(steps: 2)
+
+    assert_equal ["3", "2"], reverted
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
+      assert_equal ["1"], versions
+      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
+      assert_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
+      assert_nil conn.exec("SELECT to_regclass('things')").getvalue(0, 0)
+    end
+  end
+
+  def test_rollback_bang_with_steps_beyond_applied_count_reverts_everything_and_stops_cleanly
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+    migrator.migrate!
+
+    reverted = migrator.rollback!(steps: 10)
+
+    assert_equal ["2", "1"], reverted
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      versions = conn.exec("SELECT version FROM schema_migrations").map { |r| r["version"] }
+      assert_equal [], versions
+    end
+  end
+
+  def test_rollback_bang_raises_a_precise_error_when_an_applied_migration_has_no_down_file_on_disk
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+    )
+    Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir).migrate!
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: Dir.mktmpdir)
+
+    error = assert_raises(Monk::MalformedMigrationError) { migrator.rollback! }
+
+    assert_match(/1/, error.message)
+  end
+
   def test_lists_up_down_pairs_in_ascending_version_order
     dir = migrations_dir(
       "20260301000000_create_gadgets" => { up: "CREATE TABLE gadgets ()", down: "DROP TABLE gadgets" },
