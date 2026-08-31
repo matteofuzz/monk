@@ -8,6 +8,35 @@ module Monk
       class << self
         attr_accessor :db_name, :table_name
 
+        def inherited(subclass)
+          super
+          Model.subclasses << subclass
+        end
+
+        def subclasses
+          @subclasses ||= []
+        end
+
+        # Called from Base#freeze! (Seam B). Freezes each known subclass's
+        # db_name/table_name *values* -- freezing the subclass itself would
+        # do nothing: Class/Module objects are always Ractor.shareable?
+        # regardless of their instance variables, so reading an ivar
+        # holding an unfrozen value from a worker Ractor raises
+        # Ractor::IsolationError whether or not the class was "frozen".
+        # Deliberately does NOT check whether db_name is registered with
+        # Monk::Persistence -- this registry is process-global, not scoped
+        # to whichever Base subclass happens to be booting, so that check
+        # would produce false failures (e.g. a Model used by one app
+        # tripping another app's boot before its own db is registered).
+        def freeze_all!
+          Model.subclasses.each do |subclass|
+            subclass.db_name = Ractor.make_shareable(subclass.db_name)
+            subclass.table_name = Ractor.make_shareable(subclass.table_name)
+          rescue Ractor::Error => e
+            raise Monk::UnshareableModelError, "#{subclass} is not Ractor-shareable: #{e.message}"
+          end
+        end
+
         def create(data)
           Monk::Persistence.checkout(db_name) do |conn|
             columns = data.keys.map { |c| conn.quote_ident(c.to_s) }

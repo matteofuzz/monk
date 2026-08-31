@@ -97,20 +97,36 @@ query, both succeeded with no Ractor errors. Full detail:
 11. `Model.delete(id)` returns whether a row was actually deleted (not just
     "the DELETE statement ran").
 
-## Phase 4 — Boot integration (Seam B extended)
+## Phase 4 — Boot integration (Seam B extended) — done
 
 12. `Model` subclasses are tracked via an `inherited` hook (mirrors how
-    `Base` tracks routes) into a class-level registry.
-13. `.freeze!` walks that registry and calls `Ractor.make_shareable` on
-    each `Model` subclass's config (`db_name`, `table_name`), raising a
-    precise error naming the offending class if something isn't
-    shareable — same fail-fast pattern `.freeze!` already applies to
-    routes.
-14. Decide (test-first) whether `.freeze!` should also validate that every
-    `Model`'s `db_name` was actually `register`'d in `Monk::Persistence` —
-    catching a typo'd `:analytics` vs `:analitics` at boot instead of at
-    first request. If yes: `.freeze!` raises a precise error naming the
-    unregistered key.
+    `Base` tracks routes) into a class-level registry
+    (`Monk::Persistence::Model.subclasses`).
+13. **Finding, not assumption**: `Ractor.make_shareable(SomeModelSubclass)`
+    does *nothing* for the class's ivars — Classes are always
+    `Ractor.shareable?` regardless of their instance variables. What
+    actually matters is freezing the *value* stored in `db_name`/
+    `table_name`, not the class holding them
+    (`subclass.table_name = Ractor.make_shareable(subclass.table_name)`).
+    Verified empirically before implementing — see
+    `docs/persistence-ractor-connections.md` → "Phase 4 finding." This was
+    a real, live bug in Phases 2–3's `Model` classes (String `table_name`s
+    were never actually safe to read from a worker Ractor). `.freeze!` now
+    calls `Monk::Persistence::Model.freeze_all!`, which does this for every
+    known subclass and raises `Monk::UnshareableModelError` (naming the
+    class) for a value that genuinely can't be made shareable (rescuing
+    `Ractor::Error`, not `ArgumentError` — confirmed empirically; a plain
+    unshareable value like `Mutex.new` raises `Ractor::Error` directly, not
+    a subclass of `ArgumentError` the way the route-closure case does).
+14. **Decided against**: validating that every `Model`'s `db_name` was
+    `register`'d in `Monk::Persistence` at boot. `Model.subclasses` is
+    necessarily process-global (no language-level way to scope it per
+    `Base` subclass), so this check produces false failures whenever one
+    file's/app's transiently-registered config is absent during another's
+    `.freeze!` — reproduced directly in the test suite while implementing.
+    The shareability check has no such problem (pure class property,
+    independent of any registry state) and is kept. Full reasoning:
+    `docs/persistence-ractor-connections.md` → "Phase 4 finding."
 
 ## Phase 5 — Real Ractor integration against live Postgres (Seam G)
 

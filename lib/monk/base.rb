@@ -28,6 +28,8 @@ module Monk
           end
         end
 
+        Monk::Persistence::Model.freeze_all!
+
         Ractor.make_shareable(routes)
         Ractor.make_shareable(error_handlers)
         self

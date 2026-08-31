@@ -136,6 +136,50 @@ per connection so `Hash` values come back as proper Ruby types rather than
 all-Strings — both are implementation details for `PLAN-PERSISTENCE.md`,
 not open design questions.
 
+## Phase 4 finding: freezing a Class does nothing for its ivars (2026-08-31)
+
+Resolves the "does `Ractor.make_shareable` on a Class actually protect its
+instance variables" question this document left open all the way back in
+its first analysis pass. Verified empirically (see `PLAN-PERSISTENCE.md`
+Phase 4): **no.** `Ractor.shareable?(SomeClass)` is unconditionally `true`
+regardless of what's in its instance variables — Class/Module objects are
+always reported shareable. Calling `Ractor.make_shareable(SomeClass)`
+doesn't touch its ivars at all: an ivar holding a plain, unfrozen value
+(e.g. `table_name = "widgets"`, a String literal) still raises
+`Ractor::IsolationError: can not get unshareable values from instance
+variables of classes/modules from non-main Ractors` when read from a
+worker Ractor — identically whether or not `make_shareable` was ever
+called on the class.
+
+What actually works: freezing the **value** stored in the ivar, not the
+class holding it (`subclass.table_name = Ractor.make_shareable(subclass.
+table_name)`). Once the stored value is itself shareable, reading the
+class-level ivar from any Ractor succeeds — the restriction is on
+unshareable *values*, not on cross-Ractor class-ivar reads in general
+(confirmed separately: a `db_name` set to a Symbol, which is inherently
+frozen/shareable, reads fine cross-Ractor with zero action needed — only
+String-valued config like `table_name` was ever at risk).
+
+This is a real, live bug in the `Model` classes shipped in Phases 2–3
+(`table_name` set via plain String literals, e.g. `self.table_name =
+"widgets"`) — every `Model` subclass would have failed the moment a real
+worker Ractor tried to read `table_name`, silently past `.freeze!` (which,
+before Phase 4, validated routes/handlers but nothing about `Model`
+subclasses at all). Phase 4 is what closes this gap.
+
+**Decided against** (Phase 4's plan step 14, "decide test-first"): validating
+that every `Model`'s `db_name` is actually `register`'d in
+`Monk::Persistence` at boot time. `Model.subclasses` is necessarily a
+process-global registry (`Model` classes are standalone, not owned by any
+particular `Base` subclass, so there's no language-level way to scope the
+registry per-app) — adding a "must be registered" check surfaced exactly
+the failure mode this reasoning predicts: in the test suite, one file's
+transiently-registered `Persistence` config being absent during another
+file's `.freeze!` call produced false failures unrelated to the app
+actually booting. The shareability check doesn't have this problem (it's
+a pure property of the class, independent of any registry's current
+state), so it's kept; the registration check is dropped.
+
 ## Resolved design (superseded — see "Phase 0 result" and "Phase 0 follow-up," above)
 
 **Scope & positioning**
