@@ -66,4 +66,54 @@ class PersistenceModelTest < Minitest::Test
     assert_equal names.sort, rows.map { |r| r[:name] }.sort
     assert_equal names.size, rows.map { |r| r[:id] }.uniq.size
   end
+
+  def test_where_returns_only_rows_matching_all_conditions
+    Widget.create(name: "bolt", quantity: 10)
+    match = Widget.create(name: "bolt", quantity: 5)
+    Widget.create(name: "nut", quantity: 5)
+
+    rows = Widget.where(name: "bolt", quantity: 5)
+
+    assert_equal [match], rows
+  end
+
+  def test_where_returns_an_empty_array_when_nothing_matches
+    Widget.create(name: "bolt", quantity: 10)
+
+    assert_equal [], Widget.where(name: "does-not-exist")
+  end
+
+  def test_where_with_no_conditions_returns_all_rows
+    a = Widget.create(name: "bolt", quantity: 10)
+    b = Widget.create(name: "nut", quantity: 5)
+
+    rows = Widget.where({})
+
+    assert_equal [a, b].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+  end
+
+  def test_update_returns_the_updated_row
+    created = Widget.create(name: "bolt", quantity: 10)
+
+    updated = Widget.update(created[:id], quantity: 20)
+
+    assert_equal 20, updated[:quantity]
+    assert_equal "bolt", updated[:name]
+    assert_equal created[:id], updated[:id]
+  end
+
+  def test_update_returns_nil_when_the_id_does_not_exist
+    assert_nil Widget.update(999_999, quantity: 1)
+  end
+
+  def test_delete_removes_the_row_and_returns_true
+    created = Widget.create(name: "bolt", quantity: 10)
+
+    assert Widget.delete(created[:id])
+    assert_nil Widget.find(created[:id])
+  end
+
+  def test_delete_returns_false_when_the_id_does_not_exist
+    refute Widget.delete(999_999)
+  end
 end
