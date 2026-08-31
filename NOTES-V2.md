@@ -31,7 +31,9 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 
 - ~~Package Monk as a gem (local gem for now, not published)~~ — done: `monk.gemspec` + `lib/monk/version.rb` (`Monk::VERSION = "0.1.0"`), MIT licensed, consumed via Bundler `path:` dependency (no RubyGems push). Verified against a throwaway sibling app at `../monk-consumer-test`. RubyGems already has an unrelated, dormant gem named `monk` — a rename will be needed before ever publishing.
 - Database support, Postgres first
-- Authentication and user sessions
+- Authentication and user sessions — design proposed (passwordless,
+  TTL'd tokens): `docs/auth-sessions.md` + `PLAN-AUTH.md`. Not
+  implemented; needs `Context#env` and a boot-frozen config first.
 - Caching system
 - Async jobs
 - Configuration system via environment variables
