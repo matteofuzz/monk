@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require_relative "../config/persistence"
+require "monk/persistence/pg/migrator"
+
+Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.expand_path("../db/migrate", __dir__)).migrate!
+
+puts "Migrated #{ENV.fetch("DB_NAME", "app_development")}."

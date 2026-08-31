@@ -1,0 +1,55 @@
+#!/usr/bin/env ruby
+require_relative "../lib/monk/scaffold"
+
+USAGE = "Usage: monk new APP_NAME [--postgres]".freeze
+
+HELP = <<~TEXT.freeze
+  #{USAGE}
+
+  Creates a new Monk project at APP_NAME from a static skeleton -- refuses
+  to run if APP_NAME already exists.
+
+  Base skeleton: Gemfile, config.ru, .ruby-version
+
+  Options:
+      --postgres      Also scaffold Postgres persistence/migrations support:
+                       config/persistence.rb, bin/console, bin/setup_db,
+                       bin/migrate, db/migrate/
+
+  Commands:
+      new APP_NAME    Create a new project (see Options above)
+      help            Show this help (also --help, -h)
+
+  After creating a project:
+      cd APP_NAME
+      bundle install
+
+  With --postgres, a reachable Postgres is expected (env vars documented
+  in the generated config/persistence.rb), then:
+      bin/setup_db    Apply pending migrations
+      bin/migrate     migrate | rollback [N] | status
+      bin/console     IRB with persistence loaded
+TEXT
+
+def usage_error!
+  warn USAGE
+  exit 1
+end
+
+command, *rest = ARGV
+
+case command
+when nil, "help", "--help", "-h"
+  puts HELP
+when "new"
+  app_name = rest.find { |arg| !arg.start_with?("-") }
+  usage_error! if app_name.nil?
+
+  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres")).write!
+
+  puts "Created #{app_name}. Next steps:"
+  puts "  cd #{app_name}"
+  puts "  bundle install"
+else
+  usage_error!
+end
