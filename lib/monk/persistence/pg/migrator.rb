@@ -19,6 +19,7 @@ module Monk
           @db_name = db_name
           @dir = dir
           @migrations = load_migrations
+          @schema_migrations_ready = false
         end
 
         # Runs every pending .up.sql (its version absent from
@@ -100,13 +101,27 @@ module Monk
           ).map { |row| row["version"] }
         end
 
+        # Checks existence via information_schema first, rather than relying
+        # on CREATE TABLE IF NOT EXISTS's own "already exists, skipping"
+        # NOTICE -- confusing noise on every call once the table exists.
+        # Memoized per instance since a single Migrator's checks/commands
+        # often chain multiple calls together (e.g. bin/migrate status
+        # calling #applied then #pending).
         def ensure_schema_migrations_table(conn)
-          conn.exec(<<~SQL)
-            CREATE TABLE IF NOT EXISTS schema_migrations (
+          return if @schema_migrations_ready
+
+          exists = conn.exec(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'schema_migrations'"
+          ).ntuples.positive?
+
+          conn.exec(<<~SQL) unless exists
+            CREATE TABLE schema_migrations (
               version TEXT PRIMARY KEY,
               applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
           SQL
+
+          @schema_migrations_ready = true
         end
 
         def applied_versions(conn)
