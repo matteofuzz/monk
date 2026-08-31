@@ -75,6 +75,23 @@ module Monk
           reverted
         end
 
+        # Not-yet-applied versions, ascending, with no side effects.
+        def pending
+          Monk::Persistence::Pg.checkout(@db_name) do |conn|
+            ensure_schema_migrations_table(conn)
+            already_applied = applied_versions(conn)
+            migrations.reject { |m| already_applied.include?(m.version) }.map(&:version)
+          end
+        end
+
+        # Already-applied versions, in the order they were applied.
+        def applied
+          Monk::Persistence::Pg.checkout(@db_name) do |conn|
+            ensure_schema_migrations_table(conn)
+            applied_versions(conn)
+          end
+        end
+
         private
 
         def recently_applied(conn, steps)
@@ -93,7 +110,7 @@ module Monk
         end
 
         def applied_versions(conn)
-          conn.exec("SELECT version FROM schema_migrations").map { |row| row["version"] }
+          conn.exec("SELECT version FROM schema_migrations ORDER BY applied_at, version").map { |row| row["version"] }
         end
 
         def load_migrations

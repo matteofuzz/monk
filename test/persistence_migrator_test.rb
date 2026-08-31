@@ -152,6 +152,50 @@ class PersistenceMigratorTest < Minitest::Test
     assert_match(/1/, error.message)
   end
 
+  def test_pending_and_applied_before_any_migration_has_run
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+
+    assert_equal ["1"], migrator.pending
+    assert_equal [], migrator.applied
+  end
+
+  def test_pending_returns_not_yet_applied_versions_in_ascending_order_with_no_side_effects
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    first_dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+    )
+    Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: first_dir).migrate!
+
+    full_dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+      "3_create_things" => { up: "CREATE TABLE things (id SERIAL PRIMARY KEY)", down: "DROP TABLE things" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: full_dir)
+
+    assert_equal ["2", "3"], migrator.pending
+    assert_equal ["1"], migrator.applied
+  end
+
+  def test_applied_returns_versions_in_the_order_they_were_applied
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+    migrator.migrate!
+
+    assert_equal ["1", "2"], migrator.applied
+  end
+
   def test_lists_up_down_pairs_in_ascending_version_order
     dir = migrations_dir(
       "20260301000000_create_gadgets" => { up: "CREATE TABLE gadgets ()", down: "DROP TABLE gadgets" },
