@@ -50,7 +50,93 @@ would now have to own that abstraction (the option Q1 explicitly declined).
 This needs a decision, not a silent substitution — see the message
 accompanying this update for the actual question.
 
-## Resolved design (superseded in part — see "Phase 0 result," above)
+## Phase 0 follow-up: `Monk::Persistence::Model` (2026-08-31)
+
+Resolution to the Q1/Q4 reopening above: Monk owns a small, deliberately
+non-ORM abstraction itself — CRUD sugar over parameterized SQL, not a
+Sequel/AR replacement. No associations, no validations, no callbacks, no
+dirty-tracking; same "small primitive, not a framework" instinct as
+`StateRactor`.
+
+```ruby
+module Monk
+  module Persistence
+    class Model
+      class << self
+        attr_accessor :db_name, :table_name
+
+        def create(data)
+          cols, vals = data.keys, data.values
+          placeholders = vals.each_index.map { |i| "$#{i + 1}" }
+          sql = "INSERT INTO #{table_name} (#{cols.join(",")}) VALUES (#{placeholders.join(",")}) RETURNING *"
+          connection.exec_params(sql, vals).first
+        end
+
+        def find(id)
+          connection.exec_params("SELECT * FROM #{table_name} WHERE id = $1", [id]).first
+        end
+
+        def where(conditions)
+          clause = conditions.keys.each_with_index.map { |c, i| "#{c} = $#{i + 1}" }.join(" AND ")
+          connection.exec_params("SELECT * FROM #{table_name} WHERE #{clause}", conditions.values).to_a
+        end
+
+        def update(id, data)
+          sets = data.keys.each_with_index.map { |c, i| "#{c} = $#{i + 2}" }.join(", ")
+          connection.exec_params("UPDATE #{table_name} SET #{sets} WHERE id = $1 RETURNING *", [id, *data.values]).first
+        end
+
+        def delete(id)
+          connection.exec_params("DELETE FROM #{table_name} WHERE id = $1", [id])
+        end
+
+        private def connection = Monk::Persistence[db_name]
+      end
+    end
+  end
+end
+```
+
+Four decisions locked in alongside this:
+
+1. **Hash-only, no live model instances.** Every method takes/returns plain
+   `Hash`es, never an `Event` *instance* wrapping a row. A live mutable
+   row-object can't cross a Ractor boundary cleanly — the same reason the
+   original RPC-pool design (superseded, below) couldn't return live AR
+   objects, and the same reason `DatasetProxy` had to be a frozen handle
+   rather than the live dataset itself. Plain Hashes copy across Ractor
+   boundaries automatically; there's nothing to make shareable.
+2. **`Model` subclasses hook into `.freeze!`, the same way routes do.**
+   `Event.db_name = :analytics` writes a class-instance-variable in the
+   main Ractor at load time; reading it later from a worker Ractor is the
+   same category of access `.freeze!` already exists to make safe for
+   routes (`Ractor.make_shareable(routes)` before any worker touches them).
+   `Model` subclasses get tracked via an `inherited` hook (mirrors how
+   `Base` tracks routes), and `.freeze!` calls `Ractor.make_shareable` on
+   each one's config, raising a precise error naming the offending class
+   if something isn't shareable — extends Seam B, doesn't invent a new
+   pattern.
+3. **A per-Ractor `Mutex` replaces Sequel's connection pool.** Sequel's
+   `ConnectionPool` safely queued concurrent checkouts under `:threaded`
+   mode; a bare `PG::Connection` isn't safe for two threads to issue
+   commands on concurrently (wire-protocol corruption, not a graceful
+   wait). The per-Ractor connection is wrapped in a `Mutex`-guarded
+   checkout with a timeout; a checkout that can't acquire the lock in time
+   raises `Monk::PersistenceTimeoutError` — this replaces catching
+   `Sequel::PoolTimeout` from the original plan, but preserves the same
+   Q3b guarantee (fail loud under contention, don't corrupt).
+4. **`where` supports only equality + `AND`, for now.** Anything past that
+   (`>`, `IN`, `LIKE`, `OR`) is a query-condition DSL — real scope growth,
+   left out until something actually needs it.
+
+Not yet decided/built: table-name inference (currently explicit-only, no
+pluralization magic) and `PG::Result`'s string-typed values need
+`conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)` set up
+per connection so `Hash` values come back as proper Ruby types rather than
+all-Strings — both are implementation details for `PLAN-PERSISTENCE.md`,
+not open design questions.
+
+## Resolved design (superseded — see "Phase 0 result" and "Phase 0 follow-up," above)
 
 **Scope & positioning**
 - First-class Monk primitive (`Monk::Persistence`), not just a documented

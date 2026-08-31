@@ -9,29 +9,29 @@ any non-main Ractor raises `Ractor::IsolationError` on `Sequel::ADAPTER_MAP`,
 with no workaround found (pre-loading the adapter in the main Ractor first
 doesn't help — the map is read on every connect, not just written once).
 Raw `pg` was tested as the pivot target and works cleanly across Ractors.
-Per the pivot criteria below: **Phases 1+ restart with raw `pg` in place of
-Sequel**, and the Phase 3 (`DatasetProxy`) design needs to change, since it
-was built around delegating to Sequel dataset methods that no longer exist
-in this path — see the companion doc's "Phase 0 result" section for the
-open question this raises. Phases 1–6 below are left as originally
-written (for the record of what was planned pre-spike); do not implement
-against them as-is until that open question is resolved.
+**Phases 1+ below reflect the pivot**: raw `pg` in place of Sequel, and
+`Monk::Persistence::Model` (Hash-in/Hash-out CRUD sugar Monk owns itself)
+in place of `DatasetProxy` — see the companion doc's "Phase 0 follow-up"
+section for the design and the four decisions behind it. This revision
+supersedes the original Sequel-based phases; nothing below should be
+implemented against the pre-spike version.
 
 Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
 then the minimum code to pass it. Phase 0 is the exception — it's a spike,
-not TDD, and it gates everything after it.
+not TDD, and it gated everything after it.
 
 ## Seams
 
 - **Seam E — `Monk::Persistence`'s own public API**: registry and
-  per-Ractor connection lifecycle, tested directly against its own
-  interface (mirrors how `PLAN.md` Seam C tested `StateRactor`).
-- **Seam F — `Monk::Persistence::DatasetProxy`**: the shareable-handle
-  ergonomics layered on top of Seam E.
-- **Seam B (extended) — `.freeze!` / boot**: whether persistence
-  registration needs any boot-time validation of its own, alongside the
-  route/handler shareability checks it already does.
+  per-Ractor connection lifecycle (a `Mutex`-guarded raw `PG::Connection`,
+  not a pool), tested directly against its own interface (mirrors how
+  `PLAN.md` Seam C tested `StateRactor`).
+- **Seam F — `Monk::Persistence::Model`**: the CRUD-sugar layer
+  (`create`/`find`/`where`/`update`/`delete`) built on top of Seam E.
+- **Seam B (extended) — `.freeze!` / boot**: `Model` subclasses need their
+  class-level config (`db_name`, `table_name`) made `Ractor.shareable?` at
+  boot, the same way routes already are.
 - **Seam G — real concurrent Ractor integration**: multiple real Ractors
   actually hitting a live Postgres through Seam E/F at once — the
   persistence equivalent of `PLAN.md` Seam D, and the only place that
@@ -40,128 +40,112 @@ not TDD, and it gates everything after it.
   *outside* the repo, via the `path:` dependency, boots for real and
   serves a request that round-trips to Postgres.
 
-## Phase 0 — Spike: does Sequel survive across Ractors? (gates everything below)
+## Phase 0 — Spike: does Sequel survive across Ractors? (gated everything below)
 
-Not TDD — a throwaway experiment to resolve the one open empirical
-question from the design doc: `Sequel::ADAPTER_MAP`/`SHARED_ADAPTER_MAP`
-are unfrozen, module-level, lazily-populated hashes with no
-`keep_reference`-style opt-out. Does a second Ractor calling
-`Sequel.connect(adapter: "postgres", ...)` after a first Ractor already
-populated that hash work correctly, or does it hit `Ractor::IsolationError`
-/ corrupt state / silently misbehave?
+Not TDD — a throwaway experiment, already run. Result: **failed, no
+workaround, pivot triggered.** Sequel raises `Ractor::IsolationError: can
+not access non-shareable objects in constant Sequel::ADAPTER_MAP by
+non-main ractor.` from any non-main Ractor, in every configuration tried
+(first call, second call, concurrent calls, and pre-loading the adapter in
+the main Ractor first). Raw `pg` was verified as the fallback: two separate
+Ractors, each calling `PG.connect(...)` and running a real round-trip
+query, both succeeded with no Ractor errors. Full detail:
+`docs/persistence-ractor-connections.md` → "Phase 0 result."
 
-Steps:
+## Phase 1 — Registry & per-Ractor connection lifecycle (Seam E)
 
-1. Start the disposable Postgres container (`docker run --rm -e
-   POSTGRES_PASSWORD=... -p 5432:5432 postgres`).
-2. In a scratch script (not committed), install `pg` + `sequel` in a
-   throwaway `Gemfile`, then:
-   - `Ractor.new { Sequel.connect(adapter: "postgres", ..., keep_reference:
-     false) }` — first Ractor, populates `ADAPTER_MAP` for the first time.
-   - A second, separate `Ractor.new { Sequel.connect(...) }` — does this
-     one raise, hang, or succeed?
-   - If it succeeds: run an actual query (`db[:pg_stat_activity].count` or
-     similar) from each Ractor to confirm the connection isn't just
-     constructed but usable.
-3. Record the result (pass/fail, exact error class/message if it fails) in
-   `docs/persistence-ractor-connections.md` under a new "Phase 0 result"
-   heading.
-
-**Result (2026-08-31): failed, no workaround, pivot triggered.** Sequel
-raises `Ractor::IsolationError: can not access non-shareable objects in
-constant Sequel::ADAPTER_MAP by non-main ractor.` from any non-main
-Ractor, in every configuration tried, including pre-loading the adapter in
-the main Ractor first. Raw `pg` was verified as the fallback and works
-cleanly across Ractors. Full detail: `docs/persistence-ractor-connections.md`
-→ "Phase 0 result." See the top of this file for what changes as a result.
-
-**Pivot criteria** (per the design doc's "exploratory, ready to change
-approach" framing): if Phase 0 fails and there's no viable workaround
-(e.g. forcing `require "sequel/adapters/postgres"` once in the main
-Ractor before any workers spin up, so `ADAPTER_MAP` is populated before
-the hash is ever touched concurrently — worth trying as a fix before
-declaring Sequel unworkable), fall back to raw `pg` directly (Option 1 from
-the design doc's comparison table) and restart this plan from Phase 1 with
-`pg` in place of `Sequel` throughout. Do not proceed to Phase 1 on
-Sequel until Phase 0 passes.
-
-## Phase 1 — Registry & config (Seam E)
-
-4. `Monk::Persistence.register(:name, **opts)` stores the config for later
-   lookup.
-5. `Monk::Persistence[:name]` raises a precise error (naming the missing
+1. `Monk::Persistence.register(:name, **pg_opts)` stores the config for
+   later lookup (`pg_opts` are plain `PG.connect` kwargs: `host`, `port`,
+   `user`, `password`, `dbname`, ...).
+2. `Monk::Persistence[:name]` raises a precise error (naming the missing
    key) for an unregistered name — fail fast, per ADR 0003's spirit.
-6. `Monk::Persistence.register` always merges in `keep_reference: false`,
-   regardless of what the caller passed — verify a caller-supplied
-   `keep_reference: true` is overridden, not merged the other way.
-7. `Monk::Persistence[:name]` lazily creates a `Sequel::Database` on first
+3. `Monk::Persistence[:name]` lazily creates a `PG::Connection` on first
    call within a Ractor, and memoizes it — a second call from the *same*
-   Ractor returns the identical object (test via `equal?`).
-8. `max_connections` defaults to `1` when not specified in `register`'s
-   opts; an explicit `max_connections:` in `register` overrides the
-   default.
+   Ractor returns the identical object (test via `equal?`). Sets
+   `conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)` at
+   creation time, so results come back as proper Ruby types rather than
+   all-Strings.
+4. Every checkout of that connection goes through a `Mutex`-guarded
+   accessor (internal to `Monk::Persistence`, used by `Model` — not part of
+   the public API), serializing concurrent access from sibling threads
+   within the same Ractor. A checkout that can't acquire the lock within a
+   timeout raises `Monk::PersistenceTimeoutError`, naming the pool/database
+   key.
 
-## Phase 2 — Pool-exhaustion robustness (Seam E)
+## Phase 2 — `Monk::Persistence::Model`: create/find (Seam F, part 1)
 
-9. A `Sequel::PoolTimeout` raised during checkout is caught and re-raised
-   as `Monk::PersistenceTimeoutError`, whose message names the pool/database
-   key and points at `max_connections` as the relevant config.
+5. A `Model` subclass declares `db_name`/`table_name` via class-level
+   accessors (e.g. `class Event < Monk::Persistence::Model; self.db_name =
+   :analytics; self.table_name = "events"; end`).
+6. `Model.create(data)` inserts a row via a parameterized `INSERT ...
+   RETURNING *` and returns the created row as a `Hash`.
+7. `Model.find(id)` returns a `Hash` for the row, or `nil` if not found.
+8. `Model.create`/`.find` go through the `Mutex`-guarded checkout from
+   Phase 1 — verify with a test simulating two threads in one Ractor
+   calling in concurrently, confirming no wire-protocol corruption and a
+   cleanly serialized result.
 
-## Phase 3 — `DatasetProxy` (Seam F)
+## Phase 3 — `Monk::Persistence::Model`: where/update/delete (Seam F, part 2)
 
-10. `Monk::Persistence.dataset(:db, :table)` returns an object for which
-    `Ractor.shareable?` is `true` immediately (before any connection is
-    ever made) — it holds only two frozen `Symbol`s.
-11. Calling a Sequel dataset method (`.where`, `.all`, `.count`, ...) on the
-    proxy delegates to the real dataset resolved via
-    `Monk::Persistence[:db][:table]`, and returns the same result the
-    direct call would.
-12. `respond_to?` on the proxy reflects the real dataset's methods (via
-    `respond_to_missing?`), so introspection/duck-typing on it doesn't lie.
+9. `Model.where(conditions)` supports only equality + `AND`
+   (`where(user_id: 3, active: true)`); returns an `Array` of `Hash`es
+   (empty if none match). Explicitly out of scope: any other operator
+   (`>`, `IN`, `LIKE`, `OR`) — a query-condition DSL is real scope growth,
+   left out until something needs it.
+10. `Model.update(id, data)` returns the updated row as a `Hash`, or `nil`
+    if `id` doesn't exist.
+11. `Model.delete(id)` returns whether a row was actually deleted (not just
+    "the DELETE statement ran").
 
 ## Phase 4 — Boot integration (Seam B extended)
 
-13. Confirm `.freeze!` does *not* need special-casing for `register`'d
-    configs — they're plain Hashes of primitive values (Strings, Symbols,
-    Integers), already `Ractor.shareable?` by construction. Write a test
-    asserting this rather than assuming it.
-14. Decide (test-first) whether `.freeze!` should validate that every name
-    referenced by a `DatasetProxy` built at app-definition time was
-    actually `register`'d — catching a typo'd `:analytics` vs
-    `:analitics` at boot instead of at first request. If yes: `.freeze!`
-    raises a precise error naming the unregistered key.
+12. `Model` subclasses are tracked via an `inherited` hook (mirrors how
+    `Base` tracks routes) into a class-level registry.
+13. `.freeze!` walks that registry and calls `Ractor.make_shareable` on
+    each `Model` subclass's config (`db_name`, `table_name`), raising a
+    precise error naming the offending class if something isn't
+    shareable — same fail-fast pattern `.freeze!` already applies to
+    routes.
+14. Decide (test-first) whether `.freeze!` should also validate that every
+    `Model`'s `db_name` was actually `register`'d in `Monk::Persistence` —
+    catching a typo'd `:analytics` vs `:analitics` at boot instead of at
+    first request. If yes: `.freeze!` raises a precise error naming the
+    unregistered key.
 
 ## Phase 5 — Real Ractor integration against live Postgres (Seam G)
 
-15. Multiple real Ractors calling a route that reads via `DatasetProxy`
-    concurrently, against the live (Dockerized) Postgres from Phase 0, all
-    succeed with correct, independent results — the actual proof this
-    design exists for. Mirrors `PLAN.md` step 19.
-16. Multiple real Ractors *writing* concurrently (distinct rows, e.g. each
-    Ractor inserts its own worker id) never lose or corrupt a write —
-    mirrors `PLAN.md` step 20's race-safety proof, but for connections
-    instead of `StateRactor`.
-17. Force a same-Ractor, multi-checkout-at-once scenario (e.g. two threads
-    inside one Ractor, simulating `:threaded` mode, both requesting a
-    connection from a `max_connections: 1` pool) and confirm the
-    `Monk::PersistenceTimeoutError` path from Phase 2 actually triggers as
-    designed under real contention, not just against a mocked
-    `Sequel::PoolTimeout`.
+15. Multiple real Ractors calling `Model.find`/`.where` concurrently,
+    against the live (Dockerized) Postgres from Phase 0, all succeed with
+    correct, independent results — the actual proof this design exists
+    for. Mirrors `PLAN.md` step 19.
+16. Multiple real Ractors calling `Model.create` with distinct data
+    concurrently never lose or corrupt a write — mirrors `PLAN.md` step
+    20's race-safety proof, but for connections instead of `StateRactor`.
+17. Two real threads inside the *same* Ractor both calling into a `Model`
+    method concurrently against the `Mutex`-guarded connection — confirm
+    serialized correctness (no corrupted results), and force the timeout
+    path (e.g. an artificially slow query holding the lock) to confirm
+    `Monk::PersistenceTimeoutError` actually triggers under real
+    contention, not just against a mocked failure.
 
 ## Phase 6 — `monk-consumer-test` end-to-end proof (Seam H)
 
-18. Add a route to `monk-consumer-test`'s `config.ru` that uses
-    `Monk::Persistence`/`DatasetProxy` against the Dockerized Postgres.
+18. Add a route to `monk-consumer-test`'s `config.ru` defining a `Model`
+    subclass and using `.create`/`.find` against the Dockerized Postgres.
 19. Boot it for real via `bundle exec rackup config.ru` (or under Kino, if
     `monk-consumer-test` is extended to depend on it) and hit it with
-    `curl`, confirming the response reflects real data from Postgres.
-    Manual smoke test, not CI — mirrors `PLAN.md` step 21's treatment of
-    Kino verification.
+    `curl`, confirming the response reflects real data round-tripped
+    through Postgres. Manual smoke test, not CI — mirrors `PLAN.md` step
+    21's treatment of Kino verification.
 
 ## Explicitly out of scope for this plan
 
-Carried over from the design doc's own scope cuts: no ActiveRecord
-support, no SQLite support (blocked upstream), no cross-database
-transactions, no migrations tooling, no connection-pool auto-tuning based
-on detected `:ractor` vs `:threaded` mode (Q3's decision was a fixed
-default plus a loud failure, not automatic detection).
+Carried over from the design doc's own scope cuts, plus what the Phase 0
+pivot ruled out directly: no ActiveRecord support, no SQLite support
+(blocked upstream), no Sequel (blocked upstream, confirmed by Phase 0), no
+cross-database transactions, no migrations tooling, no connection-pool
+auto-tuning based on detected `:ractor` vs `:threaded` mode (Q3's decision
+was a fixed default plus a loud failure, not automatic detection), no
+query-condition DSL beyond equality + `AND`, no live model instances
+(Hash-only in/out), no table-name inference/pluralization (explicit
+`table_name` only), no associations/validations/callbacks/dirty-tracking.
