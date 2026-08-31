@@ -18,6 +18,12 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "rack", "~> 3.0"
 
+  # Persistence backends are opt-in (require "monk/persistence/pg"
+  # explicitly), so their gems aren't runtime dependencies of monk itself --
+  # an app that wants Monk::Persistence::Pg declares "pg" in its own
+  # Gemfile. Still needed here to run monk's own test suite.
+  spec.add_development_dependency "pg", "~> 1.5"
+
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "kino"
