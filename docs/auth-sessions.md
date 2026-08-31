@@ -216,13 +216,29 @@ equality + `AND` only, deliberately (`PLAN-PERSISTENCE.md` Phase 3, step
   `@configs`). Do not rediscover it a third time: register a freeze
   hook the way `Persistence::Registry.extended` does, so `Base#freeze!`
   seals `Monk::Auth` without needing to know its name.
-- **Read the secret once, at boot, on the main Ractor.** Not for
-  isolation reasons: `ENV["X"]` was verified readable from inside a
-  non-main Ractor (Ruby 3.3.6 — returned the correct value, full
-  environment visible; unverified on the 4.0 the gemspec requires). The
-  reasons are ordinary ones — fail fast and loudly if the secret is
-  missing (ADR 0003's spirit), keep it out of the per-request path, and
-  hold it as one frozen String the whole pool can read.
+- **Read the secret once, at boot, on the main Ractor.** The reasons
+  are ordinary ones, none of them dependent on Ractor semantics: fail
+  fast and loudly if the secret is missing (ADR 0003's spirit), keep an
+  `ENV` lookup off the per-request path, and hold the value as one
+  frozen String the whole worker pool can read.
+- **Unresolved, deliberately: is `ENV` readable from a non-main Ractor
+  on Ruby 4?** Monk targets 4.0.6 (`.ruby-version`; the gemspec
+  requires `>= 4.0`), and that question has not been answered on 4.x.
+  It was probed on 3.3.6 during this design pass — reads worked and
+  returned the correct value — but that measurement is **off-target and
+  is not carried over here**; this project's own history (the Phase 0
+  Sequel spike, the Phase 4 and 5 freezing findings) is a standing
+  argument against porting Ractor behavior across versions by
+  assumption. It could not be measured in the session that wrote this
+  doc: Ruby 4 source is unreachable from that environment (the network
+  policy answers 403 for `cache.ruby-lang.org` and
+  `codeload.github.com`), and no 4.x toolchain was installed.
+  `PLAN-AUTH.md` Phase 5 carries it as an explicit step,
+  because it isn't only an auth question: `lib/monk/base.rb:79` reads
+  `ENV["MONK_ENV"]` on every request, inside whichever worker Ractor is
+  serving it, to decide whether to log. If a non-main Ractor on 4.0 sees
+  a different answer than the main one does, request logging silently
+  stops honoring `MONK_ENV=production` under a real `kino` pool.
 - **Email delivery stays outside the framework.** A mailer object
   captured in a route closure fails `freeze!` with
   `UnshareableRouteError`, and rightly so. `Monk::Auth.request_login`

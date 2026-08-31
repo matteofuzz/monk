@@ -13,6 +13,14 @@ Nothing here is implemented yet. Phases 1 and 5 are prerequisites in the
 framework itself, not auth code — auth is simply the first feature that
 can't be built without them.
 
+Every phase runs on Monk's target Ruby, 4.0.6 (`.ruby-version`; the
+gemspec requires `>= 4.0`). That is not a formality for this feature:
+each phase below that asserts Ractor behavior must be *measured* on 4.x,
+never inferred from a 3.x result. Nothing in this codebase's Ractor
+history has been portable across versions by assumption — see the Phase
+0 Sequel spike and the Phase 4/5 freezing findings in
+`docs/persistence-ractor-connections.md`.
+
 ## Decisions locked in before Phase 1
 
 Each of these is a recommendation from `docs/auth-sessions.md` promoted
@@ -123,7 +131,7 @@ today's `Pg::Model` doesn't reach."
     `nil`. Test it directly against its own interface first (two
     sequential claims of the same row: first wins, second returns
     `nil`), then build `redeem` on it. The concurrent proof is Phase 7,
-    step 21 — a sequential test cannot demonstrate atomicity.
+    step 22 — a sequential test cannot demonstrate atomicity.
 12. `Model.claim` stays equality-only, consistent with `where`
     (`PLAN-PERSISTENCE.md` Phase 3, step 9). The `used_at IS NULL` guard
     is expressed as a `nil` condition value mapping to `IS NULL`, not as
@@ -163,10 +171,25 @@ today's `Pg::Model` doesn't reach."
     nothing.
 19. A `Monk::Auth` method called before `configure` raises a precise
     error saying so, rather than failing obscurely deep in a query.
+20. **Settle the `ENV`-in-a-worker-Ractor question on 4.0.6**, since
+    this phase is where boot-time config lands anyway: does a non-main
+    Ractor read `ENV` at all, and does it see the same values as the
+    main one? The design deliberately doesn't depend on the answer (the
+    secret is read at boot and frozen either way — see the companion
+    doc), but two things do. It decides whether `Monk::Auth` may ever
+    fall back to an `ENV` read lazily, and it decides whether
+    `lib/monk/base.rb:79` is correct: `log_request` reads
+    `ENV["MONK_ENV"]` per request, inside a worker Ractor, so if the
+    answer differs from the main Ractor's, request logging stops
+    honoring `MONK_ENV=production` under a real `kino` pool. A probe on
+    3.3.6 (reads worked, correct values) is **not** an answer for 4.x
+    and must not be cited as one. If this turns out to be a live
+    logging bug, it is out of scope for this plan — file it separately
+    rather than folding a `Base` fix into the auth branch.
 
 ## Phase 6 — Guarding a route over HTTP (Seam O)
 
-20. `Monk::Auth::Helpers` is mixed into the `Context` class, providing
+21. `Monk::Auth::Helpers` is mixed into the `Context` class, providing
     `current_subject` (memoized per request, `nil` when absent) and
     `require_user!` (returns the subject, or `halt 401` — asserted
     through `App.call(env)` as a real 401 response).
@@ -178,25 +201,25 @@ today's `Pg::Model` doesn't reach."
 
 ## Phase 7 — Real Ractor integration (Seam P)
 
-21. **The race-safety proof.** N real Ractors all call
+22. **The race-safety proof.** N real Ractors all call
     `Monk::Auth.redeem` with the *same* login token concurrently:
     exactly one returns a session, all others return `nil`, and
     `sessions` contains exactly one new row. This is the step Phase 3
     exists to make possible and the reason `Model.claim` is a
     conditional `UPDATE` rather than a read-then-update — mirrors
     `PLAN.md` step 20 and `PLAN-PERSISTENCE.md` step 16.
-22. N real Ractors concurrently verifying N distinct valid session
+23. N real Ractors concurrently verifying N distinct valid session
     tokens all succeed with correct, independent subjects.
-23. A full magic-link round trip driven through `App.call(env)` from
+24. A full magic-link round trip driven through `App.call(env)` from
     inside a real worker Ractor: request → redeem → authenticated call.
 
 ## Phase 8 — Rate limiting `/auth/request` (Seam C extended)
 
-24. A `StateRactor` holding per-email/per-IP counters with a coarse time
+25. A `StateRactor` holding per-email/per-IP counters with a coarse time
     window rejects the N+1th request in a window with `429`. Per-process
     and approximate by design (see the companion doc); durability is
     explicitly not a goal.
-25. The counter's `update` block is predefined where `self` is
+26. The counter's `update` block is predefined where `self` is
     shareable, not written inline in the route handler — the
     `CONTEXT.md` rule for `StateRactor`. Assert the app still passes
     `freeze!`, since getting this wrong is exactly what
@@ -207,17 +230,17 @@ today's `Pg::Model` doesn't reach."
 Deferred by decision 4, and only if a browser-facing flow is actually
 wanted. Nothing in Phases 1–8 depends on it.
 
-26. `Context#headers` is a mutable per-request Hash merged into the
+27. `Context#headers` is a mutable per-request Hash merged into the
     response by `dispatch`, `halt`, and `json` — replacing the
     hardcoded `{}` / lone content-type at `lib/monk/context.rb:14`,
     `:18` and `lib/monk/base.rb:65`. Closes another limitation logged
     in `NOTES-V2.md` ("No custom response headers").
-27. `Context#redirect(location, status: 302)` — needed so the callback
+28. `Context#redirect(location, status: 302)` — needed so the callback
     can redeem and then bounce to a token-free URL, which is what keeps
     the token out of the `Referer` header.
-28. Query-string parsing into `params`, so `?token=...` works and the
+29. Query-string parsing into `params`, so `?token=...` works and the
     token leaves the path (`lib/monk/base.rb:81` logs `PATH_INFO`).
-29. Session cookie set with `HttpOnly; Secure; SameSite=Lax`, read back
+30. Session cookie set with `HttpOnly; Secure; SameSite=Lax`, read back
     by `current_subject` when no `Authorization` header is present.
     **CSRF enters scope here** — a cookie-authenticated state-changing
     route needs a token check, which is its own design pass and
@@ -225,11 +248,11 @@ wanted. Nothing in Phases 1–8 depends on it.
 
 ## Phase 10 — `monk-consumer-test` end-to-end proof (Seam Q)
 
-30. The consumer app (see `PLAN-PERSISTENCE.md` Phase 6) gains the two
+31. The consumer app (see `PLAN-PERSISTENCE.md` Phase 6) gains the two
     migrations, `require "monk/auth"`, a `Monk::Auth.configure` in
     `config/persistence.rb`'s sibling `config/auth.rb`, and three
     routes: request, callback, and a guarded `GET /me`.
-31. Verified manually against a disposable `postgres:16` container under
+32. Verified manually against a disposable `postgres:16` container under
     real `kino` (multiple worker Ractors), with real HTTP requests:
     request a link, redeem it, call `/me` with the returned Bearer
     token, revoke, confirm the next `/me` is 401. Documented as a
