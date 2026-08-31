@@ -31,6 +31,20 @@ run Monk.boot(App)
 
 Save that as `config.ru` and run it with any Rack server (or `bin/server` in this repo, which runs it under Kino).
 
+## Scaffolding a new project — `monk new`
+
+```
+monk new my_app              # Gemfile, config.ru, .ruby-version
+monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
+```
+
+Writes a fresh project directory from static templates (never overwrites
+an existing directory — `monk new` refuses if `my_app` already exists) and
+prints the next manual step (`bundle install`); it never runs `bundle
+install`, `git init`, or anything else on your behalf. `--postgres` adds
+exactly the persistence/migrations wiring documented below, ready for you
+to add your own `db/migrate/*.sql` files and `Model` subclasses.
+
 ## Routing
 
 `get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path; an unmatched request gets a plain `404`.

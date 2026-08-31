@@ -79,7 +79,7 @@ seam, then the minimum code to pass it.
   round-tripping through Postgres (`--postgres` variant) — the scaffolding
   equivalent of `PLAN-PERSISTENCE.md` Seam H / `PLAN-MIGRATIONS.md` Seam J.
 
-## Phase 1 — Base skeleton writer (Seam K, part 1)
+## Phase 1 — Base skeleton writer (Seam K, part 1) — done
 
 1. `Monk::Scaffold.new(dir).write!` creates `dir` (including missing
    parent directories, `mkdir -p`-style) and writes `Gemfile`, `config.ru`,
@@ -92,7 +92,7 @@ seam, then the minimum code to pass it.
    booting it is deliberately left to Phase 4's end-to-end seam, not
    re-proven here.
 
-## Phase 2 — Postgres scaffolding (Seam K, part 2)
+## Phase 2 — Postgres scaffolding (Seam K, part 2) — done
 
 4. `Monk::Scaffold.new(dir, postgres: true).write!` additionally writes
    `config/persistence.rb`, `bin/console`, `bin/setup_db`, `bin/migrate`,
@@ -104,7 +104,7 @@ seam, then the minimum code to pass it.
    `irb` — verified as a diff against the base variant's `Gemfile`, not by
    re-asserting the whole file a second time.
 
-## Phase 3 — `exe/monk` CLI (Seam L)
+## Phase 3 — `exe/monk` CLI (Seam L) — done
 
 7. `exe/monk new APP_NAME` invokes `Monk::Scaffold.new("./APP_NAME").write!`;
    `exe/monk new APP_NAME --postgres` passes `postgres: true`.
@@ -116,7 +116,7 @@ seam, then the minimum code to pass it.
    repo's own Bundler context (proves the executable is actually wired up,
    not just present on disk).
 
-## Phase 4 — End-to-end proof (Seam M)
+## Phase 4 — End-to-end proof (Seam M) — done
 
 10. `monk new` into a disposable scratch directory (not `monk-consumer-test`
     — that one stays the hand-wired reference this plan's templates were
