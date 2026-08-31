@@ -3,6 +3,78 @@ require "tmpdir"
 require "monk/persistence/pg/migrator"
 
 class PersistenceMigratorTest < Minitest::Test
+  include PersistenceTestHelpers
+
+  DB_NAME = :persistence_migrator_test_db
+
+  def setup
+    Monk::Persistence::Pg.reset!
+  end
+
+  def teardown
+    if postgres_available?
+      begin
+        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_test_tables(conn) }
+      rescue Monk::UnknownPersistenceError
+      end
+    end
+    Monk::Persistence::Pg.reset!
+  end
+
+  def test_migrate_bang_creates_schema_migrations_and_applies_pending_migrations_in_order
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT)", down: "DROP TABLE widgets" },
+      "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+
+    applied = migrator.migrate!
+
+    assert_equal ["1", "2"], applied
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
+      assert_equal ["1", "2"], versions
+      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
+      refute_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
+    end
+  end
+
+  def test_migrate_bang_is_a_no_op_when_nothing_is_pending
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+    migrator.migrate!
+
+    applied = migrator.migrate!
+
+    assert_equal [], applied
+  end
+
+  def test_migrate_bang_rolls_back_and_halts_on_a_failing_migration
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    dir = migrations_dir(
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE widgets" },
+      "2_broken" => { up: "SELECT * FROM this_table_does_not_exist", down: "-- noop" },
+      "3_create_things" => { up: "CREATE TABLE things (id SERIAL PRIMARY KEY)", down: "DROP TABLE things" },
+    )
+    migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
+
+    assert_raises(PG::Error) { migrator.migrate! }
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
+      assert_equal ["1"], versions
+      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
+      assert_nil conn.exec("SELECT to_regclass('things')").getvalue(0, 0)
+    end
+  end
+
   def test_lists_up_down_pairs_in_ascending_version_order
     dir = migrations_dir(
       "20260301000000_create_gadgets" => { up: "CREATE TABLE gadgets ()", down: "DROP TABLE gadgets" },
@@ -82,6 +154,10 @@ class PersistenceMigratorTest < Minitest::Test
   end
 
   private
+
+  def drop_test_tables(conn)
+    %w[schema_migrations widgets gadgets things].each { |t| conn.exec("DROP TABLE IF EXISTS #{t} CASCADE") }
+  end
 
   def migrations_dir(migrations)
     dir = Dir.mktmpdir

@@ -21,7 +21,45 @@ module Monk
           @migrations = load_migrations
         end
 
+        # Runs every pending .up.sql (its version absent from
+        # schema_migrations) in ascending order, each inside its own
+        # transaction, recording the version only after that transaction
+        # commits. A failing statement rolls back just that migration and
+        # halts the run -- later pending migrations are never attempted.
+        # Returns the versions actually applied.
+        def migrate!
+          applied = []
+
+          Monk::Persistence::Pg.checkout(@db_name) do |conn|
+            ensure_schema_migrations_table(conn)
+            already_applied = applied_versions(conn)
+
+            migrations.reject { |m| already_applied.include?(m.version) }.each do |m|
+              conn.transaction do
+                conn.exec(File.read(m.up_path))
+                conn.exec_params("INSERT INTO schema_migrations (version) VALUES ($1)", [m.version])
+              end
+              applied << m.version
+            end
+          end
+
+          applied
+        end
+
         private
+
+        def ensure_schema_migrations_table(conn)
+          conn.exec(<<~SQL)
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              version TEXT PRIMARY KEY,
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+          SQL
+        end
+
+        def applied_versions(conn)
+          conn.exec("SELECT version FROM schema_migrations").map { |row| row["version"] }
+        end
 
         def load_migrations
           by_version = {}
