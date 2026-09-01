@@ -116,14 +116,20 @@ CREATE INDEX idx_login_tokens_expires_at ON login_tokens (expires_at);
 CREATE TABLE sessions (
   id         BIGSERIAL PRIMARY KEY,
   subject    TEXT NOT NULL,
+  prefix     TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_sessions_subject ON sessions (subject);
 CREATE INDEX idx_sessions_expires_at ON sessions (expires_at);
 ```
+
+`prefix` and a nullable `expires_at` are here for the API-key case below;
+an ordinary login-derived session populates `prefix` too and gets a
+14-day `expires_at` like any other row in this table — one shape, not
+two.
 
 Versioned `.up.sql`/`.down.sql` pairs, per `PLAN-MIGRATIONS.md` — no
 DSL, sent to Postgres verbatim.
@@ -135,6 +141,47 @@ ships a user schema it has taken the first step toward the
 ActiveRecord-shaped stack `PLAN-PERSISTENCE.md` explicitly refuses, and
 it inherits every downstream question (profile fields, soft delete,
 uniqueness, email change) with it.
+
+## A third case: server-to-server API keys
+
+Server-to-server callers don't fit either row of the table above — no
+email, no interactive redemption, no browser. An API key is a session
+token whose issuance path skips the login-token round-trip entirely:
+same table, same verification code, same revocation, per the schema
+above.
+
+What's different from a browser session:
+
+- **Minted out-of-band.** `Monk::Auth.create_api_key(subject:,
+  expires_at: nil)` is called from a CLI task or an app-built admin
+  route — never from a public endpoint like `/auth/request`. There's no
+  magic link to click, so there's no `login_tokens` row for this path at
+  all.
+- **`expires_at` is nullable.** A service credential that should live
+  until explicitly revoked, not until a clock runs out, needs
+  `revoked_at` as its only lifecycle knob. Verification becomes
+  `revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())` —
+  one extra branch on the same single-row read from the `Model` gap
+  section below.
+- **`prefix` exists so a human can identify a key without ever seeing it
+  again.** The raw token still exists in exactly two places (the
+  one-time creation response and the client) — `prefix` is the first
+  handful of characters of that raw value, stored in plaintext at mint
+  time, so an admin view or a log line can show `mk_9f2a3c1d…` for
+  "which key is this" without weakening the "only the hash is stored"
+  rule.
+
+What stays identical: the wire format (`Authorization: Bearer <token>`),
+the verification code path (`require_user!` / `current_subject`), and
+the entropy/hashing rules from "Two tokens, not one" above. `subject` is
+still an opaque app-assigned string — a service identity is just a
+subject value like `"service:billing-worker"`, not a new concept Monk
+has to understand.
+
+What's deliberately not included, for the same reason roles/permissions
+are out of scope for the rest of this doc: no scopes on a key, no
+self-serve rotation endpoint, no per-key rate limiting. Rotation is
+"mint a new key, revoke the old one" — two calls the app already has.
 
 ## Storage: three options
 
@@ -285,6 +332,11 @@ class App < Monk::Base
     json(ok: true)
   end
 end
+
+# Out-of-band — a rake task or an app-built admin route, never a public
+# endpoint. Shown once; only the hash is ever persisted.
+key = Monk::Auth.create_api_key(subject: "service:billing-worker")
+# => "mk_9f2a3c1d..."
 ```
 
 `Monk::Auth` is opt-in the way persistence backends are — `require
@@ -334,6 +386,10 @@ backend the app may not use.
    generator?** Leaning: ship migrations through `Monk::Scaffold`
    (`PLAN-INIT.md`) as an opt-in template, so the app owns its schema
    and can add columns.
+5. **How many raw characters go into `prefix`?** Recommendation: 8,
+   matching common practice (GitHub, Stripe). It's derived only at mint
+   time from the raw token, never backfilled, so the choice doesn't need
+   a data migration to revisit later.
 
 ## Explicitly out of scope
 
