@@ -70,6 +70,71 @@ class ContextTest < Minitest::Test
     assert_equal "Bearer abc", body.join
   end
 
+  def test_headers_set_on_context_are_merged_into_a_normal_response
+    app = Class.new(Monk::Base) do
+      get("/x") do
+        headers["X-Custom"] = "value"
+        "hi"
+      end
+    end
+
+    _status, headers, body = app.call(env_for("GET", "/x"))
+
+    assert_equal "value", headers["X-Custom"]
+    assert_equal "hi", body.join
+  end
+
+  def test_headers_set_on_context_are_merged_into_a_halt_response
+    app = Class.new(Monk::Base) do
+      get("/x") do
+        headers["X-Custom"] = "value"
+        halt 400, "bad"
+      end
+    end
+
+    status, headers, body = app.call(env_for("GET", "/x"))
+
+    assert_equal 400, status
+    assert_equal "value", headers["X-Custom"]
+    assert_equal "bad", body.join
+  end
+
+  def test_headers_set_on_context_are_merged_into_a_json_response
+    app = Class.new(Monk::Base) do
+      get("/x") do
+        headers["X-Custom"] = "value"
+        json(hello: "world")
+      end
+    end
+
+    _status, headers, _body = app.call(env_for("GET", "/x"))
+
+    assert_equal "value", headers["X-Custom"]
+    assert_equal "application/json", headers["content-type"]
+  end
+
+  def test_redirect_returns_302_by_default_with_a_location_header_and_no_token_in_the_url
+    app = Class.new(Monk::Base) do
+      get("/x") { redirect "/somewhere" }
+    end
+
+    status, headers, = app.call(env_for("GET", "/x"))
+
+    assert_equal 302, status
+    assert_equal "/somewhere", headers["location"]
+  end
+
+  def test_redirect_accepts_a_custom_status
+    app = Class.new(Monk::Base) do
+      get("/x") { redirect "/somewhere", status: 301 }
+    end
+
+    status, headers, = app.call(env_for("GET", "/x"))
+
+    assert_equal 301, status
+    assert_equal "/somewhere", headers["location"]
+  end
+
   def test_header_returns_nil_when_the_header_is_absent
     app = Class.new(Monk::Base) do
       get("/x") { |ctx| ctx.header("authorization").inspect }

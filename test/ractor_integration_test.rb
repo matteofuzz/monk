@@ -68,6 +68,27 @@ class RactorIntegrationTest < Minitest::Test
     ENV.delete("MONK_RACTOR_ENV_PROBE")
   end
 
+  # Regression: Rack::Utils.parse_nested_query memoizes an unfrozen
+  # QueryParser instance in a module ivar the moment "rack/utils" loads (in
+  # the main Ractor) -- reading it back from a worker Ractor raises
+  # Ractor::IsolationError regardless of which Ractor set it, a bug in rack
+  # itself, not yet Ractor-safe. Base#parse_query_string uses
+  # URI.decode_www_form instead; this proves that choice under a real
+  # worker Ractor, not just in the main one.
+  def test_query_string_params_are_readable_from_a_real_worker_ractor
+    app = Class.new(Monk::Base) do
+      get("/x") { params[:token] }
+    end
+    Monk.boot(app)
+
+    result = Ractor.new(app) do |a|
+      _status, _headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/x", "QUERY_STRING" => "token=abc123")
+      body.join
+    end.value
+
+    assert_equal "abc123", result
+  end
+
   def test_concurrent_ractors_hammering_a_shared_stateractor_never_lose_an_update
     increments_per_ractor = 25
     ractor_count = 8

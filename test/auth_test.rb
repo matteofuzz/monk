@@ -53,6 +53,27 @@ class AuthTest < Minitest::Test
     refute_includes row.values.join, raw
   end
 
+  def test_request_login_with_an_allowlisted_redirect_to_stores_it_on_the_row
+    setup_auth_tables(DB_NAME)
+
+    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")
+
+    row = fetch_login_token(email: "a@b.com")
+    assert_equal "/dashboard", row["redirect_to"]
+    refute_nil Digest::SHA256.hexdigest(raw) # sanity: raw still usable
+  end
+
+  def test_request_login_with_a_non_allowlisted_redirect_to_raises_and_stores_nothing
+    setup_auth_tables(DB_NAME)
+
+    error = assert_raises(Monk::InvalidRedirectError) do
+      Monk::Auth.request_login("a@b.com", redirect_to: "https://evil.example.com")
+    end
+
+    assert_match(/evil\.example\.com/, error.message)
+    assert_empty fetch_login_tokens(email: "a@b.com")
+  end
+
   def test_request_login_twice_for_the_same_email_produces_two_distinct_valid_tokens
     setup_auth_tables(DB_NAME)
 
@@ -82,6 +103,24 @@ class AuthTest < Minitest::Test
 
     login_token_row = fetch_login_token(email: "a@b.com")
     refute_nil login_token_row["used_at"]
+  end
+
+  def test_redeem_includes_redirect_to_from_the_login_token_when_present
+    setup_auth_tables(DB_NAME)
+    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")
+
+    session = Monk::Auth.redeem(raw)
+
+    assert_equal "/dashboard", session[:redirect_to]
+  end
+
+  def test_redeem_includes_a_nil_redirect_to_when_absent
+    setup_auth_tables(DB_NAME)
+    raw = Monk::Auth.request_login("a@b.com")
+
+    session = Monk::Auth.redeem(raw)
+
+    assert_nil session[:redirect_to]
   end
 
   def test_redeem_on_an_already_redeemed_token_returns_nil_and_creates_no_second_session

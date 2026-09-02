@@ -59,6 +59,7 @@ module AuthTestHelpers
           id BIGSERIAL PRIMARY KEY,
           email TEXT NOT NULL,
           token_hash TEXT NOT NULL UNIQUE,
+          redirect_to TEXT,
           expires_at TIMESTAMPTZ NOT NULL,
           used_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -75,7 +76,10 @@ module AuthTestHelpers
         )
       SQL
     end
-    Monk::Auth.configure(db_name: db_name, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600)
+    Monk::Auth.configure(
+      db_name: db_name, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
+      redirect_allowlist: ["/dashboard"],
+    )
   end
 
   def drop_auth_tables(conn)
