@@ -8,6 +8,7 @@ require_relative "persistence/pg"
 require_relative "auth/login_token"
 require_relative "auth/session"
 require_relative "auth/helpers"
+require_relative "auth/rate_limiter"
 
 module Monk
   # Passwordless token auth. Opt-in: require "monk/auth" explicitly --
