@@ -120,7 +120,100 @@ class AuthTest < Minitest::Test
     assert_nil Monk::Auth.redeem(raw)
   end
 
+  def test_verify_returns_the_subject_for_a_valid_session_token
+    setup_auth_tables
+    raw = Monk::Auth.request_login("a@b.com")
+    session = Monk::Auth.redeem(raw)
+
+    assert_equal "a@b.com", Monk::Auth.verify(session[:token])
+  end
+
+  def test_verify_returns_nil_for_an_unknown_token
+    setup_auth_tables
+
+    assert_nil Monk::Auth.verify(SecureRandom.urlsafe_base64(32))
+  end
+
+  def test_verify_returns_nil_for_an_expired_session
+    setup_auth_tables
+    raw = "expired-session-token"
+    insert_session(subject: "a@b.com", raw: raw, expires_at: Time.now - 1)
+
+    assert_nil Monk::Auth.verify(raw)
+  end
+
+  def test_verify_returns_nil_for_a_revoked_session
+    setup_auth_tables
+    raw = "revoked-session-token"
+    insert_session(subject: "a@b.com", raw: raw, expires_at: Time.now + 3600, revoked_at: Time.now)
+
+    assert_nil Monk::Auth.verify(raw)
+  end
+
+  def test_revoke_sets_revoked_at_so_a_subsequent_verify_returns_nil
+    setup_auth_tables
+    raw = Monk::Auth.request_login("a@b.com")
+    session = Monk::Auth.redeem(raw)
+
+    result = Monk::Auth.revoke(session[:token])
+
+    assert_equal true, result
+    assert_nil Monk::Auth.verify(session[:token])
+  end
+
+  def test_revoke_returns_false_for_an_unknown_token
+    setup_auth_tables
+
+    refute Monk::Auth.revoke(SecureRandom.urlsafe_base64(32))
+  end
+
+  def test_revoke_all_revokes_every_live_session_for_a_subject_and_returns_the_count
+    setup_auth_tables
+    session_a1 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session_a2 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session_b = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
+
+    count = Monk::Auth.revoke_all("a@b.com")
+
+    assert_equal 2, count
+    assert_nil Monk::Auth.verify(session_a1[:token])
+    assert_nil Monk::Auth.verify(session_a2[:token])
+    assert_equal "b@c.com", Monk::Auth.verify(session_b[:token])
+  end
+
+  def test_sweep_bang_deletes_expired_rows_and_returns_the_counts
+    setup_auth_tables
+    live_raw = Monk::Auth.request_login("a@b.com")
+    insert_login_token(email: "old@b.com", raw: "expired-login-token", expires_at: Time.now - 1)
+    live_session = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
+    insert_session(subject: "old@c.com", raw: "expired-session-token", expires_at: Time.now - 1)
+
+    counts = Monk::Auth.sweep!
+
+    assert_equal({ login_tokens: 1, sessions: 1 }, counts)
+    refute_nil Monk::Auth.redeem(live_raw)
+    assert_equal "b@c.com", Monk::Auth.verify(live_session[:token])
+  end
+
   private
+
+  def insert_login_token(email:, raw:, expires_at:)
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      conn.exec_params(
+        "INSERT INTO login_tokens (email, token_hash, expires_at) VALUES ($1, $2, $3)",
+        [email, Digest::SHA256.hexdigest(raw), expires_at],
+      )
+    end
+  end
+
+  def insert_session(subject:, raw:, expires_at:, revoked_at: nil)
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      conn.exec_params(
+        "INSERT INTO sessions (subject, token_hash, expires_at, revoked_at) VALUES ($1, $2, $3, $4)",
+        [subject, Digest::SHA256.hexdigest(raw), expires_at, revoked_at],
+      )
+    end
+  end
 
   def setup_auth_tables
     skip_unless_postgres_available
@@ -143,6 +236,7 @@ class AuthTest < Minitest::Test
           subject TEXT NOT NULL,
           token_hash TEXT NOT NULL UNIQUE,
           expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       SQL
