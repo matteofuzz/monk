@@ -57,9 +57,9 @@ module Monk
 
       def dispatch(env)
         route, params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
-        return not_found_response unless route
+        return not_found_response(env) unless route
 
-        context = Context.new(params)
+        context = Context.new(params, env)
         catch(:monk_halt) do
           begin
             [200, {}, [context.instance_exec(context, &route[:block])]]
@@ -85,11 +85,11 @@ module Monk
         $stdout.flush
       end
 
-      def not_found_response
+      def not_found_response(env)
         handler = error_handlers.find { |matcher, _| matcher == 404 }
         return [404, {}, [""]] unless handler
 
-        context = Context.new({}, status: 404)
+        context = Context.new({}, env, status: 404)
         catch(:monk_halt) { [404, {}, [context.instance_exec(context, &handler.last)]] }
       end
 

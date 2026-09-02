@@ -40,11 +40,16 @@ it, so they're stated up front rather than discovered mid-implementation.
    Rejected: `StateRactor` as the source of truth (per-process, lost on
    restart). `StateRactor` is still used, for rate limiting only
    (Phase 8).
-4. **Bearer token first, cookies later.** The first working slice is
-   API-shaped: token in a path segment on the way in, session token in
-   a JSON body on the way out, `Authorization: Bearer` thereafter. This
-   defers response headers, query/body parsing, and CSRF entirely.
-   Cookies are Phase 9, and optional.
+4. **Bearer token first, cookies second — both ship, chosen by client
+   type, not sequenced as "eventually."** The first working slice
+   (Phases 1–8) is API-shaped: token in a path segment on the way in,
+   session token in a JSON body on the way out, `Authorization: Bearer`
+   thereafter. That slice defers response headers, query/body parsing,
+   and CSRF — but Phase 9 (cookies, redirects, CSRF) is now a committed
+   phase, not an optional one, per `docs/auth-sessions.md`'s finalized
+   "three transports, one token model": API/S2S uses Bearer, browsers use
+   the cookie, and `Monk::WebSocket` (`PLAN-WEBSOCKET.md`) reuses whichever
+   of the two the connecting client already has.
 5. **Absolute session expiry, not rolling.** Rolling expiry means a
    write on every authenticated request — a read-only hot path turned
    into a write one, under a Ractor worker pool.
@@ -225,10 +230,12 @@ today's `Pg::Model` doesn't reach."
     `freeze!`, since getting this wrong is exactly what
     `UnshareableBlockError` exists to catch.
 
-## Phase 9 — Cookies, redirects, response headers (Seam A extended)
+## Phase 9 — Cookies, redirects, CSRF (Seam A extended)
 
-Deferred by decision 4, and only if a browser-facing flow is actually
-wanted. Nothing in Phases 1–8 depends on it.
+Committed, per decision 4 above — `docs/auth-sessions.md`'s "The browser
+case" is the design this phase implements. Phases 1–8 don't depend on it
+(Bearer works without it), but it's no longer conditional on "if a
+browser-facing flow is wanted": it ships.
 
 27. `Context#headers` is a mutable per-request Hash merged into the
     response by `dispatch`, `halt`, and `json` — replacing the
@@ -238,24 +245,62 @@ wanted. Nothing in Phases 1–8 depends on it.
 28. `Context#redirect(location, status: 302)` — needed so the callback
     can redeem and then bounce to a token-free URL, which is what keeps
     the token out of the `Referer` header.
-29. Query-string parsing into `params`, so `?token=...` works and the
-    token leaves the path (`lib/monk/base.rb:81` logs `PATH_INFO`).
-30. Session cookie set with `HttpOnly; Secure; SameSite=Lax`, read back
-    by `current_subject` when no `Authorization` header is present.
-    **CSRF enters scope here** — a cookie-authenticated state-changing
-    route needs a token check, which is its own design pass and
-    probably its own plan.
+29. Query-string and JSON-body parsing into `params`, so `POST
+    /auth/request` can accept `redirect_to` and a token can travel as
+    `?token=...` instead of a path segment (`lib/monk/base.rb:81` logs
+    `PATH_INFO`, not the query string).
+30. `login_tokens` gains the `redirect_to` column (`docs/auth-sessions.md`
+    schema). `Monk::Auth.request_login(email, redirect_to: nil)` validates
+    a non-nil `redirect_to` against an app-supplied allowlist and raises
+    rather than storing an unvalidated value — never an open redirect.
+31. `Monk::Auth.redeem` response shape branches on `redirect_to`: `nil` →
+    today's JSON Hash (Phase 2 behavior, unchanged); present → the same
+    Hash plus the cookie gets set and a `302` issued by the route, per the
+    example in `docs/auth-sessions.md`'s "Proposed API".
+32. `set_session_cookie(session)` (a `Monk::Auth::Helpers` method) sets two
+    cookies: the session token as `HttpOnly; Secure; SameSite=Lax; Path=/`
+    with `Max-Age` matching `session[:expires_at]`, and a **non**-`HttpOnly`
+    `csrf_token` cookie computed as `HMAC-SHA256(secret, session[:token])`
+    — no new table, per "CSRF: stateless double-submit, no third table" in
+    the companion doc.
+33. `current_subject` falls back to the session cookie when
+    `Authorization` is absent, verifying it through the identical
+    `Monk::Auth.verify` code path Bearer already uses — no second
+    verification implementation.
+34. `require_csrf!` compares the `X-CSRF-Token` request header against
+    `HMAC-SHA256(secret, <cookie session token>)` with
+    `OpenSSL.secure_compare`, halting `403` on mismatch or absence — and is
+    a no-op when `current_subject` resolved via `Authorization` rather than
+    the cookie, since a forged cross-origin request can't carry a Bearer
+    header at all. Assert it guards `POST`/`PUT`/`PATCH`/`DELETE` routes
+    and is not required on `GET`/`HEAD`.
+35. `clear_session_cookie` (used by `DELETE /auth/session`) re-sends both
+    cookies with an already-expired `Max-Age=0`, so a revoked session
+    stops being presented by the browser, not just rejected server-side.
+36. End-to-end over `App.call(env)`: request with `redirect_to` → redeem →
+    302 with both `Set-Cookie` headers and no token in `Location` →
+    authenticated `GET /me` via the cookie alone (no `Authorization`) →
+    a state-changing route without `X-CSRF-Token` gets `403`, with it
+    gets through → logout clears both cookies and a subsequent cookie-only
+    request is `401`.
 
 ## Phase 10 — `monk-consumer-test` end-to-end proof (Seam Q)
 
-31. The consumer app (see `PLAN-PERSISTENCE.md` Phase 6) gains the two
-    migrations, `require "monk/auth"`, a `Monk::Auth.configure` in
-    `config/persistence.rb`'s sibling `config/auth.rb`, and three
-    routes: request, callback, and a guarded `GET /me`.
-32. Verified manually against a disposable `postgres:16` container under
-    real `kino` (multiple worker Ractors), with real HTTP requests:
-    request a link, redeem it, call `/me` with the returned Bearer
-    token, revoke, confirm the next `/me` is 401. Documented as a
+37. The consumer app (see `PLAN-PERSISTENCE.md` Phase 6) gains the two
+    migrations (including `login_tokens.redirect_to`), `require
+    "monk/auth"`, a `Monk::Auth.configure` in `config/persistence.rb`'s
+    sibling `config/auth.rb`, and routes: request, callback, a guarded
+    `GET /me`, and a guarded state-changing route exercising
+    `require_csrf!`.
+38. Verified manually against a disposable `postgres:16` container under
+    real `kino` (multiple worker Ractors), with real HTTP requests, both
+    ways: (a) Bearer path — request a link with no `redirect_to`, redeem
+    it, call `/me` with the returned Bearer token, revoke, confirm the
+    next `/me` is `401`; (b) cookie path — request a link with
+    `redirect_to`, redeem via a real cookie-jar-capable HTTP client,
+    confirm `/me` works cookie-only, confirm the CSRF-guarded route
+    rejects a request missing `X-CSRF-Token` and accepts one with it,
+    logout, confirm the cookie no longer authenticates. Documented as a
     verification step, not an automated cycle — mirrors `PLAN.md`
     step 21.
 
@@ -265,7 +310,12 @@ Carried over from the companion doc's scope cuts: no passwords, no
 OAuth/OIDC/SAML, no WebAuthn/passkeys, no TOTP or second factors, no
 "remember this device", no user/account schema, no email delivery or
 templating, no authorization/roles/permissions (authentication only),
-no JWT, no session-listing or "log out everywhere" UI, no CSRF
-machinery (Phase 9 flags where it would begin), no query-condition DSL
-beyond equality + `AND` + `IS NULL`, no scheduled-job runner for
-`sweep!` (async jobs are their own `NOTES-V2.md` candidate).
+no JWT, no session-listing or "log out everywhere" UI, no query-condition
+DSL beyond equality + `AND` + `IS NULL`, no scheduled-job runner for
+`sweep!` (async jobs are their own `NOTES-V2.md` candidate), no
+cross-origin (CORS) cookie sharing — a frontend on a different origin is
+a Bearer consumer, not a cookie consumer. `Monk::WebSocket`'s own
+`Origin`-allowlist validation and its reuse of this phase's cookie
+(`PLAN-WEBSOCKET.md` Phase 5) are that plan's scope, not this one's — this
+plan only has to make the cookie exist and verify the same way Bearer
+does.

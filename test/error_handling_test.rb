@@ -39,6 +39,16 @@ class ErrorHandlingTest < Minitest::Test
     assert_equal '{"error":"handled"}', body.join
   end
 
+  def test_registered_error_404_handler_sees_env
+    app = Class.new(Monk::Base) do
+      error(404) { |ctx| ctx.env["PATH_INFO"] }
+    end
+
+    _status, _headers, body = app.call(env_for("GET", "/nope"))
+
+    assert_equal "/nope", body.join
+  end
+
   def test_registered_error_404_handler_overrides_default_not_found
     app = Class.new(Monk::Base) do
       error(404) { json(error: "not found") }

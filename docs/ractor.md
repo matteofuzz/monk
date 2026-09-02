@@ -22,6 +22,23 @@ Ractors, unlike Threads). The one rule that makes it safe is the
 - A `Proc` is only shareable if it's frozen **and** its lexically captured `self`
   and any closed-over locals are shareable. This trips people up constantly, and
   it's exactly what `test/state_ractor_test.rb` documents in its comment.
+- **The same rule reaches into `define_method`.** A method created via
+  `define_method(:name) { ... }` with an ordinary (unfrozen) block is only
+  callable from the Ractor that defined it — calling it from any other Ractor,
+  even a worker calling a method a gem defined in main at load time, raises
+  `RuntimeError: defined with an un-shareable Proc in a different Ractor`.
+  Verified empirically 2026-09-01 (`docs/websocket.md`'s spike): this holds
+  even after the method is fully exercised in main first, so it isn't a
+  load-order/warm-up problem the way the `Model`/`Persistence` ivar bugs
+  were — every call from a non-defining Ractor fails, permanently. The fix
+  is the same shareability rule, just applied to the block before it's
+  handed to `define_method`: `block = proc { ... }; Ractor.make_shareable
+  (block); define_method(:name, &block)` makes the resulting method callable
+  from any Ractor. This is a real hazard for any gem (not Monk-specific)
+  that uses the common `define_method`-with-a-block idiom for delegators or
+  wrapper methods — it silently only works under `:threaded` mode, never
+  `:ractor` mode, regardless of whether the gem is otherwise pure Ruby with
+  no C extension.
 
 Ruby 4 (this repo targets 4.0+, see `.ruby-version`) is where Ractor's communication
 primitives finally stabilized: the old `Ractor.yield`/`Ractor.take` main-Ractor-centric

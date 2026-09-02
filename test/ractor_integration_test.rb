@@ -23,6 +23,31 @@ class RactorIntegrationTest < Minitest::Test
     end
   end
 
+  def test_route_reading_ctx_env_still_freezes_and_stays_correct_under_concurrent_ractors
+    app = Class.new(Monk::Base) do
+      get("/echo/:id") { |ctx| "#{ctx.params[:id]}:#{ctx.env["PATH_INFO"]}" }
+    end
+    Monk.boot(app)
+
+    assert Ractor.shareable?(app.routes)
+
+    ractors = (1..10).map do |i|
+      Ractor.new(app, i) do |a, id|
+        env = { "REQUEST_METHOD" => "GET", "PATH_INFO" => "/echo/#{id}" }
+        status, _headers, body = a.call(env)
+        [status, body.join]
+      end
+    end
+
+    results = ractors.map(&:value)
+
+    results.each_with_index do |(status, body), index|
+      id = index + 1
+      assert_equal 200, status
+      assert_equal "#{id}:/echo/#{id}", body
+    end
+  end
+
   def test_concurrent_ractors_hammering_a_shared_stateractor_never_lose_an_update
     increments_per_ractor = 25
     ractor_count = 8
