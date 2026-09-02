@@ -1,3 +1,5 @@
+require_relative "freeze_hooks"
+
 module Monk
   class Base
     class << self
@@ -28,7 +30,7 @@ module Monk
           end
         end
 
-        Monk::Persistence.freeze_hooks.each(&:freeze_registry!)
+        Monk.freeze_hooks.each(&:freeze_registry!)
         Monk::Persistence::Model.freeze_all!
 
         Ractor.make_shareable(routes)

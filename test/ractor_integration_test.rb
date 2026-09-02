@@ -48,6 +48,26 @@ class RactorIntegrationTest < Minitest::Test
     end
   end
 
+  # Settles, by measurement on this project's actual target (Ruby 4.0.6,
+  # .ruby-version), a question PLAN-AUTH.md Phase 5 step 20 left open: does
+  # a non-main Ractor read ENV at all, and does it see the same value the
+  # main Ractor set? This determines whether lib/monk/base.rb:79's
+  # ENV["MONK_ENV"] read (done per-request, inside whichever worker Ractor
+  # is serving it) is trustworthy under a real kino pool. A 3.3.6 probe
+  # exists in docs/auth-sessions.md but is explicitly not a substitute --
+  # see this project's own history of Ractor behavior not porting across
+  # versions by assumption (the Phase 0 Sequel spike, the Phase 4/5
+  # freezing findings).
+  def test_env_is_readable_and_consistent_from_a_real_worker_ractor
+    ENV["MONK_RACTOR_ENV_PROBE"] = "main-ractor-value"
+
+    result = Ractor.new { ENV["MONK_RACTOR_ENV_PROBE"] }.value
+
+    assert_equal "main-ractor-value", result
+  ensure
+    ENV.delete("MONK_RACTOR_ENV_PROBE")
+  end
+
   def test_concurrent_ractors_hammering_a_shared_stateractor_never_lose_an_update
     increments_per_ractor = 25
     ractor_count = 8

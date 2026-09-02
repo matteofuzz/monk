@@ -20,6 +20,7 @@ class AuthTest < Minitest::Test
       end
     end
     Monk::Persistence::Pg.reset!
+    Monk::Auth.reset!
   end
 
   def test_configure_stores_config_and_is_readable_back
@@ -179,6 +180,14 @@ class AuthTest < Minitest::Test
     assert_nil Monk::Auth.verify(session_a1[:token])
     assert_nil Monk::Auth.verify(session_a2[:token])
     assert_equal "b@c.com", Monk::Auth.verify(session_b[:token])
+  end
+
+  def test_calling_a_method_before_configure_raises_a_precise_error
+    Monk::Auth.reset!
+
+    error = assert_raises(Monk::AuthNotConfiguredError) { Monk::Auth.request_login("a@b.com") }
+
+    assert_match(/configure/, error.message)
   end
 
   def test_sweep_bang_deletes_expired_rows_and_returns_the_counts
