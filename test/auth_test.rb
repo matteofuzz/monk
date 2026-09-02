@@ -82,6 +82,18 @@ class AuthTest < Minitest::Test
     refute_nil login_token_row["used_at"]
   end
 
+  def test_redeem_on_an_already_redeemed_token_returns_nil_and_creates_no_second_session
+    setup_auth_tables
+    raw = Monk::Auth.request_login("a@b.com")
+    first = Monk::Auth.redeem(raw)
+
+    second = Monk::Auth.redeem(raw)
+
+    refute_nil first
+    assert_nil second
+    assert_equal 1, fetch_sessions(subject: "a@b.com").size
+  end
+
   def test_redeem_returns_nil_for_an_unknown_token
     setup_auth_tables
 

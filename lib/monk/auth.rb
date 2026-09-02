@@ -51,7 +51,8 @@ module Monk
         return nil unless row
         return nil if row[:expires_at] <= Time.now
 
-        LoginToken.update(row[:id], used_at: Time.now)
+        claimed = LoginToken.claim({ id: row[:id], used_at: nil }, used_at: Time.now)
+        return nil unless claimed
 
         session_raw = SecureRandom.urlsafe_base64(32)
         expires_at = Time.now + config[:session_ttl]

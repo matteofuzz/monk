@@ -52,6 +52,28 @@ module Monk
             end
           end
 
+          # Conditional UPDATE ... RETURNING * -- the row or nil, in one
+          # atomic statement instead of read-then-update, so two concurrent
+          # claims of the same row can't both succeed (see Model.update's
+          # unconditional `WHERE id = $1`, which can't express this guard).
+          # Equality + AND only, consistent with `where`: a `nil` condition
+          # value maps to `IS NULL`, not to a bound `= NULL` (which would
+          # never match, since SQL NULL comparisons aren't true/false).
+          def claim(conditions, data)
+            Monk::Persistence::Pg.checkout(db_name) do |conn|
+              sets = data.keys.each_with_index
+                .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 1}" }.join(", ")
+
+              bound, nil_conditions = conditions.partition { |_, v| !v.nil? }
+              where_parts = bound.each_with_index.map { |(c, _), i| "#{conn.quote_ident(c.to_s)} = $#{data.size + i + 1}" }
+              where_parts += nil_conditions.map { |c, _| "#{conn.quote_ident(c.to_s)} IS NULL" }
+
+              sql = "UPDATE #{conn.quote_ident(table_name)} SET #{sets} " \
+                "WHERE #{where_parts.join(" AND ")} RETURNING *"
+              to_row(conn.exec_params(sql, data.values + bound.map(&:last)))
+            end
+          end
+
           def delete(id)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
               sql = "DELETE FROM #{conn.quote_ident(table_name)} WHERE id = $1"
