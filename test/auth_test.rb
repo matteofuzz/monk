@@ -5,6 +5,7 @@ require "monk/auth"
 
 class AuthTest < Minitest::Test
   include PersistenceTestHelpers
+  include AuthTestHelpers
 
   DB_NAME = :auth_test_db
 
@@ -15,7 +16,7 @@ class AuthTest < Minitest::Test
   def teardown
     if postgres_available?
       begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_test_tables(conn) }
+        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
       rescue Monk::UnknownPersistenceError
       end
     end
@@ -43,7 +44,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_request_login_inserts_a_login_tokens_row_storing_only_the_hash
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     raw = Monk::Auth.request_login("a@b.com")
 
@@ -53,7 +54,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_request_login_twice_for_the_same_email_produces_two_distinct_valid_tokens
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     first = Monk::Auth.request_login("a@b.com")
     second = Monk::Auth.request_login("a@b.com")
@@ -65,7 +66,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_redeem_on_a_fresh_token_returns_a_session_and_marks_the_login_token_used
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = Monk::Auth.request_login("a@b.com")
 
     session = Monk::Auth.redeem(raw)
@@ -84,7 +85,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_redeem_on_an_already_redeemed_token_returns_nil_and_creates_no_second_session
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = Monk::Auth.request_login("a@b.com")
     first = Monk::Auth.redeem(raw)
 
@@ -96,20 +97,20 @@ class AuthTest < Minitest::Test
   end
 
   def test_redeem_returns_nil_for_an_unknown_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     assert_nil Monk::Auth.redeem(SecureRandom.urlsafe_base64(32))
   end
 
   def test_redeem_returns_nil_for_a_malformed_or_empty_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     assert_nil Monk::Auth.redeem("")
     assert_nil Monk::Auth.redeem(nil)
   end
 
   def test_redeem_returns_nil_for_an_expired_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = "expired-raw-token"
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       conn.exec_params(
@@ -122,7 +123,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_verify_returns_the_subject_for_a_valid_session_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = Monk::Auth.request_login("a@b.com")
     session = Monk::Auth.redeem(raw)
 
@@ -130,13 +131,13 @@ class AuthTest < Minitest::Test
   end
 
   def test_verify_returns_nil_for_an_unknown_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     assert_nil Monk::Auth.verify(SecureRandom.urlsafe_base64(32))
   end
 
   def test_verify_returns_nil_for_an_expired_session
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = "expired-session-token"
     insert_session(subject: "a@b.com", raw: raw, expires_at: Time.now - 1)
 
@@ -144,7 +145,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_verify_returns_nil_for_a_revoked_session
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = "revoked-session-token"
     insert_session(subject: "a@b.com", raw: raw, expires_at: Time.now + 3600, revoked_at: Time.now)
 
@@ -152,7 +153,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_revoke_sets_revoked_at_so_a_subsequent_verify_returns_nil
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     raw = Monk::Auth.request_login("a@b.com")
     session = Monk::Auth.redeem(raw)
 
@@ -163,13 +164,13 @@ class AuthTest < Minitest::Test
   end
 
   def test_revoke_returns_false_for_an_unknown_token
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
 
     refute Monk::Auth.revoke(SecureRandom.urlsafe_base64(32))
   end
 
   def test_revoke_all_revokes_every_live_session_for_a_subject_and_returns_the_count
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     session_a1 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
     session_a2 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
     session_b = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
@@ -191,7 +192,7 @@ class AuthTest < Minitest::Test
   end
 
   def test_sweep_bang_deletes_expired_rows_and_returns_the_counts
-    setup_auth_tables
+    setup_auth_tables(DB_NAME)
     live_raw = Monk::Auth.request_login("a@b.com")
     insert_login_token(email: "old@b.com", raw: "expired-login-token", expires_at: Time.now - 1)
     live_session = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
@@ -222,40 +223,6 @@ class AuthTest < Minitest::Test
         [subject, Digest::SHA256.hexdigest(raw), expires_at, revoked_at],
       )
     end
-  end
-
-  def setup_auth_tables
-    skip_unless_postgres_available
-    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
-    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-      drop_test_tables(conn)
-      conn.exec(<<~SQL)
-        CREATE TABLE login_tokens (
-          id BIGSERIAL PRIMARY KEY,
-          email TEXT NOT NULL,
-          token_hash TEXT NOT NULL UNIQUE,
-          expires_at TIMESTAMPTZ NOT NULL,
-          used_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      SQL
-      conn.exec(<<~SQL)
-        CREATE TABLE sessions (
-          id BIGSERIAL PRIMARY KEY,
-          subject TEXT NOT NULL,
-          token_hash TEXT NOT NULL UNIQUE,
-          expires_at TIMESTAMPTZ NOT NULL,
-          revoked_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      SQL
-    end
-    Monk::Auth.configure(db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600)
-  end
-
-  def drop_test_tables(conn)
-    conn.exec("DROP TABLE IF EXISTS sessions")
-    conn.exec("DROP TABLE IF EXISTS login_tokens")
   end
 
   def fetch_login_token(email:)

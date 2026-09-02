@@ -7,6 +7,7 @@ require_relative "auth_not_configured_error"
 require_relative "persistence/pg"
 require_relative "auth/login_token"
 require_relative "auth/session"
+require_relative "auth/helpers"
 
 module Monk
   # Passwordless token auth. Opt-in: require "monk/auth" explicitly --
