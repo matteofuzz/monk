@@ -209,8 +209,37 @@ plan assumption. Reversing one invalidates the phases that rest on it.
 19. The WS process's own boot script `require`s `monk/persistence/pg` and
     `monk/auth` and calls the same `Monk::Persistence.register` /
     `Monk::Auth.configure` the HTTP process uses, against the same
-    database — no new auth mechanism.
-20. **How the token reaches the handshake — resolved, per Decision 5.**
+    database — no new auth mechanism. `configure` still requires non-nil
+    `secret:`/`login_ttl:`/`session_ttl:` even though this process only
+    ever calls `verify` and never issues a token — those three values are
+    never consulted on the verify path (`secret` feeds `csrf_token_for`
+    only, which this process never calls), so the boot script needs
+    *some* value for each, not necessarily the HTTP process's real
+    secret.
+20. **The freeze gap — a fourth instance of the `Ractor.make_shareable`
+    bug class, caught here instead of at runtime.** `Monk::Auth`'s
+    `@config` only becomes `Ractor.shareable?` via `Monk.freeze_hooks.
+    each(&:freeze_registry!)` (`lib/monk/freeze_hooks.rb`), and today
+    that line runs exactly once: inside `Monk::Base.freeze!`, called
+    explicitly or lazily on `Base.call`'s first request
+    (`lib/monk/base.rb:36,53`; `test/auth_boot_test.rb` names the
+    regression this closes for the HTTP process). Decision 1 keeps
+    `Monk::WebSocket::Server` off `Monk::Base` entirely — it never calls
+    `Base.call` or `Base.freeze!` — so step 19's boot script as written
+    leaves `Monk::Auth.config` unfrozen, and step 22's `Monk::Auth.verify`
+    call from inside a connection Ractor raises `Ractor::IsolationError`
+    the first time it runs, the same failure `docs/persistence-ractor-
+    connections.md`'s "Phase 4 finding" and "Phase 5 finding" and
+    `PLAN-AUTH.md`'s Phase 5 step 17 already hit and fixed twice before.
+    Fix: extract the two registry-freezing lines out of `Base.freeze!`
+    into a standalone `Monk.freeze!` that both `Base.freeze!` and a
+    non-`Base` process can call; the WS boot script calls it explicitly
+    right after `Monk::Auth.configure`. The regression test is the
+    WS-specific version of `auth_boot_test.rb`: configure `Monk::Auth`,
+    call the new `Monk.freeze!` with **no** `Monk::Base` subclass
+    involved, then read `Monk::Auth.config` from a real worker Ractor —
+    proving the freeze doesn't secretly still depend on `Base`.
+21. **How the token reaches the handshake — resolved, per Decision 5.**
     During handshake parsing (Seam R, `Handshake.parse_request`), extract
     identity in this order: (a) an `Authorization: Bearer` header if
     present — the non-browser/S2S path; (b) otherwise the session cookie
@@ -220,9 +249,14 @@ plan assumption. Reversing one invalidates the phases that rest on it.
     superseded now that the cookie carries automatically for the case that
     actually needs it (a browser can't set the `Authorization` header
     either way, so there's no case left for a query-param fallback to
-    solve).
-21. **`Origin` allowlist validation, on every handshake, checked before
-    step 22's `verify` call.** A cookie-authenticated handshake is
+    solve). One consequence of reusing the cookie as-is: `set_session_cookie`
+    marks it `Secure` (`lib/monk/auth/helpers.rb`), so a browser only
+    attaches it to a handshake made over `wss://`, never plain `ws://` —
+    consistent with Decision 8's TLS-at-the-proxy posture, but worth
+    stating explicitly since local/dev testing over plain `ws://` will see
+    no cookie at all rather than a rejected one.
+22. **`Origin` allowlist validation, on every handshake, checked before
+    step 23's `verify` call.** A cookie-authenticated handshake is
     forgeable cross-origin the same way a CSRF'd form post is (Cross-Site
     WebSocket Hijacking) — neither `SameSite` nor `PLAN-AUTH.md`'s CSRF
     double-submit header reaches a WS handshake, so this is the
@@ -234,13 +268,13 @@ plan assumption. Reversing one invalidates the phases that rest on it.
     have no `Origin` header to check by construction — this step applies
     to the cookie path only, mirroring `require_csrf!`'s own Bearer
     exemption in `PLAN-AUTH.md`.
-22. `Monk::Auth.verify` runs against whichever of step 20's (a)/(b) was
-    found, *after* step 21's `Origin` check passes and *before* the
+23. `Monk::Auth.verify` runs against whichever of step 21's (a)/(b) was
+    found, *after* step 22's `Origin` check passes and *before* the
     handshake's `101` response is sent. An invalid or missing token on
     both channels closes the connection with a `401`-equivalent (a plain
     HTTP `401` response instead of `101`, since the connection hasn't
     upgraded yet) rather than registering an anonymous connection.
-23. Ping/pong (`0x9`/`0xA`, decoded since Phase 1) are answered
+24. Ping/pong (`0x9`/`0xA`, decoded since Phase 1) are answered
     automatically by the connection's Ractor — a `ping` gets an immediate
     `pong` without reaching the caller-supplied block, keeping a long-lived
     authenticated connection alive through idle reverse-proxy timeouts.
@@ -251,20 +285,20 @@ Not built until Decision 4 is revisited (a second `Monk::WebSocket::Server`
 process, or an HTTP-triggered WS push, actually shows up as a requirement).
 Sketched here so Phase 4's registry API doesn't have to change shape later.
 
-24. A dedicated "listener" Ractor per WS process holds one `PG::Connection`
+25. A dedicated "listener" Ractor per WS process holds one `PG::Connection`
     in `LISTEN` mode; a `NOTIFY` payload is translated into a local
     `Registry.broadcast` call — the registry's public API (step 16) is
     unchanged, this just feeds it from a second source.
-25. `Monk::Persistence::Pg`'s existing per-Ractor connection lifecycle
+26. `Monk::Persistence::Pg`'s existing per-Ractor connection lifecycle
     (`PLAN-PERSISTENCE.md` Phase 1) is reused for the listener connection —
     no new connection-management code.
-26. `NOTIFY` payload size (8000 bytes) and delivery guarantees (dropped if
+27. `NOTIFY` payload size (8000 bytes) and delivery guarantees (dropped if
     nothing is listening, no queue/replay) are documented as constraints
     on what `broadcast` payloads may safely carry — not silently assumed.
 
 ## Phase 7 — Real Ractor/concurrency integration (Seam U)
 
-27. Automate Phase 0's manual spike: N real, concurrently-accepted
+28. Automate Phase 0's manual spike: N real, concurrently-accepted
     connections against a real `Monk::WebSocket::Server` — one ordinary,
     one that deliberately blocks inside its handler, one that sends a
     malformed frame. Assert (not just observe) that the ordinary and
@@ -273,16 +307,16 @@ Sketched here so Phase 4's registry API doesn't have to change shape later.
     affecting the other two or the accept loop — the committed version of
     `docs/websocket.md`'s "End-to-end spike," in the same spirit as
     `test/ractor_integration_test.rb`'s hammer test for `StateRactor`.
-28. N real connections registered under the same channel (Phase 4),
+29. N real connections registered under the same channel (Phase 4),
     broadcasting from a real Ractor other than any connection's own, all
     receive the message correctly.
 
 ## Phase 8 — `monk-consumer-test` end-to-end proof (Seam V)
 
-29. The consumer app gains `require "monk/websocket"`, a `bin/websocket_server`
+30. The consumer app gains `require "monk/websocket"`, a `bin/websocket_server`
     script, one channel/handler, and (if Phase 5 landed) the same
     `Monk::Auth`/`Monk::Persistence` config its HTTP side already uses.
-30. Verified manually: run the WS process locally, connect with a real
+31. Verified manually: run the WS process locally, connect with a real
     client (a small script, or a generic tool) once with a valid
     `Authorization: Bearer` header and once with a real cookie jar shared
     from the HTTP process's login flow, send/receive a message, broadcast
@@ -290,7 +324,7 @@ Sketched here so Phase 4's registry API doesn't have to change shape later.
     `Origin` is rejected. Documented as a verification step, not an
     automated cycle — mirrors `PLAN.md` step 21 and `PLAN-AUTH.md`
     step 38.
-31. `docs/deploying.md` gains a worked reverse-proxy example (nginx or
+32. `docs/deploying.md` gains a worked reverse-proxy example (nginx or
     Caddy, whichever the existing Render/Fly cases make cheaper to show)
     routing `/ws` to the WebSocket process's port and everything else to
     Kino, on the **same host** as the HTTP process (per Decision 5) —
