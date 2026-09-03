@@ -10,6 +10,38 @@ module Monk
       end
 
       def read
+        frame = read_frame
+        return nil unless frame
+
+        if frame[:opcode] == 0x8
+          # The RFC 6455 closing handshake, not a bare TCP close (step
+          # 13): echo a close frame back, close the socket, and report
+          # this to app code the same way any other disconnect is
+          # reported -- #read returning nil (step 15).
+          @socket.write(Monk::WebSocket::Frame.encode(frame[:payload], opcode: 0x8))
+          @socket.close
+          return nil
+        end
+
+        frame[:payload]
+      end
+
+      def write(payload, opcode: 0x1)
+        @socket.write(Monk::WebSocket::Frame.encode(payload, opcode: opcode))
+      end
+
+      # The server-initiated close path (step 14): send a close frame
+      # carrying the 2-byte status code + reason RFC 6455 expects, then
+      # close the socket outright -- no wait for the client's own close
+      # frame in reply.
+      def close(code: 1000, reason: "")
+        @socket.write(Monk::WebSocket::Frame.encode([code].pack("n") + reason.to_s, opcode: 0x8))
+        @socket.close
+      end
+
+      private
+
+      def read_frame
         header = read_exactly(2)
         return nil unless header
 
@@ -32,14 +64,8 @@ module Monk
         payload = read_exactly(length)
         return nil unless payload
 
-        Monk::WebSocket::Frame.decode(header + extended + mask_key + payload)[:payload]
+        Monk::WebSocket::Frame.decode(header + extended + mask_key + payload)
       end
-
-      def write(payload, opcode: 0x1)
-        @socket.write(Monk::WebSocket::Frame.encode(payload, opcode: opcode))
-      end
-
-      private
 
       def extended_length(length_indicator, extended)
         case length_indicator
