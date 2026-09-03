@@ -6,8 +6,34 @@ module Monk
     # bin/websocket_server) -- never embedded in the same process as Kino
     # (PLAN-WEBSOCKET.md Decision 1).
     class Server
-      def initialize(port:, bind: "0.0.0.0")
+      # allowed_origins: and authenticate: implement PLAN-WEBSOCKET.md
+      # Phase 5 (identity via Monk::Auth, reused unmodified -- Decision
+      # 5). authenticate: defaults false so a plain server (Phases 1-4)
+      # behaves exactly as before; turning it on requires Monk::Auth to
+      # already be configured, fail-fast the same way Monk::Auth's own
+      # methods do (ADR 0003) rather than failing obscurely on the first
+      # connection.
+      def initialize(port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false)
+        if authenticate
+          unless defined?(Monk::Auth) && Monk::Auth.config
+            raise Monk::AuthNotConfiguredError,
+              "Monk::WebSocket::Server.new(authenticate: true) requires Monk::Auth to already be " \
+              "configured -- call Monk::Auth.configure first"
+          end
+
+          # Monk::Auth's config is a plain, unfrozen Hash until this runs
+          # (lib/monk/freeze_hooks.rb) -- without it, the first
+          # Monk::Auth.verify call from inside a connection Ractor raises
+          # Ractor::IsolationError (PLAN-WEBSOCKET.md Phase 5 step 20).
+          # Called here, not left to the boot script to remember, the same
+          # way Base.call already auto-freezes on first use rather than
+          # trusting every app to call Base.freeze! itself.
+          Monk.freeze!
+        end
+
         @tcp_server = TCPServer.new(bind, port)
+        @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
+        @authenticate = authenticate
       end
 
       def port
@@ -27,7 +53,9 @@ module Monk
 
         loop do
           socket = @tcp_server.accept
-          ractor = Ractor.new(shareable_block) { |blk| Monk::WebSocket::Server.serve(Ractor.receive, blk) }
+          ractor = Ractor.new(shareable_block, @authenticate, @allowed_origins) do |blk, authenticate, origins|
+            Monk::WebSocket::Server.serve(Ractor.receive, blk, authenticate: authenticate, allowed_origins: origins)
+          end
           ractor.send(socket, move: true)
         end
       end
@@ -36,19 +64,26 @@ module Monk
       # (PLAN-WEBSOCKET.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
-      def self.serve(socket, block)
+      def self.serve(socket, block, authenticate: false, allowed_origins: nil)
         request = read_handshake_request(socket)
         return socket.close unless request
 
-        response =
+        headers =
           begin
-            Handshake.response_for(request)
+            Handshake.parse_request(request)
           rescue Monk::WebSocket::HandshakeError
             return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
           end
-        socket.write(response)
 
-        connection = Connection.new(socket)
+        subject = nil
+        if authenticate
+          subject = authenticate!(socket, headers, allowed_origins)
+          return unless subject
+        end
+
+        socket.write(Handshake.response_for(request))
+
+        connection = Connection.new(socket, subject: subject)
         begin
           block.call(connection)
         rescue StandardError
@@ -65,6 +100,29 @@ module Monk
         connection&.unsubscribe!
         socket.close
       end
+
+      # PLAN-WEBSOCKET.md steps 22-23: the Origin allowlist check runs
+      # before Monk::Auth.verify, and only for a cookie-derived
+      # credential -- a Bearer connection has no Origin header to check
+      # by construction (mirrors require_csrf!'s own Bearer exemption in
+      # PLAN-AUTH.md). Returns the verified subject, or nil after writing
+      # the appropriate 403/401 response itself.
+      def self.authenticate!(socket, headers, allowed_origins)
+        credential = Handshake.credential_from(headers)
+
+        if credential&.fetch(:via) == :cookie && allowed_origins
+          origin = headers["origin"]
+          unless origin && allowed_origins.include?(origin)
+            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n")
+            return nil
+          end
+        end
+
+        subject = credential && Monk::Auth.verify(credential[:token])
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n") unless subject
+        subject
+      end
+      private_class_method :authenticate!
 
       def self.read_handshake_request(socket)
         request = +""

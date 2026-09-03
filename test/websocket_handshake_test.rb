@@ -72,4 +72,26 @@ class WebSocketHandshakeTest < Minitest::Test
       response,
     )
   end
+
+  def test_credential_from_prefers_a_bearer_header_over_a_cookie
+    headers = { "authorization" => "Bearer abc123", "cookie" => "session_token=xyz789" }
+
+    assert_equal({ token: "abc123", via: :bearer }, Monk::WebSocket::Handshake.credential_from(headers))
+  end
+
+  def test_credential_from_falls_back_to_the_session_cookie
+    headers = { "cookie" => "other=1; session_token=xyz789; foo=bar" }
+
+    assert_equal({ token: "xyz789", via: :cookie }, Monk::WebSocket::Handshake.credential_from(headers))
+  end
+
+  def test_credential_from_returns_nil_when_neither_is_present
+    assert_nil Monk::WebSocket::Handshake.credential_from({})
+  end
+
+  def test_credential_from_ignores_a_malformed_bearer_header
+    headers = { "authorization" => "sometoken", "cookie" => "session_token=xyz789" }
+
+    assert_equal({ token: "xyz789", via: :cookie }, Monk::WebSocket::Handshake.credential_from(headers))
+  end
 end

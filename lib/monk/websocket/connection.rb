@@ -5,26 +5,44 @@ module Monk
     # code. Lives entirely inside its own connection Ractor -- never itself
     # crosses a Ractor boundary, so it needs no shareability of its own.
     class Connection
-      def initialize(socket)
+      # subject is whatever Monk::Auth.verify returned when
+      # Server.new(authenticate: true) verified this handshake
+      # (PLAN-WEBSOCKET.md Phase 5) -- nil for an unauthenticated server.
+      attr_reader :subject
+
+      def initialize(socket, subject: nil)
         @socket = socket
+        @subject = subject
         @write_mutex = Mutex.new
       end
 
       def read
-        frame = read_frame
-        return nil unless frame
+        loop do
+          frame = read_frame
+          return nil unless frame
 
-        if frame[:opcode] == 0x8
-          # The RFC 6455 closing handshake, not a bare TCP close (step
-          # 13): echo a close frame back, close the socket, and report
-          # this to app code the same way any other disconnect is
-          # reported -- #read returning nil (step 15).
-          write_frame(frame[:payload], 0x8)
-          @socket.close
-          return nil
+          case frame[:opcode]
+          when 0x8
+            # The RFC 6455 closing handshake, not a bare TCP close (step
+            # 13): echo a close frame back, close the socket, and report
+            # this to app code the same way any other disconnect is
+            # reported -- #read returning nil (step 15).
+            write_frame(frame[:payload], 0x8)
+            @socket.close
+            return nil
+          when 0x9
+            # Answered automatically, without reaching app code (step
+            # 24): keeps a long-lived authenticated connection alive
+            # through idle reverse-proxy timeouts. Echoes the ping's own
+            # payload back, per RFC 6455 5.5.3.
+            write_frame(frame[:payload], 0xA)
+          when 0xA
+            # An unsolicited pong -- nothing to do yet (no pending-ping
+            # tracking exists), but still not a message for app code.
+          else
+            return frame[:payload]
+          end
         end
-
-        frame[:payload]
       end
 
       def write(payload, opcode: 0x1)

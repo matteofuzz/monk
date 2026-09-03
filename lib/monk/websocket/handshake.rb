@@ -32,6 +32,37 @@ module Monk
         headers
       end
 
+      # PLAN-WEBSOCKET.md step 21: (a) Authorization: Bearer -- the
+      # non-browser/S2S path -- takes priority; (b) otherwise the
+      # session_token cookie, arriving automatically because cookies
+      # aren't port-scoped. Mirrors Monk::Auth::Helpers' identical
+      # bearer_token/session_cookie_token logic, reimplemented here since
+      # this runs from parsed handshake headers, not a Context.
+      def self.credential_from(headers)
+        if (token = bearer_token(headers))
+          { token: token, via: :bearer }
+        elsif (token = session_cookie_token(headers))
+          { token: token, via: :cookie }
+        end
+      end
+
+      def self.bearer_token(headers)
+        auth_header = headers["authorization"]
+        return nil unless auth_header&.start_with?("Bearer ")
+
+        token = auth_header.delete_prefix("Bearer ")
+        token.empty? ? nil : token
+      end
+      private_class_method :bearer_token
+
+      def self.session_cookie_token(headers)
+        headers["cookie"].to_s.split(";").each_with_object({}) do |pair, cookies|
+          name, value = pair.strip.split("=", 2)
+          cookies[name] = value if name
+        end["session_token"]
+      end
+      private_class_method :session_cookie_token
+
       def self.response_for(raw_request)
         headers = parse_request(raw_request)
 
