@@ -1,14 +1,38 @@
 # Passwordless authentication & sessions
 
-Status: design proposal, 2026-08-31 — no code yet. Implementation plan:
-`PLAN-AUTH.md`. Working branch:
-`claude/passwordless-auth-session-6dfx9u`. No ADR yet; the two decisions
-most likely to deserve one are called out under "Open questions."
+Status: design finalized across all three transports, 2026-09-01 — no code
+yet. Implementation plan: `PLAN-AUTH.md`. Working branch:
+`claude/passwordless-auth-session-6dfx9u`. No ADR yet; the decisions most
+likely to deserve one are called out under "Open questions."
+
+This revises the 2026-08-31 pass, which deliberately scoped down to a
+Bearer-only slice and deferred the browser and WebSocket cases entirely
+(old "Open questions" #1). That deferral is resolved here: this doc now
+specifies one token model carried three ways — `Authorization: Bearer` for
+API/server-to-server callers, an `HttpOnly` cookie for browsers, and a
+carrier for `Monk::WebSocket` (`docs/websocket.md`) connections that turns
+out to need no new mechanism at all for the browser case. Nothing below
+changes the core design ("Two tokens, not one", the schema, the storage
+options): it adds the delivery and CSRF layer the original pass punted on.
 
 Sessions/cookies were a deliberate v1 scope cut (`README.md`, `PLAN.md`)
 and "Authentication and user sessions" is a listed V2 candidate
 (`NOTES-V2.md`). This doc proposes the shape; nothing here is
 implemented.
+
+## The three transports, one token model
+
+| Client | Carrier | Why |
+|---|---|---|
+| API / server-to-server | `Authorization: Bearer <token>` | No browser, no cookie jar, no CSRF exposure — a third party can't forge a header it has no channel to set. |
+| Browser (interactive user) | `HttpOnly; Secure; SameSite=Lax` cookie | A cookie the client can't read from JS resists token theft via XSS in a way a Bearer token stashed in `localStorage`/`sessionStorage` (readable by any script on the page) does not. This is the actual reason to prefer cookies for a browser client, not merely "browsers use cookies." |
+| `Monk::WebSocket` connection | Whichever of the above the connecting client already has | See "The WebSocket case" below — this needs no third mechanism. |
+
+`current_subject` / `require_user!` (`docs/auth-sessions.md`'s "Proposed
+API") check `Authorization` first and fall back to the cookie when absent.
+Both remain first-class; nothing here removes Bearer or makes cookies
+mandatory. Which one a given app uses is a client-side choice, not a
+server-side mode switch.
 
 ## Why passwordless fits Monk specifically
 
@@ -103,12 +127,13 @@ Rules that apply to both:
 ```sql
 -- db/migrate/<version>_create_login_tokens.up.sql
 CREATE TABLE login_tokens (
-  id         BIGSERIAL PRIMARY KEY,
-  email      TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  used_at    TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id           BIGSERIAL PRIMARY KEY,
+  email        TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  redirect_to  TEXT,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  used_at      TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_login_tokens_expires_at ON login_tokens (expires_at);
 
@@ -129,7 +154,12 @@ CREATE INDEX idx_sessions_expires_at ON sessions (expires_at);
 `prefix` and a nullable `expires_at` are here for the API-key case below;
 an ordinary login-derived session populates `prefix` too and gets a
 14-day `expires_at` like any other row in this table — one shape, not
-two.
+two. `login_tokens.redirect_to` is `NULL` for an API/Bearer request and a
+same-app path for a browser one — see "The browser case" below for how it
+picks the callback's response shape. It is copied verbatim from the
+`POST /auth/request` payload, validated against the app's own allowlist at
+write time, not at redemption time, so a malicious value never even
+reaches the row.
 
 Versioned `.up.sql`/`.down.sql` pairs, per `PLAN-MIGRATIONS.md` — no
 DSL, sent to Postgres verbatim.
@@ -291,11 +321,14 @@ equality + `AND` only, deliberately (`PLAN-PERSISTENCE.md` Phase 3, step
   `UnshareableRouteError`, and rightly so. `Monk::Auth.request_login`
   should *return* the raw token and let the app deliver it; Monk taking
   on SMTP would be a much larger scope claim than auth.
-- **Helpers, not state.** `require_user!` / `current_subject` live in a
-  `Monk::Auth::Helpers` module mixed into the `Context` class. A
-  `Context` is per-request and never crosses Ractors (`CONTEXT.md`), so
-  helpers holding request-scoped memoization are exempt from the app's
-  shareability constraints.
+- **Helpers, not state.** `require_user!` / `current_subject` — and, for
+  the browser case, `set_session_cookie` / `clear_session_cookie` /
+  `require_csrf!` — live in a `Monk::Auth::Helpers` module mixed into the
+  `Context` class. A `Context` is per-request and never crosses Ractors
+  (`CONTEXT.md`), so helpers holding request-scoped memoization are exempt
+  from the app's shareability constraints. `require_csrf!` is a no-op when
+  `current_subject` resolved from `Authorization` rather than the cookie —
+  it only ever guards the cookie-authenticated path.
 
 ## Proposed API
 
@@ -311,7 +344,8 @@ Monk::Auth.configure(
 
 class App < Monk::Base
   post("/auth/request") do
-    token = Monk::Auth.request_login(params[:email])
+    # redirect_to: nil => API/Bearer path; a path => browser/cookie path
+    token = Monk::Auth.request_login(params[:email], redirect_to: params[:redirect_to])
     Mailer.magic_link(params[:email], token)  # app's job, not Monk's
     json(ok: true)                            # never echo the token
   end
@@ -319,16 +353,30 @@ class App < Monk::Base
   get("/auth/callback/:token") do
     session = Monk::Auth.redeem(params[:token])
     halt 401, "invalid or expired link" unless session
-    json(token: session[:token], expires_at: session[:expires_at])
+
+    if session[:redirect_to]
+      set_session_cookie(session)             # HttpOnly + a readable CSRF cookie
+      redirect session[:redirect_to]           # 302, no token in the URL
+    else
+      json(token: session[:token], expires_at: session[:expires_at])
+    end
   end
 
   get("/me") do
-    subject = require_user!   # reads Bearer from ctx.env, halts 401
+    subject = require_user!   # Bearer, else the session cookie; halts 401
     json(subject: subject)
   end
 
+  post("/orders") do
+    subject = require_user!
+    require_csrf!             # cookie-authenticated only; no-op for Bearer
+    # ...
+  end
+
   delete("/auth/session") do
+    require_csrf!
     Monk::Auth.revoke(require_token!)
+    clear_session_cookie
     json(ok: true)
   end
 end
@@ -342,6 +390,142 @@ key = Monk::Auth.create_api_key(subject: "service:billing-worker")
 `Monk::Auth` is opt-in the way persistence backends are — `require
 "monk"` alone must not load it, since it depends on a persistence
 backend the app may not use.
+
+## The browser case: cookies, redirects, and CSRF
+
+This supersedes the old Phase 9 deferral. A browser-facing app gets the
+session token the same way an API client does — `Monk::Auth.redeem`
+returns the identical Hash — but the callback route decides how to hand it
+back based on whether the app told it there's a browser on the other end.
+
+**`redirect_to` decides the response shape.** `POST /auth/request` accepts
+an optional `redirect_to` (a same-app path, validated against an allowlist
+the app configures — never an open redirect to an arbitrary host) and
+carries it through to the `login_tokens` row as a plain column. `GET
+/auth/callback/:token`:
+
+- **no `redirect_to` on the row** → today's behavior, unchanged: redeem,
+  respond `200 json(token:, expires_at:)`. This is the API/Bearer path.
+- **`redirect_to` present** → redeem, `Set-Cookie` the session token
+  (`HttpOnly; Secure; SameSite=Lax; Path=/`), then `302` to `redirect_to`
+  with no token anywhere in the URL. This is redeem-then-redirect, the fix
+  for `Referer` leakage this doc already flagged — the reason it needs
+  prerequisite #2 (response headers) and `Context#redirect`, both Phase 9
+  in `PLAN-AUTH.md`.
+
+Cookie `expires_at` mirrors the `sessions` row's `expires_at` (`Max-Age`
+matching the 14-day TTL) — an absolute expiry on the cookie itself, not
+just server-side, so a stale cookie a browser still holds past that window
+doesn't round-trip to the server at all.
+
+**Logout** (`DELETE /auth/session`) must clear the cookie in the same
+response that revokes the row — `Set-Cookie` with an already-expired
+`Max-Age=0` — otherwise the browser keeps presenting a token the server has
+already revoked (harmless, since `verify` still rejects it, but worth
+doing so the browser's own state matches the server's).
+
+### CSRF: stateless double-submit, no third table
+
+A cookie is sent automatically by the browser on every request to the
+cookie's origin, including ones a malicious third-party page triggers —
+the classic CSRF vector. Bearer requests are exempt by construction (a
+page has no channel to set a header on a cross-origin request its own JS
+didn't originate), so this section applies only to state-changing routes
+authenticated via the cookie fallback, never to routes authenticated via
+`Authorization`.
+
+Rejected: a `csrf_tokens` table. It would add a third schema object and a
+lookup to a design whose whole point is that verification is pure
+computation over what's already at hand. Instead, the CSRF token is
+**derived, not stored**: `HMAC-SHA256(secret, session_token)`, the same
+frozen `secret` `Monk::Auth.configure` already reads once at boot. Anyone
+holding the session cookie can compute the matching CSRF value; anyone who
+doesn't have the cookie (a cross-origin attacker page) can't produce it,
+because they can't read the `HttpOnly` cookie to feed into the HMAC even
+though the algorithm is public.
+
+Flow:
+
+1. The callback response (cookie path above) also sets a **second**,
+   **non**-`HttpOnly` cookie — `csrf_token=<the HMAC value>`, `Secure;
+   SameSite=Lax` — readable by the app's own JS precisely because it must
+   be echoed back.
+2. The app's JS reads that cookie and sends it as a header
+   (`X-CSRF-Token`) on every state-changing (`POST`/`PUT`/`PATCH`/`DELETE`)
+   request. This is the "double submit": the same value arrives twice, once
+   automatically (cookie) and once only same-origin JS could have attached
+   (header).
+3. `Monk::Auth::Helpers` verifies, for cookie-authenticated state-changing
+   requests only: `X-CSRF-Token` header equals
+   `HMAC-SHA256(secret, session_cookie_value)`. Compare with
+   `OpenSSL.secure_compare`, per the existing token-comparison rule below.
+   Mismatch or missing header → `403`, distinct from the `401` an invalid
+   session produces.
+4. `GET`/`HEAD` routes never mutate state — a rule the app must hold, since
+   `SameSite=Lax` only withholds the cookie from cross-site requests using
+   unsafe methods, not from a cross-site top-level `GET` navigation. This
+   is worth stating because it's the one place `SameSite=Lax` alone would
+   otherwise look sufficient and isn't.
+
+`SameSite=Lax` on the session cookie is defense-in-depth underneath this,
+not a replacement for it: `Lax` already blocks the cookie from riding along
+on a cross-site `POST`, but the double-submit check is what makes CSRF
+protection independent of which browser (or how current a browser) is
+making the request.
+
+## The WebSocket case: identity across a second process
+
+`docs/websocket.md` Phase 5 (step 20) left the token-carrier question for
+the WS handshake explicitly open, because a browser's `new WebSocket(url)`
+constructor cannot set custom headers — so the plain `Authorization:
+Bearer` pattern above doesn't transfer unchanged. It resolves without a
+third mechanism, from two facts neither doc previously used together:
+
+1. **Cookies are not port-scoped.** RFC 6265 matches a cookie's `Domain`
+   and `Path`, never its port. `docs/websocket.md`'s recommended topology —
+   a reverse proxy routing `/ws` on the *same host* to the WS process, and
+   everything else to Kino — means the session cookie set by the HTTP
+   process is sent automatically by the browser on the WS handshake
+   request too, exactly as it would be on any other same-origin request.
+   No query-string token, no first-message auth handshake: the browser
+   does this for free the same way it does for an ordinary `fetch`.
+   (If the WS process instead lives on a distinct **subdomain** rather
+   than a shared-host path, the cookie needs an explicit `Domain=` set to
+   the shared parent domain, or this stops working — call this out in
+   whichever topology `PLAN-WEBSOCKET.md` Decision 4 lands on.)
+2. **Only the browser's `WebSocket` JS API is header-restricted.** A
+   non-browser WS client — a server-to-server caller, a CLI tool — is
+   making a plain HTTP request for the handshake and can set
+   `Authorization: Bearer <token>` on it exactly like an HTTP API call.
+   Nothing about the WS upgrade restricts that; the restriction is
+   browser-JS-specific, not protocol-specific.
+
+So: **browser-originated connections authenticate via the cookie, carried
+automatically; non-browser connections authenticate via
+`Authorization: Bearer`, set directly on the handshake request.**
+`Monk::Auth.verify` runs identically either way — it was already designed
+to be storage-shaped, not transport-shaped, so nothing about the
+verification code path changes for WebSocket at all.
+
+**This does not eliminate the CSRF-shaped risk — it moves it.** A
+cross-origin page can still do `new WebSocket("wss://victim-host/ws")` and
+have the browser attach the victim's cookie to that handshake, the
+WebSocket analogue of CSRF (Cross-Site WebSocket Hijacking). `SameSite=Lax`
+is not a reliable defense here: whether browsers apply `SameSite` cookie
+rules to a WebSocket handshake at all has historically been inconsistent
+across implementations, so unlike the HTTP CSRF case above, this one
+cannot lean on `SameSite` even as defense-in-depth. The double-submit
+header check above also doesn't apply — a WS handshake has no place for
+the app to attach a custom header from browser JS before the connection
+opens. The mitigation is instead the standard one for this exact class of
+attack: **the WS process validates the `Origin` header on every handshake
+against an explicit allowlist of the app's own origins**, rejecting the
+handshake (before it ever reaches `Monk::Auth.verify`) if `Origin` doesn't
+match. Unlike arbitrary headers, `Origin` is set by the browser itself and
+cannot be overridden by page JS, which is exactly why it's the accepted
+mitigation for CSWSH regardless of `SameSite` behavior. `PLAN-WEBSOCKET.md`
+Phase 5 should carry this as an explicit step alongside step 20/21, not as
+a follow-on hardening pass.
 
 ## Security decisions worth stating explicitly
 
@@ -363,16 +547,26 @@ backend the app may not use.
   redirect (302 to a token-free URL) is the fix — and it needs
   prerequisite #2, which is part of why the first slice answers in JSON
   instead.
-- **Cookies, when they arrive, need `HttpOnly; Secure; SameSite=Lax`**
-  and bring CSRF into scope for state-changing routes. `Bearer` avoids
-  that entirely, which is the second reason the first slice is
-  API-first.
+- **Cookies need `HttpOnly; Secure; SameSite=Lax`**, and bring CSRF into
+  scope for state-changing routes authenticated that way — see "The
+  browser case" above for the double-submit design, and "The WebSocket
+  case" for why WS needs `Origin` validation instead of the double-submit
+  check.
+- **Cross-Site WebSocket Hijacking (CSWSH).** A cookie-authenticated WS
+  handshake is forgeable cross-origin the same way a CSRF'd form post is,
+  but neither `SameSite` nor a CSRF header defends it (see "The WebSocket
+  case"). `Origin` allowlist validation on every handshake is the
+  mitigation, not optional hardening.
 
 ## Open questions
 
-1. **Bearer or cookie first?** Recommendation: Bearer. It skips
-   prerequisites #2–#4 and defers CSRF. Cookies are the better browser
-   answer eventually.
+1. ~~Bearer or cookie first?~~ **Resolved: both, chosen by client type,
+   not sequenced.** API/S2S callers use Bearer; browsers use the cookie
+   ("The three transports, one token model" above); WebSocket reuses
+   whichever of the two the connecting client already has ("The WebSocket
+   case"). Prerequisites #2–#4 (response headers, query/body parsing,
+   middleware) are therefore in scope for `PLAN-AUTH.md` now, not deferred
+   — see its Phase 9.
 2. **Rolling or absolute session expiry?** Recommendation: absolute.
    Rolling means a database write on every authenticated request, which
    is a real cost under a Ractor pool and turns a read-only hot path
@@ -397,6 +591,8 @@ No passwords, ever (that's the point). No OAuth/OIDC/SAML, no WebAuthn/
 passkeys, no TOTP or second factors, no "remember this device", no
 account/user schema, no email delivery or templating, no
 authorization/roles/permissions (this doc is authentication only), no
-CSRF machinery until cookies exist, no session listing/"log out
-everywhere" UI, no JWT (option B is a plain HMAC token, not a JWT — no
-`alg` field, no algorithm negotiation, no library).
+session listing/"log out everywhere" UI, no JWT (option B is a plain HMAC
+token, not a JWT — no `alg` field, no algorithm negotiation, no library),
+no cross-origin CORS credential-sharing design (cookies here are strictly
+same-origin; a third-party frontend on a different origin is an API/Bearer
+consumer, not a cookie consumer).

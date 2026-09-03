@@ -1,3 +1,8 @@
+require "json"
+require "uri"
+
+require_relative "freeze_hooks"
+
 module Monk
   class Base
     class << self
@@ -28,7 +33,7 @@ module Monk
           end
         end
 
-        Monk::Persistence.freeze_hooks.each(&:freeze_registry!)
+        Monk.freeze_hooks.each(&:freeze_registry!)
         Monk::Persistence::Model.freeze_all!
 
         Ractor.make_shareable(routes)
@@ -56,18 +61,21 @@ module Monk
       private
 
       def dispatch(env)
-        route, params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
-        return not_found_response unless route
+        route, path_params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
+        return not_found_response(env) unless route
 
-        context = Context.new(params)
+        params = parse_params(env).merge(path_params)
+        context = Context.new(params, env)
         catch(:monk_halt) do
           begin
-            [200, {}, [context.instance_exec(context, &route[:block])]]
+            body = context.instance_exec(context, &route[:block])
+            [200, context.headers, [body]]
           rescue StandardError => e
             handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
             if handler
               context.status = 500
-              [500, {}, [context.instance_exec(context, &handler.last)]]
+              body = context.instance_exec(context, &handler.last)
+              [500, context.headers, [body]]
             else
               [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
             end
@@ -85,12 +93,49 @@ module Monk
         $stdout.flush
       end
 
-      def not_found_response
+      def not_found_response(env)
         handler = error_handlers.find { |matcher, _| matcher == 404 }
         return [404, {}, [""]] unless handler
 
-        context = Context.new({}, status: 404)
-        catch(:monk_halt) { [404, {}, [context.instance_exec(context, &handler.last)]] }
+        context = Context.new({}, env, status: 404)
+        catch(:monk_halt) do
+          body = context.instance_exec(context, &handler.last)
+          [404, context.headers, [body]]
+        end
+      end
+
+      # Query string, then a JSON body on top (POST /auth/request's
+      # redirect_to; a callback token as ?token=... instead of a path
+      # segment -- PLAN-AUTH.md Phase 9 step 29). Path segment params
+      # always win the final merge in #dispatch -- the route's own
+      # declared intent outranks anything a caller supplies.
+      def parse_params(env)
+        parse_query_string(env["QUERY_STRING"]).merge(parse_json_body(env))
+      end
+
+      # URI.decode_www_form, not Rack::Utils.parse_nested_query -- the
+      # latter memoizes an unfrozen QueryParser instance in a module ivar
+      # (Rack::Utils.default_query_parser) the moment "rack/utils" loads,
+      # in the main Ractor, and reading it back from a worker Ractor raises
+      # Ractor::IsolationError regardless of which Ractor set it. A bug in
+      # rack itself (not yet Ractor-safe), measured directly against a real
+      # worker Ractor rather than assumed -- no nested/array query syntax,
+      # consistent with Monk's minimal query surface elsewhere.
+      def parse_query_string(query_string)
+        return {} if query_string.to_s.empty?
+
+        URI.decode_www_form(query_string).each_with_object({}) { |(k, v), h| h[k.to_sym] = v }
+      end
+
+      def parse_json_body(env)
+        return {} unless env["CONTENT_TYPE"].to_s.include?("application/json")
+
+        body = env["rack.input"]&.read.to_s
+        return {} if body.empty?
+
+        JSON.parse(body, symbolize_names: true)
+      rescue JSON::ParserError
+        {}
       end
 
       def find_route(verb, path)

@@ -1,15 +1,13 @@
+require_relative "freeze_hooks"
+
 module Monk
   # Backend-agnostic persistence. Concrete backends (e.g.
   # Monk::Persistence::Pg, loaded separately -- persistence backends are
   # opt-in, not required by `require "monk"`) extend Registry below and
-  # register themselves into .freeze_hooks automatically, so Base#freeze!
+  # register themselves into Monk.freeze_hooks automatically, so Base#freeze!
   # can seal every backend actually in use without needing to know their
   # names.
   module Persistence
-    def self.freeze_hooks
-      @freeze_hooks ||= []
-    end
-
     # Shared by every backend module: per-Ractor connection lifecycle, a
     # registry of named configs, and boot-time shareability sealing. A
     # backend `extend`s this and implements #connect(**opts) /
@@ -22,7 +20,7 @@ module Monk
       Entry = Struct.new(:conn, :slot)
 
       def self.extended(base)
-        Monk::Persistence.freeze_hooks << base
+        Monk.freeze_hooks << base
       end
 
       def register(name, **opts)
@@ -47,7 +45,7 @@ module Monk
         e.slot << true if token
       end
 
-      # Called from Base#freeze! (Seam B), via Monk::Persistence.freeze_hooks.
+      # Called from Base#freeze! (Seam B), via Monk.freeze_hooks.
       # Without this, #register'd configs are unreachable from any worker
       # Ractor at all: @configs is a plain, unfrozen Hash, and reading an
       # unfrozen value from a class/module instance variable raises

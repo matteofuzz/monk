@@ -44,3 +44,46 @@ module PersistenceTestHelpers
       "(set MONK_TEST_PG_* env vars, or start one -- see docs/persistence-ractor-connections.md)" unless postgres_available?
   end
 end
+
+# Shared by tests that need real login_tokens/sessions tables and a
+# configured Monk::Auth (auth_test.rb, auth_helpers_test.rb). Include
+# PersistenceTestHelpers alongside this -- it's built on top of it.
+module AuthTestHelpers
+  def setup_auth_tables(db_name)
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(db_name, **pg_test_opts)
+    Monk::Persistence::Pg.checkout(db_name) do |conn|
+      drop_auth_tables(conn)
+      conn.exec(<<~SQL)
+        CREATE TABLE login_tokens (
+          id BIGSERIAL PRIMARY KEY,
+          email TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          redirect_to TEXT,
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      SQL
+      conn.exec(<<~SQL)
+        CREATE TABLE sessions (
+          id BIGSERIAL PRIMARY KEY,
+          subject TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      SQL
+    end
+    Monk::Auth.configure(
+      db_name: db_name, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
+      redirect_allowlist: ["/dashboard"],
+    )
+  end
+
+  def drop_auth_tables(conn)
+    conn.exec("DROP TABLE IF EXISTS sessions")
+    conn.exec("DROP TABLE IF EXISTS login_tokens")
+  end
+end

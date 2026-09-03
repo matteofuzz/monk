@@ -31,13 +31,26 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 
 - ~~Package Monk as a gem (local gem for now, not published)~~ — done: `monk.gemspec` + `lib/monk/version.rb` (`Monk::VERSION = "0.1.0"`), MIT licensed, consumed via Bundler `path:` dependency (no RubyGems push). Verified against a throwaway sibling app at `../monk-consumer-test`. RubyGems already has an unrelated, dormant gem named `monk` — a rename will be needed before ever publishing.
 - Database support, Postgres first
-- Authentication and user sessions — design proposed (passwordless,
-  TTL'd tokens): `docs/auth-sessions.md` + `PLAN-AUTH.md`. Not
-  implemented; needs `Context#env` and a boot-frozen config first.
+- Authentication and user sessions — design finalized 2026-09-01 across
+  all three transports (passwordless, TTL'd tokens; `Authorization:
+  Bearer` for API/S2S, an `HttpOnly` cookie + double-submit CSRF for
+  browsers, and identity for `Monk::WebSocket` connections resolved via
+  the same cookie, gated by `Origin` validation): `docs/auth-sessions.md` +
+  `PLAN-AUTH.md`. Not implemented; needs `Context#env` and a boot-frozen
+  config first.
 - Caching system
 - Async jobs
 - Configuration system via environment variables
-- WebSocket support, with session persistence
+- WebSocket support, with session persistence — design proposed (separate
+  process alongside Kino, not an in-Kino feature; Kino confirmed
+  architecturally unable to expose a raw socket, `rack.hijack` included).
+  Phase 0 spike (2026-09-01) found both candidate WebSocket gems fail
+  under a real Ractor for unrelated reasons; a follow-up end-to-end spike
+  the same day proved the hand-rolled alternative (RFC 6455 over a real
+  `TCPServer`, one dedicated Ractor per connection) works correctly,
+  including true concurrency and isolated per-connection failure:
+  `docs/websocket.md`. Implementation plan: `PLAN-WEBSOCKET.md`. Not
+  implemented yet.
 
 ## Open questions
 

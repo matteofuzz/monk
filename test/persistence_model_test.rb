@@ -18,7 +18,8 @@ class PersistenceModelTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       conn.exec("DROP TABLE IF EXISTS widgets")
       conn.exec(
-        "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0)"
+        "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0, " \
+        "claimed_by TEXT)"
       )
     end
   end
@@ -116,5 +117,26 @@ class PersistenceModelTest < Minitest::Test
 
   def test_delete_returns_false_when_the_id_does_not_exist
     refute Widget.delete(999_999)
+  end
+
+  def test_claim_updates_and_returns_the_row_when_a_nil_condition_matches_an_actual_null_column
+    created = Widget.create(name: "bolt", quantity: 10)
+
+    claimed = Widget.claim({ id: created[:id], claimed_by: nil }, claimed_by: "worker-1")
+
+    refute_nil claimed
+    assert_equal "worker-1", claimed[:claimed_by]
+    assert_equal created[:id], claimed[:id]
+  end
+
+  def test_claim_second_sequential_claim_of_an_already_claimed_row_returns_nil
+    created = Widget.create(name: "bolt", quantity: 10)
+
+    first = Widget.claim({ id: created[:id], claimed_by: nil }, claimed_by: "worker-1")
+    second = Widget.claim({ id: created[:id], claimed_by: nil }, claimed_by: "worker-2")
+
+    refute_nil first
+    assert_nil second
+    assert_equal "worker-1", Widget.find(created[:id])[:claimed_by]
   end
 end
