@@ -48,8 +48,9 @@ module Monk
           end
         socket.write(response)
 
+        connection = Connection.new(socket)
         begin
-          block.call(Connection.new(socket))
+          block.call(connection)
         rescue StandardError
           # Isolates this connection's failure to its own Ractor
           # (PLAN-WEBSOCKET.md step 12): neither the accept loop nor any
@@ -58,6 +59,10 @@ module Monk
           # we're inside this connection's own dedicated Ractor.
         end
       ensure
+        # Runs on every exit path -- normal completion, the close
+        # handshake, and a crashed handler alike -- so a subscribed
+        # connection never leaks a stale registry entry (step 17).
+        connection&.unsubscribe!
         socket.close
       end
 

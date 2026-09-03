@@ -7,6 +7,7 @@ module Monk
     class Connection
       def initialize(socket)
         @socket = socket
+        @write_mutex = Mutex.new
       end
 
       def read
@@ -18,7 +19,7 @@ module Monk
           # 13): echo a close frame back, close the socket, and report
           # this to app code the same way any other disconnect is
           # reported -- #read returning nil (step 15).
-          @socket.write(Monk::WebSocket::Frame.encode(frame[:payload], opcode: 0x8))
+          write_frame(frame[:payload], 0x8)
           @socket.close
           return nil
         end
@@ -27,7 +28,7 @@ module Monk
       end
 
       def write(payload, opcode: 0x1)
-        @socket.write(Monk::WebSocket::Frame.encode(payload, opcode: opcode))
+        write_frame(payload, opcode)
       end
 
       # The server-initiated close path (step 14): send a close frame
@@ -35,11 +36,48 @@ module Monk
       # close the socket outright -- no wait for the client's own close
       # frame in reply.
       def close(code: 1000, reason: "")
-        @socket.write(Monk::WebSocket::Frame.encode([code].pack("n") + reason.to_s, opcode: 0x8))
+        write_frame([code].pack("n") + reason.to_s, 0x8)
         @socket.close
       end
 
+      # Registers this connection's own Ractor::Port -- the "connection
+      # handle" a Monk::WebSocket::Registry holds (PLAN-WEBSOCKET.md step
+      # 17) -- under key, and relays whatever the registry broadcasts onto
+      # this socket via a background Thread inside this connection's own
+      # Ractor (safe: a Ractor may freely spawn ordinary Threads within
+      # itself, same as the main Ractor already does elsewhere in Monk).
+      def subscribe(registry, key)
+        @registry = registry
+        @key = key
+        @port = Ractor::Port.new
+        registry.register(key, @port)
+        @relay_thread = Thread.new { relay_broadcasts }
+      end
+
+      # Called unconditionally from Server.serve's ensure on every exit
+      # path -- normal completion, the close handshake, and a crashed
+      # handler alike -- so a subscribed connection never leaves a stale
+      # entry in the registry (step 17). A no-op if #subscribe was never
+      # called.
+      def unsubscribe!
+        return unless @registry
+
+        @relay_thread.kill
+        @registry.unregister(@key, @port)
+        @port.close
+      end
+
       private
+
+      def relay_broadcasts
+        loop { write(@port.receive) }
+      rescue Ractor::ClosedError
+        # #unsubscribe! closed the port out from under a pending #receive.
+      end
+
+      def write_frame(payload, opcode)
+        @write_mutex.synchronize { @socket.write(Monk::WebSocket::Frame.encode(payload, opcode: opcode)) }
+      end
 
       def read_frame
         header = read_exactly(2)
