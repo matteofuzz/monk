@@ -208,6 +208,90 @@ never attempted. Migrations never run implicitly (no hook into
 itself, e.g. a `bin/migrate` script — see `PLAN-MIGRATIONS.md` for the full
 design and phase-by-phase plan.
 
+## Auth & sessions — `Monk::Auth`
+
+Passwordless token auth, opt-in (`require "monk"` never loads it) and built
+on `Monk::Persistence::Pg`:
+
+```ruby
+require "monk/auth"
+
+Monk::Auth.configure(
+  db_name: :main, secret: ENV.fetch("AUTH_SECRET"),
+  login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: ["/dashboard"],
+)
+
+class App < Monk::Base
+  post("/auth/request") { json(token: Monk::Auth.request_login(params[:email])) } # email this token yourself -- Monk doesn't
+
+  get("/auth/callback/:token") do
+    session = Monk::Auth.redeem(params[:token])
+    halt(401) unless session
+    json(token: session[:token], expires_at: session[:expires_at])
+  end
+
+  get("/me") { json(subject: require_user!) } # halts 401 automatically if unauthenticated
+end
+```
+
+Two Postgres tables back this — `login_tokens` (single-use, short-lived)
+and `sessions` (multi-use, long-lived) — create them yourself the same way
+persistence tables aren't generated either; schema in
+`docs/auth-sessions.md`.
+
+Both an `Authorization: Bearer <token>` header and a `session_token`
+cookie work identically via `current_subject`/`require_user!`. For
+browsers, `set_session_cookie(session)` sets that cookie (plus a readable
+`csrf_token` one) instead of returning the token as JSON, and
+`require_csrf!` guards state-changing routes — a no-op for Bearer
+requests, since a forged cross-origin request has no way to set that
+header. `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
+sessions; `.sweep!` deletes expired rows. Full design and phase-by-phase
+build: `docs/auth-sessions.md` / `PLAN-AUTH.md`.
+
+## WebSocket — `Monk::WebSocket`
+
+A hand-rolled RFC 6455 server, opt-in (`require "monk/websocket"`),
+running as its **own process on its own port** — Kino has no hijack
+support, so this never shares a process with your HTTP app
+(`docs/websocket.md`). Each connection gets its own dedicated Ractor:
+
+```ruby
+require "monk/websocket"
+
+# The handler must be built where self is Ractor-shareable -- a module
+# body, not a script's own top level (self there is the main object,
+# which isn't shareable) -- same constraint Monk::StateRactor#update has.
+module Chat
+  REGISTRY = Monk::WebSocket::Registry.new
+
+  HANDLER = proc do |connection|
+    connection.subscribe(REGISTRY, :chat)
+    loop do
+      message = connection.read # nil on disconnect/close -- exits the loop
+      break unless message
+
+      REGISTRY.broadcast(:chat, "#{connection.subject}: #{message}")
+    end
+  end
+end
+
+server = Monk::WebSocket::Server.new(
+  port: 9293, authenticate: true, allowed_origins: ["https://example.com"],
+)
+server.run(&Chat::HANDLER)
+```
+
+`authenticate: true` reuses `Monk::Auth` unmodified — the same
+`Authorization: Bearer` header or `session_token` cookie the HTTP side
+accepts, verified before the `101` response is sent; a missing or invalid
+credential gets a `401`. `allowed_origins:` guards the cookie path
+specifically against Cross-Site WebSocket Hijacking (a Bearer connection
+has no `Origin` header to forge). A reverse proxy in front routes `/ws` to
+this process and everything else to Kino, on the **same host** — see
+`docs/deploying.md` for a worked Caddy/nginx example. Full design and
+phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
+
 ## Running locally
 
 ```
