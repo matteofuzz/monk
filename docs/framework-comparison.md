@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase as of v0.6.0.
+Complexity and weight comparison, based on the codebase as of v0.7.0.
 
 ## Footprint
 

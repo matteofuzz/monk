@@ -4,6 +4,43 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.7.0 - 2026-09-05
+
+### Added
+
+- **Settings** (`lib/monk/settings.rb`, #32): `Monk::Settings.configure`
+  declares required/optional keys via a small DSL; `Settings[:key]` reads
+  each key's value from `ENV` (uppercased name) or its default.
+  Declaring the same key twice, or reading one nobody declared, raises a
+  precise error (`DuplicateSettingError`/`UnknownSettingError`) instead
+  of silently overwriting or returning `nil`. Joins `Monk.freeze_hooks`:
+  `Base#freeze!` validates every required key is present and freezes the
+  resolved values into a `Ractor.shareable?` snapshot
+  (`MissingSettingError` otherwise; `SettingsFrozenError` on a
+  post-Boot `#configure`). `Context#settings` exposes the same frozen
+  reads to routes.
+  - `MONK_ENV` is now a first-class Settings key, implicitly declared
+    and validated at Boot against a fixed four-value set
+    (development/test/staging/production) — an invalid value raises
+    `InvalidMonkEnvError`. `Monk.env` returns a frozen `Environment`
+    value object with `.development?`/`.test?`/`.staging?`/
+    `.production?` predicates, replacing ad hoc `ENV["MONK_ENV"] ==
+    "production"` checks in assets and request logging.
+  - `monk new` scaffolds now ship `config/settings.rb` (loads `dotenv`
+    if present, otherwise a no-op) required ahead of the app class body
+    and the `--postgres` `bin/` scripts.
+  - Verified under real concurrent Ractor workers, including an
+    end-to-end proof in `monk-consumer-test` under a multi-worker `kino`
+    pool.
+- Routes are now indexed at Boot for O(1) static dispatch (#33):
+  `freeze!` builds a static verb/path hash for exact-match routes and a
+  per-verb array of dynamic routes with segments precomputed, instead of
+  `find_route` linearly re-splitting every registered route's path on
+  every request. Params hashes are now only allocated once a route is
+  confirmed to match. `bin/benchmark_router` (manual) shows ~210x on a
+  static route, ~31x on a 404 miss, and ~5x on a dynamic route at a
+  300-route table.
+
 ## 0.6.0 - 2026-09-05
 
 ### Added
