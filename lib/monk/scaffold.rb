@@ -15,6 +15,7 @@ module Monk
       "config.ru" => "base/config.ru",
       "config/settings.rb" => "base/config/settings.rb",
       ".ruby-version" => "base/.ruby-version",
+      "bin/server" => "base/bin/server",
       "views/layouts/app.erb" => "base/views/layouts/app.erb",
       "views/index.erb" => "base/views/index.erb",
       "public/css/app.css" => "base/public/css/app.css",
@@ -28,7 +29,7 @@ module Monk
       "bin/migrate" => "postgres/bin/migrate",
     }.freeze
 
-    EXECUTABLE_FILES = %w[bin/console bin/setup_db bin/migrate].freeze
+    EXECUTABLE_FILES = %w[bin/server bin/console bin/setup_db bin/migrate].freeze
 
     def initialize(dir, postgres: false)
       @dir = dir
@@ -39,7 +40,7 @@ module Monk
       raise Monk::ScaffoldExistsError, "#{@dir} already exists" if File.exist?(@dir)
 
       FileUtils.mkdir_p(@dir)
-      BASE_FILES.each { |relative, template| write_file(relative, template) }
+      BASE_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
 
       return unless @postgres
 

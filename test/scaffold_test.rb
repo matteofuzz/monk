@@ -13,10 +13,22 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("base/config/settings.rb"), read(dest, "config/settings.rb")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
+      assert_equal template("base/bin/server"), read(dest, "bin/server")
       assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
       assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
       assert_equal template("base/public/css/app.css"), read(dest, "public/css/app.css")
       assert_equal template("base/public/js/app.js"), read(dest, "public/js/app.js")
+    end
+  end
+
+  def test_write_bang_writes_bin_server_executable
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      mode = File.stat(File.join(dest, "bin/server")).mode
+      assert mode & 0o111 == 0o111, "expected bin/server to be executable"
     end
   end
 

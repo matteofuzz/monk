@@ -36,7 +36,7 @@ Save that as `config.ru` and run it with any Rack server (or `bin/server` in thi
 ## Scaffolding a new project — `monk new`
 
 ```
-monk new my_app              # Gemfile, config.ru, .ruby-version, views/, public/
+monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server, views/, public/
 monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
 ```
 
