@@ -2,6 +2,7 @@ require "json"
 require "uri"
 
 require_relative "freeze_hooks"
+require_relative "environment"
 
 module Monk
   class Base
@@ -53,6 +54,12 @@ module Monk
         end
 
         Monk.freeze!
+
+        # Settled once here, not read from ENV per request in
+        # #log_request: ENV is main-Ractor state, so a per-request read
+        # from a worker Ractor is the same hazard Monk::Assets already
+        # guards against the same way.
+        @quiet_logging = !Monk.env.development?
 
         Ractor.make_shareable(routes)
         Ractor.make_shareable(error_handlers)
@@ -109,7 +116,7 @@ module Monk
       end
 
       def log_request(env, status, start)
-        return if ENV["MONK_ENV"] == "production"
+        return if @quiet_logging
 
         duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000).round(1)
         $stdout.puts "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"

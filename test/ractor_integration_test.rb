@@ -51,13 +51,13 @@ class RactorIntegrationTest < Minitest::Test
   # Settles, by measurement on this project's actual target (Ruby 4.0.6,
   # .ruby-version), a question PLAN-AUTH.md Phase 5 step 20 left open: does
   # a non-main Ractor read ENV at all, and does it see the same value the
-  # main Ractor set? This determines whether lib/monk/base.rb:79's
-  # ENV["MONK_ENV"] read (done per-request, inside whichever worker Ractor
-  # is serving it) is trustworthy under a real kino pool. A 3.3.6 probe
-  # exists in docs/auth-sessions.md but is explicitly not a substitute --
-  # see this project's own history of Ractor behavior not porting across
-  # versions by assumption (the Phase 0 Sequel spike, the Phase 4/5
-  # freezing findings).
+  # main Ractor set? A 3.3.6 probe exists in docs/auth-sessions.md but is
+  # explicitly not a substitute -- see this project's own history of
+  # Ractor behavior not porting across versions by assumption (the Phase 0
+  # Sequel spike, the Phase 4/5 freezing findings). Answer: yes, on 4.0.6.
+  # PLAN-CONFIG.md Phase 4 makes the answer moot for MONK_ENV specifically
+  # either way -- base.rb no longer reads ENV["MONK_ENV"] per request at
+  # all, so request logging can't depend on whichever answer this returns.
   def test_env_is_readable_and_consistent_from_a_real_worker_ractor
     ENV["MONK_RACTOR_ENV_PROBE"] = "main-ractor-value"
 
@@ -66,6 +66,29 @@ class RactorIntegrationTest < Minitest::Test
     assert_equal "main-ractor-value", result
   ensure
     ENV.delete("MONK_RACTOR_ENV_PROBE")
+  end
+
+  # PLAN-CONFIG.md Phase 4 step 14: base.rb's log_request used to read
+  # ENV["MONK_ENV"] per request, inside whichever Ractor served it --
+  # PLAN-AUTH.md step 20's flagged inconsistency with Assets' boot-frozen
+  # pattern. It now reads a boolean computed once at Boot (@quiet_logging,
+  # from Monk.env), so this proves the fixed version survives a real
+  # worker pool exactly the way Assets' @production already did.
+  def test_log_request_suppression_holds_under_a_real_worker_pool
+    app = Class.new(Monk::Base) { get("/x") { "hi" } }
+    with_monk_env("production") { Monk.boot(app) }
+
+    results = Array.new(6) do
+      Ractor.new(app) do |a|
+        status, _headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/x")
+        [status, body.join]
+      end
+    end.map(&:value)
+
+    results.each do |(status, body)|
+      assert_equal 200, status
+      assert_equal "hi", body
+    end
   end
 
   # Regression: Rack::Utils.parse_nested_query memoizes an unfrozen
