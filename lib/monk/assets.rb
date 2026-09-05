@@ -1,6 +1,7 @@
 require "digest"
 
 require_relative "freeze_hooks"
+require_relative "environment"
 
 module Monk
   # Static files -- CSS, vanilla JS, images, fonts -- served by Monk
@@ -61,7 +62,9 @@ module Monk
       # from a non-main Ractor is an isolation error. `production?` is
       # settled once at Boot for the same family of reasons -- ENV is
       # main-Ractor state, so a per-request read from a worker is a
-      # hazard. `assets false` sets root to false and disables serving.
+      # hazard (Monk.env resolves this the same way, through Settings'
+      # own frozen-at-Boot snapshot). `assets false` sets root to false
+      # and disables serving.
       attr_reader :root, :manifest
       attr_writer :root
 
@@ -113,7 +116,7 @@ module Monk
 
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks.
       def freeze_registry!
-        @production = ENV["MONK_ENV"] == "production"
+        @production = !Monk.env.development?
         @manifest = Ractor.make_shareable(build_manifest)
         # #root is read on every request (#enabled?, and the disk lookup
         # in development). Left unfrozen, reading it from a worker Ractor

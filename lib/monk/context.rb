@@ -67,5 +67,12 @@ module Monk
     def asset_path(path)
       Monk::Assets.path_for(path)
     end
+
+    # Same frozen values Monk::Settings[] reads, e.g. `settings[:api_key]`
+    # -- returns the module itself rather than duplicating its #[] here,
+    # so an undeclared key raises the exact same way through either path.
+    def settings
+      Monk::Settings
+    end
   end
 end

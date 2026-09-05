@@ -425,10 +425,16 @@ Tests are Minitest, calling `App.call(env)` directly against hand-built Rack env
 
 v1 is done, built out gradually with TDD — see `PLAN.md` for its phase-by-phase plan and `CONTEXT.md` / `docs/adr/` for the domain vocabulary and key architectural decisions it left behind. v1 deliberately left out HTML templating, sessions/cookies, persistence, and Rack middleware composition.
 
-Monk is now on v2, worked one candidate at a time, agile-style, rather than against a fixed upfront plan. The living list of candidates and their status is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `NOTES-V2.md`); each candidate gets its own plan doc once work on it actually starts — e.g. `PLAN-PERSISTENCE.md` for persistence, the first candidate done.
+Monk is now on v2, worked one candidate at a time, agile-style, rather than against a fixed upfront plan. The living list of candidates and their status is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `NOTES-V2.md`); each candidate gets its own plan doc once work on it actually starts.
 
-HTML templating is done as of 2026-09-05: ERB views and static asset
-serving, both compiled/enumerated at boot and frozen (`docs/views.md` for
-the design and the spikes behind it, `PLAN-VIEWS.md` for the phase-by-phase
-plan). SCSS was explored in the same pass and deliberately left out for
-now — plain CSS only.
+Candidates done so far, each with its own design doc and phase-by-phase
+plan: **persistence** (`Monk::Persistence::Pg`, raw `pg`, `PLAN-PERSISTENCE.md`),
+**migrations** (`Monk::Persistence::Pg::Migrator`, plain `.sql` up/down
+pairs, `PLAN-MIGRATIONS.md`), **HTML templating** (ERB views and static
+asset serving, both compiled/enumerated at boot and frozen — SCSS was
+explored and deliberately left out, plain CSS only — `docs/views.md` /
+`PLAN-VIEWS.md`), **auth & sessions** (passwordless token auth over
+`Authorization: Bearer` and cookie+CSRF, `docs/auth-sessions.md` /
+`PLAN-AUTH.md`), and **WebSocket** (a hand-rolled RFC 6455 server as its
+own process, reusing `Monk::Auth` for the handshake, `docs/websocket.md` /
+`PLAN-WEBSOCKET.md`) — all done as of 2026-09-05.

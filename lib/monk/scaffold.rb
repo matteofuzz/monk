@@ -13,6 +13,7 @@ module Monk
     BASE_FILES = {
       "Gemfile" => "base/Gemfile",
       "config.ru" => "base/config.ru",
+      "config/settings.rb" => "base/config/settings.rb",
       ".ruby-version" => "base/.ruby-version",
       "views/layouts/app.erb" => "base/views/layouts/app.erb",
       "views/index.erb" => "base/views/index.erb",

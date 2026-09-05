@@ -4,3 +4,4 @@ gem "monk"
 gem "rackup"
 gem "webrick"
 gem "kino"
+# gem "dotenv" # uncomment to load a local .env file (config/settings.rb)

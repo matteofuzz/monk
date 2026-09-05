@@ -1,4 +1,4 @@
-require "monk"
+require_relative "config/settings"
 
 class App < Monk::Base
   views "views"

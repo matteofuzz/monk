@@ -27,3 +27,11 @@ _Avoid_: Wrapper, master page, shell
 **Asset manifest**:
 The frozen map from URL path to body, content-type and ETag, built by walking the assets root once at `Boot` and sealed with the route table. Every static response in production is served from it, which makes path traversal structurally impossible rather than defended against — a path that wasn't enumerated at boot simply isn't a key. Development bypasses it and reads the file per request instead, so an edited stylesheet needs a refresh rather than a restart.
 _Avoid_: Asset pipeline, static middleware, cache
+
+**Settings**:
+A boot-frozen facility for app-defined configuration values. An app declares its keys once via `Monk::Settings.configure { required :key; optional :key, default: ... }`; required keys missing at `Boot` raise, the same fail-fast posture `Boot` already takes elsewhere. Values are read back either as `Monk::Settings[:key]` or, per-request, as `Context#settings` — and reading a key nobody declared raises rather than returning `nil`. Keys are flat (no namespacing) and values are always Strings — no type coercion. Deliberately separate from `Persistence.register` and `Auth.configure`, which keep their own bespoke per-feature config; `Settings` is for `MONK_ENV` and everything else an app needs to configure.
+_Avoid_: Config, configuration, options
+
+**MONK_ENV**:
+The tier an app is running under: one of four values — `development` (the default when unset), `test`, `staging`, `production` — read via `Monk.env` and its predicates (`.development?`, `.test?`, `.staging?`, `.production?`). Internally it's just the `:monk_env` key inside `Settings`, given its own reader because it's checked on nearly every request. `development` is the only tier with verbose request logging and disk-read (rather than manifest) asset serving; `test`, `staging`, and `production` all behave alike for those two checks.
+_Avoid_: RACK_ENV, environment, mode
