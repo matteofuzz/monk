@@ -1,0 +1,15 @@
+<h1>Monk</h1>
+<p>
+  This page is ERB, compiled to a method at boot and rendered inside
+  whichever worker Ractor served the request. The clock below is vanilla
+  JavaScript loaded as an ES module through an import map.
+</p>
+
+<p class="clock" id="clock">--:--:--</p>
+
+<h2>Routes in this demo</h2>
+<ul class="routes">
+  <% locals[:routes].each do |path, description| -%>
+    <%= render "route", path: path, description: description -%>
+  <% end -%>
+</ul>

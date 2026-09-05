@@ -14,6 +14,10 @@ module Monk
       "Gemfile" => "base/Gemfile",
       "config.ru" => "base/config.ru",
       ".ruby-version" => "base/.ruby-version",
+      "views/layouts/app.erb" => "base/views/layouts/app.erb",
+      "views/index.erb" => "base/views/index.erb",
+      "public/css/app.css" => "base/public/css/app.css",
+      "public/js/app.js" => "base/public/js/app.js",
     }.freeze
 
     POSTGRES_FILES = {

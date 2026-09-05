@@ -3,6 +3,8 @@ ENV["MONK_ENV"] ||= "production"
 
 require "minitest/autorun"
 require "stringio"
+require "tmpdir"
+require "fileutils"
 require "monk"
 
 module EnvHelper
@@ -16,6 +18,63 @@ module EnvHelper
 end
 
 Minitest::Test.include(EnvHelper)
+
+# Shared by views_test.rb and assets_test.rb: a throwaway views/ or
+# public/ root on disk, torn down after the block, with the global
+# Monk::Views / Monk::Assets state reset either way.
+module ViewTestHelpers
+  def with_views(templates)
+    with_tree("monk-views", templates) do |dir|
+      Monk::Views.reset!
+      Monk::Views.root = dir
+      begin
+        yield dir
+      ensure
+        Monk::Views.reset!
+      end
+    end
+  end
+
+  def with_assets(files)
+    with_tree("monk-assets", files) do |dir|
+      Monk::Assets.reset!
+      Monk::Assets.root = dir
+      begin
+        yield dir
+      ensure
+        Monk::Assets.reset!
+      end
+    end
+  end
+
+  # Monk reads MONK_ENV once, at boot, never per request -- so a test
+  # that wants development behavior has to set it before .freeze!.
+  def with_monk_env(value)
+    previous = ENV["MONK_ENV"]
+    ENV["MONK_ENV"] = value
+    yield
+  ensure
+    ENV["MONK_ENV"] = previous
+  end
+
+  def write_file(dir, relative, content)
+    path = File.join(dir, relative)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+    path
+  end
+
+  private
+
+  def with_tree(prefix, files)
+    Dir.mktmpdir(prefix) do |dir|
+      files.each { |relative, content| write_file(dir, relative, content) }
+      yield dir
+    end
+  end
+end
+
+Minitest::Test.include(ViewTestHelpers)
 
 # Shared by tests that need a real Postgres connection (persistence_*_test.rb).
 # Not included globally -- `include PersistenceTestHelpers` where needed.
