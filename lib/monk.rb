@@ -1,5 +1,7 @@
 require_relative "monk/version"
 require_relative "monk/settings"
+require_relative "monk/environment"
+require_relative "monk/invalid_monk_env_error"
 require_relative "monk/views"
 require_relative "monk/assets"
 require_relative "monk/context"

@@ -7,6 +7,14 @@ module Monk
   # Deliberately separate from Persistence.register/Auth.configure -- see
   # docs/adr/0006-settings-alongside-persistence-and-auth-config.md.
   module Settings
+    # MONK_ENV's fixed set of allowed values (CONTEXT.md's MONK_ENV entry).
+    # :monk_env is implicitly declared below -- an app never has to
+    # `required :monk_env` itself -- and its value is validated against
+    # this set at Boot (#freeze_registry!), not before.
+    MONK_ENV_VALUES = %w[development test staging production].freeze
+
+    DEFAULT_DECLARATIONS = { monk_env: { required: false, default: "development" } }.freeze
+
     # The DSL #configure's block runs against. Kept as its own object,
     # rather than instance_eval'd straight against Settings' singleton
     # class, so #required/#optional don't leak onto Settings' own public
@@ -79,21 +87,29 @@ module Monk
           result[key] = ENV.fetch(env_var_name(key)) { declaration[:default] }
         end
 
+        validate_monk_env!(values[:monk_env])
+
         @frozen_values = Ractor.make_shareable(values)
         @booted = true
       end
 
       # Test-only.
       def reset!
-        @declarations = {}
+        @declarations = DEFAULT_DECLARATIONS.dup
         @frozen_values = nil
         @booted = false
       end
 
       private
 
+      def validate_monk_env!(value)
+        return if MONK_ENV_VALUES.include?(value)
+
+        raise InvalidMonkEnvError, "MONK_ENV must be one of #{MONK_ENV_VALUES.join(", ")}, got #{value.inspect}"
+      end
+
       def declarations
-        @declarations ||= {}
+        @declarations ||= DEFAULT_DECLARATIONS.dup
       end
 
       # A plain reader, not `@frozen_values ||= ...`: freeze_registry!
