@@ -47,6 +47,18 @@ module ViewTestHelpers
     end
   end
 
+  def with_log
+    with_tree("monk-log", {}) do |dir|
+      Monk::Log.reset!
+      Monk::Log.root = dir
+      begin
+        yield dir
+      ensure
+        Monk::Log.reset!
+      end
+    end
+  end
+
   # Monk reads MONK_ENV once, at boot, never per request -- so a test
   # that wants development behavior has to set it before .freeze!.
   def with_monk_env(value)
