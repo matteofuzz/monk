@@ -17,7 +17,12 @@ module Monk
   module Assets
     DEFAULT_ROOT = "public".freeze
 
-    TEXT_TYPES = {
+    # Ractor.make_shareable, not just #freeze: Hash#freeze only freezes the
+    # hash object itself, not the String keys/values inside it, so a plain
+    # `{ ... }.freeze` here is still rejected as unshareable the moment a
+    # worker Ractor reads it -- exactly what #content_type does from
+    # #disk_entry on every static-asset request in development.
+    TEXT_TYPES = Ractor.make_shareable({
       ".css" => "text/css",
       ".js" => "text/javascript",
       ".mjs" => "text/javascript",
@@ -27,9 +32,9 @@ module Monk
       ".txt" => "text/plain",
       ".xml" => "application/xml",
       ".map" => "application/json",
-    }.freeze
+    })
 
-    BINARY_TYPES = {
+    BINARY_TYPES = Ractor.make_shareable({
       ".png" => "image/png",
       ".jpg" => "image/jpeg",
       ".jpeg" => "image/jpeg",
@@ -43,7 +48,7 @@ module Monk
       ".otf" => "font/otf",
       ".pdf" => "application/pdf",
       ".wasm" => "application/wasm",
-    }.freeze
+    })
 
     FALLBACK_TYPE = "application/octet-stream".freeze
     REVALIDATE = "public, max-age=0, must-revalidate".freeze
