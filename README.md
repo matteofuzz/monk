@@ -55,6 +55,34 @@ entry point under `public/` (see "Views" and "Static assets" below).
 
 `get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
 
+### REST resources — `resources`
+
+For a controller-style resource, `resources` registers the conventional seven routes at once, each dispatching to `controller.new(context).public_send(action)`:
+
+```ruby
+class OrdersController
+  def initialize(context) = @context = context
+  def index = @context.json(Order.where({}))
+  def create = @context.json(Order.create(@context.params))
+  # ...
+end
+
+resources("orders", OrdersController) # every action
+resources("orders", OrdersController, :index, :create) # only these two
+```
+
+| action    | verb(s)      | path              |
+|-----------|--------------|-------------------|
+| `index`   | GET          | `/orders`         |
+| `new`     | GET          | `/orders/new`     |
+| `create`  | POST         | `/orders`         |
+| `show`    | GET          | `/orders/:id`     |
+| `edit`    | GET          | `/orders/:id/edit`|
+| `update`  | PATCH, PUT   | `/orders/:id`     |
+| `destroy` | DELETE       | `/orders/:id`     |
+
+`resources` is built entirely on top of `get`/`post`/`put`/`patch`/`delete` — it doesn't change routing or dispatch, so it's a purely additive way to register several routes at once. Naming an action `resources` doesn't recognize raises `ArgumentError` immediately, rather than silently registering nothing.
+
 ## Context
 
 Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, and — for HTML — `render`, `h`, `raw` and `asset_path` (see "Views" below). There are two ways to write a route block:

@@ -12,6 +12,21 @@ module Monk
     EMPTY_ARRAY = [].freeze
     private_constant :EMPTY_ARRAY
 
+    # Action name -> path suffix (appended to the resource path) and verb(s)
+    # it dispatches on, for #resources. :update registers both PATCH and PUT --
+    # PATCH is the canonical partial-update verb, PUT accepted too since
+    # plenty of clients only ever send it for "update this resource".
+    REST_ACTIONS = {
+      index: { verbs: %w[GET], path: "" },
+      new: { verbs: %w[GET], path: "/new" },
+      create: { verbs: %w[POST], path: "" },
+      show: { verbs: %w[GET], path: "/:id" },
+      edit: { verbs: %w[GET], path: "/:id/edit" },
+      update: { verbs: %w[PATCH PUT], path: "/:id" },
+      destroy: { verbs: %w[DELETE], path: "/:id" },
+    }.freeze
+    private_constant :REST_ACTIONS
+
     class << self
       VERBS.each do |verb|
         define_method(verb.downcase) do |path, &block|
@@ -21,6 +36,32 @@ module Monk
 
       def routes
         @routes ||= []
+      end
+
+      # Registers a conventional set of REST routes for `resource` (a bare
+      # path segment, e.g. "orders" -> "/orders", "/orders/new",
+      # "/orders/:id", ...), each dispatching to
+      # `controller.new(context).public_send(action)`. `actions` defaults
+      # to all seven (index/new/create/show/edit/update/destroy); pass a
+      # subset to only wire up what `controller` actually implements --
+      # an action not listed here raises ArgumentError immediately, rather
+      # than registering a route to a method that doesn't exist.
+      #
+      # Built entirely on top of #get/#post/#put/#patch/#delete above --
+      # no change to routing, dispatch, or freeze!, so an app that never
+      # calls #resources is unaffected.
+      def resources(resource, controller, *actions)
+        actions = REST_ACTIONS.keys if actions.empty?
+        resource = resource.to_s.delete_prefix("/")
+
+        actions.each do |action|
+          mapping = REST_ACTIONS.fetch(action) do
+            raise ArgumentError, "unknown REST action #{action.inspect} (known: #{REST_ACTIONS.keys.join(", ")})"
+          end
+
+          path = "/#{resource}#{mapping[:path]}"
+          mapping[:verbs].each { |verb| send(verb.downcase, path) { controller.new(self).public_send(action) } }
+        end
       end
 
       # Where .erb templates live (default "views"), relative to the
