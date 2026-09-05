@@ -20,6 +20,8 @@ class App < Monk::Base
 
   get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }
 
+  get("/search") { json(query: params[:q]) } # GET /search?q=monk -> {"query":"monk"}
+
   get("/protected") { halt 401, "nope" }
 
   error(ArgumentError) { json(error: "bad input") }
@@ -51,7 +53,7 @@ entry point under `public/` (see "Views" and "Static assets" below).
 
 ## Routing
 
-`get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path; an unmatched request gets a plain `404`.
+`get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
 
 ## Context
 
