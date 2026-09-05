@@ -1,8 +1,18 @@
 # Monk views & assets — implementation plan
 
-Branch: `claude/html-css-js-erb-render-j9xyef`. **Status: Phases 1-6, 8 and
-9 are implemented; Phase 7 (SCSS) is dropped by decision, and Phase 2
-(declared locals) is dropped by decision.** Companion doc: `docs/views.md`
+Branch: `claude/html-css-js-erb-render-j9xyef`. **Status: Phases 1-6, 8 and 9
+are done; Phase 7 (SCSS) is dropped by decision, and Phase 2 (declared
+locals) is dropped by decision. Phase 0 has NOT run** — the implementing
+environment had Ruby 3.3.6 and no 4.0.6, so the phase that was written to
+gate everything below it is still outstanding, and the code shipped on
+3.3.6 measurements instead. Two of its four questions got answered
+sideways by `test/ractor_integration_test.rb` under a `#take` adaptation
+(rendering from a worker works; the frozen manifest is readable), and
+answering them cost two real bugs — see `docs/views.md`, "What the real
+Ractor tests caught". Question 3 is moot now SCSS isn't built;
+question 4 (what an unbooted app does when a worker takes the first
+request) is untouched. Run Phase 0 on 4.0.6 before treating any of this as
+proven. Companion doc: `docs/views.md`
 (why everything compiles at boot, the six spikes, the API as built, the two
 Ractor bugs the integration tests caught, and the SCSS design that wasn't
 built).
@@ -221,8 +231,8 @@ Declared locals aren't built. What replaced the phase:
     the three vocabulary entries proposed in `docs/views.md`; `NOTES-V2.md`
     marks the templating candidate done
 51. An ADR for the two calls most likely to be questioned later:
-    compile-at-boot-only, and escape-by-default — **not written yet**, the
-    one piece of Phase 9 still outstanding
+    `docs/adr/0004-boot-time-template-compilation.md` and
+    `docs/adr/0005-html-escaping-by-default.md`
 
 ## Explicitly out of scope for this plan
 

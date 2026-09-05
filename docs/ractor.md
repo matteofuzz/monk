@@ -58,7 +58,10 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   — is fine. `lib/monk/views.rb` escapes with the latter purely for that
   reason. The difference is invisible in the signature, the docs, and a
   main-Ractor test; only a real worker calling it shows it up, which is
-  what `test/ractor_integration_test.rb` is for.
+  what `test/ractor_integration_test.rb` is for. Measured on 3.3.6, not
+  yet on 4.0.6 — worth re-checking, though the downside is bounded: if a
+  newer `erb` has fixed it, Monk's `CGI.escapeHTML` becomes unnecessary
+  rather than wrong.
 
 Ruby 4 (this repo targets 4.0+, see `.ruby-version`) is where Ractor's communication
 primitives finally stabilized: the old `Ractor.yield`/`Ractor.take` main-Ractor-centric

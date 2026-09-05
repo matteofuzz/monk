@@ -5,9 +5,10 @@ static assets (`lib/monk/assets.rb`), with `test/views_test.rb`,
 `test/assets_test.rb` and two cases in `test/ractor_integration_test.rb`.
 SCSS is **explored but deliberately not built**: plain CSS only, for now
 (see "SCSS" below — the design stands if that changes). Declared locals
-are likewise explored and not built (see "Locals"). No ADR yet; the
-"compile every template at boot, never at request time" call and the
-"auto-escape by default" call are the two most likely to want one.
+are likewise explored and not built (see "Locals"). The two calls most
+likely to be questioned later have ADRs:
+`docs/adr/0004-boot-time-template-compilation.md` and
+`docs/adr/0005-html-escaping-by-default.md`.
 
 This doc started as the design pass and now doubles as the record of what
 shipped and what was left on the table. Six throwaway spikes preceded it,
@@ -453,6 +454,10 @@ and neither visible from any main-Ractor test, review, or spike. Recorded
 because they're the argument for that test file existing at all — a
 feature can be entirely correct in the main Ractor and entirely broken in
 the one that actually serves requests.
+
+Same caveat as the spikes: both were measured on 3.3.6, with the file's
+`Ractor#value` calls adapted to 3.3's `#take`. The fixes are safe on any
+version; whether either failure still reproduces on 4.0.6 is unverified.
 
 1. **`ERB::Util.html_escape` is not Ractor-safe.** Escaping *every*
    `<%= %>` through it meant every render in a worker raised
