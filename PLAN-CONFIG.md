@@ -8,7 +8,9 @@ Like `PLAN-AUTH.md`, this develops in small, gradual, red → green cycles.
 Each numbered step is one vertical slice: one failing test against its
 seam, then the minimum code to pass it.
 
-Nothing here is implemented yet.
+**Implemented 2026-09-05, all 8 phases**, one commit per phase on
+`claude/settings-config-design`. Phase 8's proof lives in the sibling
+`../monk-consumer-test` repo (its own commit there), not in this one.
 
 ## Decisions locked in before Phase 1
 
@@ -214,22 +216,21 @@ up front rather than discovered mid-implementation.
 
 ## Open questions
 
-- **Non-`Boot` entry points and required-key validation.** `bin/console`
-  and `bin/migrate` `require_relative config/settings.rb` (Phase 6) but
-  never call `App.freeze!` — so Phase 2's fail-fast validation (tied to
-  `Boot`) never runs for those scripts. A console session could read a
-  `Settings` value that would have failed validation had the web app
-  actually booted. Whether `Settings` needs its own explicit `validate!`
-  entry point those scripts call directly, or whether this gap is
-  acceptable (those scripts aren't serving requests, so an
-  unvalidated-but-present config is arguably fine), is undecided — flag
-  for a follow-up decision before Phase 6 ships, not blocking Phases 1-5.
-- **Error class naming.** Whether the raises in steps 1, 3, 5, and 7 are
-  one shared error class or several specific ones (mirroring the
-  existing one-class-per-failure-mode convention —
-  `MissingAuthConfigError`, `AuthNotConfiguredError`, etc.) is an
-  implementation detail to settle while writing Phase 1, not a design
-  fork worth grilling.
+- **Non-`Boot` entry points and required-key validation — still open.**
+  `bin/console`, `bin/setup_db`, and `bin/migrate` `require_relative
+  config/settings.rb` (Phase 6) but never call `App.freeze!` — so Phase
+  2's fail-fast validation (tied to `Boot`) never runs for those
+  scripts. A console session can read a `Settings` value that would
+  have failed validation had the web app actually booted. Left
+  unresolved as shipped: those scripts aren't serving requests, so an
+  unvalidated-but-present config was judged acceptable for now, but
+  `Settings` has no explicit `validate!` entry point for them to opt
+  into if that judgment changes.
+- ~~Error class naming~~ — resolved in Phase 1/2/3: five classes, one
+  per failure mode (`UnknownSettingError`, `DuplicateSettingError`,
+  `MissingSettingError`, `SettingsFrozenError`, `InvalidMonkEnvError`),
+  matching the existing one-class-per-failure-mode convention
+  (`MissingAuthConfigError`, `AuthNotConfiguredError`, etc.).
 
 ## Explicitly out of scope for this plan
 

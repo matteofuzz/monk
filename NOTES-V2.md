@@ -54,14 +54,16 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   config first.
 - Caching system
 - Async jobs
-- Configuration system via environment variables — design finalized
-  2026-09-05: a new `Settings` facility (declared via `configure`,
-  fail-fast on missing required keys at `Boot`, read via
-  `Monk::Settings[:key]`/`Context#settings`) that subsumes `MONK_ENV`
-  (now a formal four-value set — `development`/`test`/`staging`/
-  `production` — exposed as `Monk.env`), deliberately kept separate from
-  `Persistence.register`/`Auth.configure`: `docs/adr/0006-settings-alongside-persistence-and-auth-config.md`
-  + `PLAN-CONFIG.md`, glossary in `CONTEXT.md`. Not implemented yet.
+- ~~Configuration system via environment variables~~ — done 2026-09-05:
+  a new `Settings` facility (declared via `configure`, fail-fast on
+  missing required keys at `Boot`, read via `Monk::Settings[:key]`/
+  `Context#settings`) that subsumes `MONK_ENV` (now a formal four-value
+  set — `development`/`test`/`staging`/`production` — exposed as
+  `Monk.env`), deliberately kept separate from `Persistence.register`/
+  `Auth.configure`: `docs/adr/0006-settings-alongside-persistence-and-auth-config.md`
+  + `PLAN-CONFIG.md` (all 8 phases), glossary in `CONTEXT.md`. Verified
+  end to end against `../monk-consumer-test` under a real `kino` worker
+  pool, the same way the gem-packaging line above was.
 - WebSocket support, with session persistence — design proposed (separate
   process alongside Kino, not an in-Kino feature; Kino confirmed
   architecturally unable to expose a raw socket, `rack.hijack` included).
