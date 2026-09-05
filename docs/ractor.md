@@ -62,6 +62,18 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   yet on 4.0.6 — worth re-checking, though the downside is bounded: if a
   newer `erb` has fixed it, Monk's `CGI.escapeHTML` becomes unnecessary
   rather than wrong.
+- **`.freeze` on a collection constant is not enough, and the failure is
+  deferred to whoever reads it from a worker.** `Hash#freeze` and
+  `Array#freeze` freeze the container, not the Strings inside it, so
+  `{ ".css" => "text/css" }.freeze` is still unshareable and a worker
+  touching that constant gets `Ractor::IsolationError: can not access
+  non-shareable objects in constant …`. `Ractor.make_shareable` deep-freezes
+  and is what a constant read on the request path needs — `%w[...]​.freeze`
+  has the same hole, while a frozen Array of Symbols is fine because
+  Symbols are already shareable. Hit for real in `lib/monk/assets.rb`'s
+  content-type tables (`docs/views.md`, "What the real Ractor tests
+  caught"); `Monk::Scaffold`'s constants have the same shape and are
+  harmless only because the `monk new` CLI never leaves the main Ractor.
 
 Ruby 4 (this repo targets 4.0+, see `.ruby-version`) is where Ractor's communication
 primitives finally stabilized: the old `Ractor.yield`/`Ractor.take` main-Ractor-centric

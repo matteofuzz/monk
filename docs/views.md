@@ -449,15 +449,19 @@ properties are native now), which is why SCSS is opt-in.
 
 ## What the real Ractor tests caught
 
-Two bugs, both found by `test/ractor_integration_test.rb` on the first run
-and neither visible from any main-Ractor test, review, or spike. Recorded
+Three bugs. The first two were found by `test/ractor_integration_test.rb`
+on its first run; the third slipped past it and was found by running the
+suite on real Ruby 4.0. None was visible from any main-Ractor test,
+review, or spike. Recorded
 because they're the argument for that test file existing at all — a
 feature can be entirely correct in the main Ractor and entirely broken in
 the one that actually serves requests.
 
-Same caveat as the spikes: both were measured on 3.3.6, with the file's
-`Ractor#value` calls adapted to 3.3's `#take`. The fixes are safe on any
-version; whether either failure still reproduces on 4.0.6 is unverified.
+Caveat on provenance: the first two were measured on 3.3.6, with the
+file's `Ractor#value` calls adapted to 3.3's `#take`; the fixes are safe on
+any version, but whether those two failures still reproduce on 4.0.6 is
+unverified. The third was found on real 4.0.6 by the author, and
+reproduces on 3.3.6 as well.
 
 1. **`ERB::Util.html_escape` is not Ractor-safe.** Escaping *every*
    `<%= %>` through it meant every render in a worker raised
@@ -476,11 +480,29 @@ version; whether either failure still reproduces on 4.0.6 is unverified.
    now — the same lesson `Monk::Persistence::Registry#freeze_registry!`
    already carried, re-learned on a different ivar.
 
-A third, smaller one was avoided by construction rather than found: every
+3. **`{ ... }.freeze` on a constant isn't deep enough** — found by the
+   author on real Ruby 4.0 after everything above was already green.
+   `Monk::Assets`'s content-type tables were `.freeze`d, which freezes the
+   Hash but not the Strings inside it, leaving the constant unshareable:
+   every static-asset request served from a worker in **development**
+   raised `Ractor::IsolationError`. Production never touched it, because
+   there the tables are read once at boot while building the manifest —
+   so the production-mode Ractor test passed while the mode people
+   actually develop in was broken. Fixed with `Ractor.make_shareable`, and
+   `test/ractor_integration_test.rb` now covers the development path too.
+   The general form is in `docs/ractor.md`.
+
+A fourth was avoided by construction rather than found: every
 reader on these modules is a plain `attr_reader` over an eagerly
 initialized ivar, never `@x ||= …`, because a lazy reader *writes* on
 first access and writing a module ivar from a worker is an isolation
 error.
+
+The pattern across all three is worth naming: each bug lived in a path the
+tests exercised only from the main Ractor. Rendering, the asset manifest,
+and the content-type tables were all correct there and broken in a worker,
+and each was found the moment — and only the moment — a real worker
+touched it.
 
 ## Ractor-safety notes specific to this feature
 
