@@ -64,8 +64,9 @@ module Monk
         # Settled once here, not read from ENV per request in
         # #log_request: ENV is main-Ractor state, so a per-request read
         # from a worker Ractor is the same hazard Monk::Assets already
-        # guards against the same way.
-        @quiet_logging = !Monk.env.development?
+        # guards against the same way. Gates the $stdout echo only --
+        # Monk::Log's file write is unconditional, every environment.
+        @console_logging = Monk.env.development?
 
         index_routes!
 
@@ -126,13 +127,17 @@ module Monk
       end
 
       def log_request(env, status, start)
-        return if @quiet_logging
-
         duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000).round(1)
-        $stdout.puts "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
-        # Each worker Ractor buffers $stdout independently; without an explicit
-        # flush, lines only surface when the process exits, not in real time.
-        $stdout.flush
+        line = "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
+
+        if @console_logging
+          $stdout.puts line
+          # Each worker Ractor buffers $stdout independently; without an explicit
+          # flush, lines only surface when the process exits, not in real time.
+          $stdout.flush
+        end
+
+        Monk::Log.write("#{line}\n")
       end
 
       def not_found_response(env)
