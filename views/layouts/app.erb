@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= @title %></title>
+    <link rel="stylesheet" href="<%= asset_path "/css/app.css" %>">
+    <%# Import maps are the whole third-party JS story here -- no bundler,
+        no node_modules, no build step. A bare specifier maps to a file
+        Monk serves out of public/. %>
+    <script type="importmap">
+      { "imports": { "clock": "<%= asset_path "/js/clock.js" %>" } }
+    </script>
+    <script type="module" src="<%= asset_path "/js/app.js" %>"></script>
+  </head>
+  <body>
+    <main><%= yield %></main>
+  </body>
+</html>

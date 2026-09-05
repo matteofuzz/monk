@@ -89,6 +89,105 @@ class RactorIntegrationTest < Minitest::Test
     assert_equal "abc123", result
   end
 
+  # The claim docs/views.md rests on: a template compiled to a method in
+  # the main Ractor at Boot renders correctly from a worker, and two
+  # workers rendering the same template don't bleed data into each other
+  # (each has its own Context; the only shared thing is the frozen
+  # registry).
+  def test_concurrent_ractors_rendering_the_same_template_stay_independent
+    Dir.mktmpdir("monk-views-ractor") do |dir|
+      File.write(File.join(dir, "echo.erb"), "<p><%= params[:id] %></p>")
+      Monk::Views.reset!
+
+      app = Class.new(Monk::Base) do
+        get("/echo/:id") { render "echo" }
+      end
+      app.views(dir)
+      Monk.boot(app)
+
+      assert Ractor.shareable?(Monk::Views.registry)
+
+      results = (1..10).map do |i|
+        Ractor.new(app, i) do |a, id|
+          _status, headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/echo/#{id}")
+          [headers["content-type"], body.join]
+        end
+      end.map(&:value)
+
+      results.each_with_index do |(content_type, body), index|
+        assert_equal "text/html; charset=utf-8", content_type
+        assert_equal "<p>#{index + 1}</p>", body
+      end
+    ensure
+      Monk::Views.reset!
+    end
+  end
+
+  def test_concurrent_ractors_serving_assets_read_the_frozen_manifest
+    Dir.mktmpdir("monk-assets-ractor") do |dir|
+      File.write(File.join(dir, "app.css"), "body{color:red}\n")
+      Monk::Assets.reset!
+
+      app = Class.new(Monk::Base)
+      app.assets(dir)
+      Monk.boot(app)
+
+      assert Ractor.shareable?(Monk::Assets.manifest)
+
+      results = Array.new(8) do
+        Ractor.new(app) do |a|
+          status, headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/app.css")
+          [status, headers["etag"], body.join]
+        end
+      end.map(&:value)
+
+      etags = results.map { |(_status, etag, _body)| etag }
+
+      assert_equal 1, etags.uniq.size
+      results.each do |(status, _etag, body)|
+        assert_equal 200, status
+        assert_equal "body{color:red}\n", body
+      end
+    ensure
+      Monk::Assets.reset!
+    end
+  end
+
+  # Regression, found on real Ruby 4.0 after the production path above was
+  # already green: development serves assets by reading from disk in the
+  # worker, which reaches Assets::TEXT_TYPES, and `{ ... }.freeze` freezes
+  # only the Hash -- not the String values inside it -- so the constant was
+  # unshareable and every static request in a worker raised
+  # Ractor::IsolationError. The production path never caught it because it
+  # touches that constant only at boot, in the main Ractor, while building
+  # the manifest.
+  def test_a_worker_ractor_serves_a_development_mode_asset_from_disk
+    assert Ractor.shareable?(Monk::Assets::TEXT_TYPES)
+    assert Ractor.shareable?(Monk::Assets::BINARY_TYPES)
+
+    Dir.mktmpdir("monk-assets-dev-ractor") do |dir|
+      File.write(File.join(dir, "app.css"), "body{color:red}\n")
+      Monk::Assets.reset!
+
+      app = Class.new(Monk::Base)
+      app.assets(dir)
+      with_monk_env("development") { Monk.boot(app) }
+
+      refute Monk::Assets.production?, "the test must exercise the disk-reading path"
+
+      status, content_type, body = Ractor.new(app) do |a|
+        st, headers, b = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/app.css")
+        [st, headers["content-type"], b.join]
+      end.value
+
+      assert_equal 200, status
+      assert_equal "text/css; charset=utf-8", content_type
+      assert_equal "body{color:red}\n", body
+    ensure
+      Monk::Assets.reset!
+    end
+  end
+
   def test_concurrent_ractors_hammering_a_shared_stateractor_never_lose_an_update
     increments_per_ractor = 25
     ractor_count = 8
