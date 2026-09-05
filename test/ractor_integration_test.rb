@@ -211,6 +211,53 @@ class RactorIntegrationTest < Minitest::Test
     end
   end
 
+  # PLAN-CONFIG.md Phase 7 step 21: the analogue of the Assets/Views
+  # concurrent-Ractor proofs above, for a custom app-declared Settings key.
+  def test_concurrent_ractors_read_a_custom_settings_key_correctly
+    with_settings do
+      with_env("MONK_TEST_GREETING", "hello") do
+        Monk::Settings.configure { required :monk_test_greeting }
+
+        app = Class.new(Monk::Base) do
+          get("/x") { settings[:monk_test_greeting] }
+        end
+        Monk.boot(app)
+
+        results = Array.new(8) do
+          Ractor.new(app) do |a|
+            _status, _headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/x")
+            body.join
+          end
+        end.map(&:value)
+
+        assert results.all? { |body| body == "hello" }
+      end
+    end
+  end
+
+  # PLAN-CONFIG.md Phase 7 step 22: same proof, for Monk.env's predicates
+  # specifically -- not just log_request's suppression behavior, which
+  # only exercises .development?.
+  def test_concurrent_ractors_read_monk_env_predicates_correctly
+    with_settings do
+      with_env("MONK_ENV", "staging") do
+        app = Class.new(Monk::Base) do
+          get("/x") { json(staging: Monk.env.staging?, production: Monk.env.production?) }
+        end
+        Monk.boot(app)
+
+        results = Array.new(8) do
+          Ractor.new(app) do |a|
+            _status, _headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/x")
+            body.join
+          end
+        end.map(&:value)
+
+        assert results.all? { |body| body == '{"staging":true,"production":false}' }
+      end
+    end
+  end
+
   def test_concurrent_ractors_hammering_a_shared_stateractor_never_lose_an_update
     increments_per_ractor = 25
     ractor_count = 8
