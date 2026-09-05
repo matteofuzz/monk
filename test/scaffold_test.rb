@@ -11,6 +11,7 @@ class ScaffoldTest < Minitest::Test
 
       assert_equal template("base/Gemfile"), read(dest, "Gemfile")
       assert_equal template("base/config.ru"), read(dest, "config.ru")
+      assert_equal template("base/config/settings.rb"), read(dest, "config/settings.rb")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
       assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
       assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
@@ -48,6 +49,25 @@ class ScaffoldTest < Minitest::Test
     ensure
       Monk::Views.reset!
       Monk::Assets.reset!
+    end
+  end
+
+  # config/settings.rb ships in the base skeleton regardless of
+  # --postgres (MONK_ENV/dotenv apply either way), and config.ru requires
+  # it before anything else -- this loads the actual generated file
+  # (not a fresh Class.new(Monk::Base) app, unlike the boot test above),
+  # proving it works standalone: a missing dotenv gem is a no-op, and
+  # Monk::Settings' built-in :monk_env is readable afterward.
+  def test_the_generated_config_settings_file_loads_standalone_without_dotenv_installed
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest).write!
+
+      with_settings do
+        load File.join(dest, "config/settings.rb")
+
+        assert_kind_of String, Monk::Settings[:monk_env]
+      end
     end
   end
 
