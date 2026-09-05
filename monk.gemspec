@@ -19,6 +19,10 @@ Gem::Specification.new do |spec|
   spec.executables = ["monk"]
 
   spec.add_dependency "rack", "~> 3.0"
+  # Base64 stopped being a default gem in Ruby 3.4 (bundled instead) --
+  # Monk::WebSocket::Handshake requires it directly for the RFC 6455
+  # handshake, so unlike a persistence backend this isn't opt-in per app.
+  spec.add_dependency "base64"
 
   # Persistence backends are opt-in (require "monk/persistence/pg"
   # explicitly), so their gems aren't runtime dependencies of monk itself --

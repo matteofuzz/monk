@@ -52,8 +52,7 @@ module Monk
           end
         end
 
-        Monk.freeze_hooks.each(&:freeze_registry!)
-        Monk::Persistence::Model.freeze_all!
+        Monk.freeze!
 
         Ractor.make_shareable(routes)
         Ractor.make_shareable(error_handlers)

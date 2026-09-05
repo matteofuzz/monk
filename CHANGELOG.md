@@ -4,6 +4,42 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.6.0 - 2026-09-05
+
+### Added
+
+- **WebSockets** (`lib/monk/websocket.rb`, opt-in via
+  `require "monk/websocket"`): a hand-rolled RFC 6455 implementation —
+  handshake and frame codec (all three length encodings; `ProtocolError`
+  on truncated/malformed frames), a connection-per-Ractor server
+  (`Monk::WebSocket::Server.new(port:, bind:)`) that moves each accepted
+  socket into its own Ractor via `Ractor#send(..., move: true)` so one
+  slow or crashing connection never blocks the accept loop or any other
+  connection, and a full close handshake (server- and client-initiated,
+  plus abrupt-disconnect handling) reported to app code as a plain `nil`
+  read.
+  - `Registry`: an in-process broadcast Ractor (`register`/`unregister`/
+    `broadcast`) that connections subscribe to by key; broadcasts relay
+    onto each subscriber's socket from a background thread inside that
+    connection's own Ractor, with unconditional unsubscribe in `ensure`
+    so no lifecycle path leaks a stale entry.
+  - `Server.new(authenticate: true)` extracts identity via
+    `Monk::Auth` — `Authorization: Bearer` or the `session_token`
+    cookie — with `allowed_origins:` origin checking for
+    cookie-derived credentials; ping/pong is answered automatically
+    without reaching app code.
+  - Verified under real concurrent Ractor workers (ordinary, slow, and
+    crashing connections running simultaneously; broadcast from a
+    fourth, independent Ractor to multiple real subscribers).
+
+### Fixed
+
+- `Monk.freeze!` is now callable independent of `Base#freeze!`: a
+  WebSocket-only app never touches `Monk::Base`, so nothing was freezing
+  `Monk::Auth`'s config and the first `Monk::Auth.verify` call from a
+  connection Ractor raised `Ractor::IsolationError`. `Server.new
+  (authenticate: true)` now freezes on first use, mirroring `Base.call`.
+
 ## 0.5.0 - 2026-09-05
 
 ### Added
