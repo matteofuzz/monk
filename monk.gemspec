@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
   spec.license = "MIT"
   spec.required_ruby_version = ">= 4.0"
 
-  spec.files = Dir.chdir(__dir__) { `git ls-files -z lib exe LICENSE.txt README.md`.split("\x0") }
+  spec.files = Dir.chdir(__dir__) { `git ls-files -z lib exe LICENSE.txt README.md CHANGELOG.md`.split("\x0") }
   spec.require_paths = ["lib"]
   spec.bindir = "exe"
   spec.executables = ["monk"]
