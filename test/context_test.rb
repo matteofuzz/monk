@@ -144,4 +144,33 @@ class ContextTest < Minitest::Test
 
     assert_equal "nil", body.join
   end
+
+  def test_settings_reads_a_declared_key_from_inside_a_route
+    with_settings do
+      with_env("MONK_TEST_API_KEY", "secret") do
+        Monk::Settings.configure { required :monk_test_api_key }
+
+        app = Class.new(Monk::Base) do
+          get("/x") { settings[:monk_test_api_key] }
+        end
+
+        _status, _headers, body = app.call(env_for("GET", "/x"))
+
+        assert_equal "secret", body.join
+      end
+    end
+  end
+
+  def test_settings_raises_the_same_way_as_monk_settings_for_an_undeclared_key
+    with_settings do
+      app = Class.new(Monk::Base) do
+        get("/x") { settings[:monk_test_mystery] }
+        error(Monk::UnknownSettingError) { json(error: "unknown setting") }
+      end
+
+      _status, _headers, body = app.call(env_for("GET", "/x"))
+
+      assert_equal '{"error":"unknown setting"}', body.join
+    end
+  end
 end
