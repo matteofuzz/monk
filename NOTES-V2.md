@@ -22,14 +22,21 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 
 ## Candidates (from v1's deliberate scope cuts)
 
-- HTML templating — design proposed 2026-09-05, widened to the whole
-  server-rendered surface (ERB compiled at boot into methods on a shareable
-  module, escape-by-default; a boot-built frozen manifest for static CSS/JS;
-  SCSS opt-in and boot-only, because `sass-embedded` is the third gem found
-  to raise `Ractor::IsolationError` from a worker; no JS build step, ever):
-  `docs/views.md` + `PLAN-VIEWS.md`. Six spikes back it, but they ran on
-  Ruby 3.3.6 rather than 4.0.6 — `PLAN-VIEWS.md` Phase 0 re-measures the
-  Ractor-flavored ones before anything is built on them. Not implemented.
+- HTML templating — **done 2026-09-05**, widened to the whole
+  server-rendered surface: ERB views compiled at boot into methods on a
+  shareable module (escape-by-default, layouts via Ruby's own `yield`,
+  partials, locals as a plain hash plus route ivars) and static CSS/JS
+  served from a boot-built frozen manifest with ETag/304 and digest-stamped
+  URLs. `lib/monk/views.rb`, `lib/monk/assets.rb`, `test/views_test.rb`,
+  `test/assets_test.rb`, plus two real-Ractor cases. Design and the record
+  of what was left out: `docs/views.md`; plan: `PLAN-VIEWS.md`.
+  Deliberately not built: SCSS (designed, one file away, but plain CSS
+  wins for now), declared/strict locals, and any JavaScript tooling —
+  ES modules and import maps instead, demonstrated by `monk new` and this
+  repo's `config.ru`. Two Ractor bugs surfaced on the way, both recorded:
+  `ERB::Util.html_escape` is not Ractor-safe (`CGI.escapeHTML` is), and an
+  unfrozen root path in a module ivar breaks a worker before it reads
+  anything else.
 - Sessions / cookies
 - Persistence
 - Rack middleware composition

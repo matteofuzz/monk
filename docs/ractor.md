@@ -51,6 +51,14 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   (`docs/views.md`, spike 4). The fix is never to patch the gem: do that
   work once in the main Ractor at boot and hand workers nothing but the
   frozen result.
+- **A stdlib method can be Ractor-unsafe too, and nothing about it says
+  so.** `ERB::Util.html_escape` raises `Ractor::UnsafeError` ("ractor
+  unsafe method called from not main ractor") when a worker calls it,
+  while `CGI.escapeHTML` — byte-identical output, same C extension family
+  — is fine. `lib/monk/views.rb` escapes with the latter purely for that
+  reason. The difference is invisible in the signature, the docs, and a
+  main-Ractor test; only a real worker calling it shows it up, which is
+  what `test/ractor_integration_test.rb` is for.
 
 Ruby 4 (this repo targets 4.0+, see `.ruby-version`) is where Ractor's communication
 primitives finally stabilized: the old `Ractor.yield`/`Ractor.take` main-Ractor-centric

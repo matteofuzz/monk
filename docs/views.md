@@ -1,13 +1,19 @@
 # HTML views, static assets, and (optionally) SCSS
 
-Status: design exploration, 2026-09-05 — six throwaway spikes ran the same
-day, outside this repo. No code lives in this repo yet, no ADR yet (the
+Status: **implemented 2026-09-05** — ERB views (`lib/monk/views.rb`) and
+static assets (`lib/monk/assets.rb`), with `test/views_test.rb`,
+`test/assets_test.rb` and two cases in `test/ractor_integration_test.rb`.
+SCSS is **explored but deliberately not built**: plain CSS only, for now
+(see "SCSS" below — the design stands if that changes). Declared locals
+are likewise explored and not built (see "Locals"). No ADR yet; the
 "compile every template at boot, never at request time" call and the
-"auto-escape by default" call are the two most likely to want one).
-`NOTES-V2.md` lists "HTML templating" as a v2 candidate inherited from v1's
-deliberate scope cuts; this doc is the first design pass at it, widened to
-the whole server-rendered surface: ERB templates, the CSS/JS they link to,
-and SCSS as an opt-in extra. Implementation plan: `PLAN-VIEWS.md`.
+"auto-escape by default" call are the two most likely to want one.
+
+This doc started as the design pass and now doubles as the record of what
+shipped and what was left on the table. Six throwaway spikes preceded it,
+plus two Ractor bugs the integration tests caught afterwards that no amount
+of design would have — see "What the real Ractor tests caught". Plan:
+`PLAN-VIEWS.md`.
 
 **Caveat on the spike results below.** Monk's target Ruby is 4.0.6
 (`.ruby-version`), and `PLAN-WEBSOCKET.md` sets the rule that Ractor
@@ -25,16 +31,20 @@ Three things, in dependency order:
 
 1. **Views** — `.erb` templates compiled at boot, rendered from a route via
    `render`, with layouts, partials, and HTML-escaping on by default.
+   **Built.**
 2. **Static assets** — the `.css`, `.js`, images and fonts those templates
    link to, served by Monk itself with `ETag`/`304`, out of a boot-built
-   manifest.
+   manifest. **Built.**
 3. **SCSS** — opt-in, compiled to CSS *at boot* into that same manifest,
-   requiring `sass-embedded` in the app's own `Gemfile`. No JS preprocessor,
-   ever (see "Vanilla JS with no build step").
+   requiring `sass-embedded` in the app's own `Gemfile`. **Not built** —
+   the design below holds, and nothing in (1) or (2) depends on it, so it
+   stays a one-file addition if plain CSS ever stops being enough. No JS
+   preprocessor, ever (see "Vanilla JS with no build step").
 
-(1) and (2) are stdlib-only (`erb`, `cgi/escape`, `digest`) and belong in
-core. (3) is opt-in exactly like `Monk::Persistence::Pg` — a require the
-app makes, plus a gem the app declares.
+(1) and (2) are stdlib-only (`erb`, `cgi/escape`, `digest`) and live in
+core. (3), if it ever lands, is opt-in exactly like
+`Monk::Persistence::Pg` — a require the app makes, plus a gem the app
+declares.
 
 ## The one constraint that decides the whole design
 
@@ -210,20 +220,17 @@ subprocess (verified by process count). Monk's SCSS step therefore opens
 one compiler, compiles everything registered, and closes it — a Monk app
 serving traffic has no `dart-sass` process attached to it.
 
-## Proposed API
+## The API, as built
 
 ```ruby
 require "monk"
-require "monk/views/scss"   # opt-in; needs sass-embedded in your Gemfile
-
-Monk::Views::Scss.register("styles/app.scss", as: "/css/app.css")
 
 class App < Monk::Base
   views   "views"           # default; relative to Dir.pwd, resolved at boot
   assets  "public"          # default; `assets false` disables asset serving
   layout  "layouts/app"     # optional default layout for every render
 
-  get("/") { render "index", title: "Home", posts: Post.where(published: true) }
+  get("/") { @title = "Home"; render "index", posts: Post.where(published: true) }
 
   # a fragment, no layout
   get("/posts/:id/row") { render "posts/row", post: Post.find(params[:id]) }
@@ -235,11 +242,10 @@ run Monk.boot(App)
 `views/layouts/app.erb`:
 
 ```erb
-<%# locals: (title: "Monk") %>
 <!doctype html>
 <html>
   <head>
-    <title><%= title %></title>
+    <title><%= @title %></title>
     <link rel="stylesheet" href="<%= asset_path "/css/app.css" %>">
     <script type="module" src="<%= asset_path "/js/app.js" %>"></script>
   </head>
@@ -250,11 +256,10 @@ run Monk.boot(App)
 `views/index.erb`:
 
 ```erb
-<%# locals: (title:, posts:) %>
-<h1><%= title %></h1>
+<h1><%= @title %></h1>
 <ul>
-  <% posts.each do |post| -%>
-    <%= render "posts/row", post: post %>
+  <% locals[:posts].each do |post| -%>
+    <%= render "posts/row", post: post -%>
   <% end -%>
 </ul>
 ```
@@ -271,27 +276,45 @@ another template is the same call. The route block's return value is
 already the response body, so `get("/") { render "index" }` needs nothing
 extra.
 
-Reserved keywords: `layout:` (`false`, or a template name overriding the
-class-level default). A template declaring a local named `layout` is a boot
-error rather than an ambiguity to resolve at the call site.
+Reserved keyword: `layout:` (`false`, or a template name overriding the
+class-level default). With locals passed as a hash rather than declared
+(see below), there's no collision to design around — `layout` is simply not
+a key `render` forwards.
+
+The default layout wraps the **outermost** render of a request only, so a
+partial rendered from inside a template isn't wrapped again. That's one
+boolean on the `Context` (`#rendering`), not a render stack.
 
 Helpers added to `Monk::Context`: `render`, `h`, `raw`, `asset_path`.
 That's the whole surface. No tag builders, no `link_to`, no form helpers —
 the templates are HTML.
 
-### Locals
+### Locals — decided: no declaration syntax
+
+**What shipped is option 1 below, plus ivars, and nothing else.**
+A `locals` hash passed to `render` and read as `locals[:post]`, and ivars
+set in the route (`@title`), which templates and layouts see because they
+run with `self` bound to the same `Context`. The declared-signature form (option 3 in the original
+exploration, kept below because the analysis stands) was explored, spiked,
+and deliberately not built — it's real machinery for an error message, and
+Monk's stance everywhere else is that plain hashes beat a layer.
+
+What that costs, stated plainly: a local you forgot to pass reads as `nil`
+rather than raising `missing keyword: :title`, and a typo'd key is silent.
+The spike below is what a future change of mind would start from.
 
 Three options were on the table; the constraint that kills the familiar
 ones is that names must exist at compile time.
 
 1. **`locals[:title]`** — a plain hash argument, zero machinery, and
    consistent with `Monk::Persistence`'s "plain Symbol-keyed hashes, not
-   objects" stance. Rejected on ergonomics: every interpolation in every
-   template pays for it, and a typo is a silent `nil` rather than an error.
+   objects" stance. **Chosen**, for exactly that consistency; the
+   ergonomic cost is real but is paid mostly by partials, which is where a
+   hash is the right shape anyway.
 2. **`method_missing` on `Context`** resolving names against a locals hash
    — nicest to type, but it's runtime magic that makes every genuine
    `NoMethodError` in a template ambiguous. Rejected.
-3. **A declared signature (recommended)** — `<%# locals: (title:, badge: nil) %>`
+3. **A declared signature (explored, not built)** — `<%# locals: (title:, badge: nil) %>`
    as the template's first line, compiled straight into the method's
    keyword parameters. Same syntax Rails 7.1 uses for strict locals, so
    it's not a Monk invention. Templates read as plain Ruby locals
@@ -299,18 +322,17 @@ ones is that names must exist at compile time.
    spike 2 come free from Ruby's own argument checking — no validation code
    in Monk at all. A template with no declaration accepts no locals.
 
-The layout is the one place the rule bends: it's rendered with the *same*
-locals as the page, filtered to the keys it declares, so a layout that
-wants `title:` gets it without every page having to thread it through, and
-a layout that declares nothing gets nothing. The page template stays
-strict (an undeclared local passed to it is an `ArgumentError`), so typos
-are still caught where they're actually made.
+With no declarations, the layout question answers itself: the layout is
+rendered with the same `locals` hash as the page, and reads whatever keys
+it cares about. No filtering rule, no `ArgumentError` to design around.
 
-Ambient values that aren't really "arguments" have a second, no-machinery
-route: a route block and its templates and the layout all execute with
-`self` bound to the *same* `Context`, so `@current_user = …` set in the
-route is readable in both. Worth documenting; not worth building anything
-for.
+Ambient values that aren't really "arguments" have the second,
+no-machinery route: a route block and its templates and the layout all
+execute with `self` bound to the *same* `Context`, so `@title = …` set in
+the route is readable in both. In practice this is the primary idiom and
+`locals` is for partials — which is roughly the opposite of what the
+original design assumed, and is why the declared-signature machinery
+would have earned less than it looked like it would.
 
 ## Static assets
 
@@ -321,19 +343,30 @@ Lookup happens in `Base.dispatch` **before** route matching, for `GET` and
 route can't accidentally shadow a stylesheet; the tradeoff — a route can't
 override a path that exists as a file — is worth naming in the README.
 
-Per-response behavior: `content-type` from the extension map,
-`etag`, `cache-control: public, max-age=0, must-revalidate`, and a `304`
-when `if-none-match` matches. `asset_path("/css/app.css")` appends
-`?v=<etag>`; a request carrying a matching `v=` gets
-`cache-control: public, max-age=31536000, immutable` instead. That's the
-whole caching story — no digested filenames, no manifest.json, no build
-step.
+Per-response behavior: `content-type` from the extension map (text types
+get `; charset=utf-8`), `etag`, `cache-control: public, max-age=0,
+must-revalidate`, and a `304` when `if-none-match` matches — the header is
+split on commas, so a browser sending several candidates is handled.
+`HEAD` returns those headers plus `content-length` and an empty body.
+`asset_path("/css/app.css")` appends `?v=<digest>`; a request carrying a
+matching `v=` gets `cache-control: public, max-age=31536000, immutable`
+instead. That's the whole caching story — no digested filenames, no
+manifest.json, no build step.
 
-In development (`MONK_ENV != "production"`) the manifest is consulted for
-metadata but the body is re-read from disk per request, so editing CSS or
-JS needs a refresh, not a restart. Dev is also the only mode that has to
-sanitize the request path, since it hits the filesystem: reject any path
-that doesn't resolve back inside the assets root.
+In development (`MONK_ENV != "production"`) the manifest is bypassed
+entirely and the file is read from disk per request, with an ETag computed
+from what was just read and `cache-control: no-cache` — so editing CSS or
+JS needs a refresh, not a restart, and a browser can't serve you a stale
+copy of the file you just changed. `asset_path` doesn't stamp in
+development for the same reason. Dev is also the only mode that has to
+sanitize the request path, since it hits the filesystem: the path must
+resolve back inside the assets root. `PATH_INFO` is deliberately not
+un-escaped there — an encoded `%2e%2e` stays a literal, nonexistent
+filename, and a decoded `..` is caught by the containment check.
+
+Which mode is in play is decided **once, at boot** (`MONK_ENV` read in
+`freeze_registry!`), never per request: `ENV` is main-Ractor state, and a
+worker reading it is the next isolation error waiting to happen.
 
 Production deployments that put nginx or a CDN in front of Monk should keep
 doing that; this exists so that a Monk app is complete on its own, not to
@@ -363,10 +396,19 @@ component files are out of reach entirely. An app that needs those should
 run its own build and drop the output into `public/` — Monk will serve it
 without knowing or caring.
 
-## SCSS, and why this particular pattern is clean
+## SCSS — designed, not built
 
-The user-facing bar for including SCSS at all was "only if we find a very
-clean simple pattern". This is the pattern:
+**Decision: plain CSS only, for now.** The bar for including SCSS at all
+was "only if we find a very clean simple pattern"; the pattern below
+clears it, and was still declined — nothing in the demo or the scaffold
+needs more than native CSS nesting and custom properties, and the honest
+cost (a restart to see a stylesheet change, where a `.css` edit needs a
+refresh) is a real regression for the one workflow this whole feature
+exists to make pleasant.
+
+The design is recorded in full because it stays a one-file addition — no
+request-path code changes, no core changes — if that ever stops being
+true. This is the pattern it would take:
 
 ```ruby
 require "monk/views/scss"
@@ -395,14 +437,45 @@ What makes it clean rather than a pipeline:
   Monk, no output-directory mapping — an explicit source and an explicit
   URL.
 
-The cost, stated honestly: **editing a `.scss` file requires a restart**,
-where editing a `.css` file doesn't. Compilation can't move to the request
+The cost, and the reason it wasn't built: **editing a `.scss` file would
+require a restart**, where editing a `.css` file doesn't. Compilation can't move to the request
 path in dev without giving a worker Ractor a Sass compiler, which spike 4
 says is impossible. A `bin/assets --watch` script would fix it and is
 deliberately not proposed — it's a build tool, which is the thing this
 whole section is trying not to become. If restarts prove annoying in
 practice, the honest fix is to write plain CSS (nesting and custom
 properties are native now), which is why SCSS is opt-in.
+
+## What the real Ractor tests caught
+
+Two bugs, both found by `test/ractor_integration_test.rb` on the first run
+and neither visible from any main-Ractor test, review, or spike. Recorded
+because they're the argument for that test file existing at all — a
+feature can be entirely correct in the main Ractor and entirely broken in
+the one that actually serves requests.
+
+1. **`ERB::Util.html_escape` is not Ractor-safe.** Escaping *every*
+   `<%= %>` through it meant every render in a worker raised
+   `Ractor::UnsafeError` ("ractor unsafe method called from not main
+   ractor") — i.e. HTML rendering was broken in exactly the mode Monk
+   exists for, while passing 24 green tests in the main Ractor.
+   `CGI.escapeHTML` produces byte-identical output and is safe; that's
+   what `lib/monk/views.rb` uses, and the reason is a comment in the code
+   rather than folklore. Now also recorded as a general finding in
+   `docs/ractor.md`.
+2. **An unfrozen root path in a module ivar breaks a worker before it
+   reads anything else.** `Monk::Assets.root` (and `Monk::Views.root`) are
+   read on the request path; left as ordinary unfrozen Strings they raised
+   `Ractor::IsolationError` on the *first* call, ahead of the frozen
+   manifest they were guarding. Both are frozen in `freeze_registry!`
+   now — the same lesson `Monk::Persistence::Registry#freeze_registry!`
+   already carried, re-learned on a different ivar.
+
+A third, smaller one was avoided by construction rather than found: every
+reader on these modules is a plain `attr_reader` over an eagerly
+initialized ivar, never `@x ||= …`, because a lazy reader *writes* on
+first access and writing a module ivar from a worker is an isolation
+error.
 
 ## Ractor-safety notes specific to this feature
 
@@ -412,50 +485,57 @@ properties are native now), which is why SCSS is opt-in.
   and the frozen registry.
 - **`Base.call` lazily boots when routes aren't yet shareable.** With views
   in play, a first request arriving in a worker Ractor would try to compile
-  templates there. `Monk.boot(App)` in `config.ru` is already the sanctioned
-  path (README, "Boot and Ractor-shareability"); this makes it load-bearing
-  rather than merely recommended, and Phase 0 of the plan measures what
-  actually happens if you skip it.
+  templates there — and compiling installs a method on a shared module,
+  which is precisely what a worker must not do. `Monk.boot(App)` in
+  `config.ru` is already the sanctioned path (README, "Boot and
+  Ractor-shareability"); views make it load-bearing rather than merely
+  recommended. Still open: whether that lazy path should raise a named
+  `Monk::NotBootedError` instead of whatever Ruby produces.
 - **The asset manifest holds binary strings.** `Ractor.make_shareable`
   deep-freezes them; nothing on the request path may mutate a body (`+`
   before any `<<`).
 - **`ERB::Compiler` runs only at boot**, so ERB's own thread-unsafety and
   ivar memoization are out of scope by construction — the same argument
-  that makes the SCSS story work.
+  that would have made the SCSS story work. What is *not* out of scope by
+  construction is anything ERB does at render time: see the
+  `ERB::Util.html_escape` bug above.
 
-## Vocabulary additions proposed for `CONTEXT.md`
+## Vocabulary
 
-- **View** — a `.erb` template compiled at `Boot` into an instance method on
-  a shareable module included into `Context`, rendered by `render`, never
-  compiled at request time. _Avoid_: template object, partial object.
-- **Layout** — a View rendered around another View's output, receiving it
-  via Ruby's own `yield`. _Avoid_: wrapper, master page.
-- **Asset manifest** — the frozen, boot-built map from URL path to body,
-  content-type and ETag, from which every static response is served.
-  _Avoid_: asset pipeline, cache.
+`CONTEXT.md` now carries the three terms this feature introduced — **View**,
+**Layout**, **Asset manifest** — in its usual format.
 
-## What Monk would own vs. what stays a plain dependency
+## What Monk owns vs. what stays a plain dependency
 
 Monk owns: template discovery and compilation, the escaping default, the
-render/layout/partial protocol, the asset manifest and its HTTP semantics,
-and the SCSS registration hook. Monk does not own: ERB's syntax (stdlib),
-Sass (an opt-in gem the app declares), or anything about JavaScript beyond
-serving bytes.
+render/layout/partial protocol, and the asset manifest and its HTTP
+semantics. Monk does not own: ERB's syntax (stdlib), Sass (not built at
+all), or anything about JavaScript beyond serving bytes.
+
+## Settled during implementation
+
+- **Discovery is recursive over `*.erb`** under the views root, so every
+  template is syntax-checked at boot whether or not anything renders it.
+  The cost is real and accepted: a stray `index.erb~` editor backup isn't
+  matched (the glob wants `.erb` exactly), but a genuinely broken template
+  nobody renders still fails the boot.
+- **Layouts take the page's whole `locals` hash**, unfiltered — the
+  filtered-locals rule only existed to serve declared signatures, which
+  weren't built.
+- **`HEAD` is synthesized** from the entry: same headers plus
+  `content-length`, empty body.
 
 ## Open questions
 
-- **Is `views/` discovery recursive-by-default the right call**, or should a
-  template have to be reachable from a `render` to be compiled? Recursive
-  is simpler and gives boot-time syntax checking of every template
-  including unused ones; it also means a stray editor backup file
-  (`index.erb~`) is a boot error. Leaning recursive over `*.erb` only.
-- **Does the layout's filtered-locals rule pull its weight**, or should
-  layouts take no locals at all and read `@ivars` set by the route? The
-  filtered rule is ~5 lines; the ivar-only rule is 0 lines but pushes every
-  page title through an ivar.
-- **`HEAD` handling for assets** — synthesize from the manifest (headers,
-  empty body) or leave it to the server? Leaning synthesize, it's three
-  lines.
+- **Should the lazy boot in `Base.call` raise a named error?** See the
+  Ractor-safety note above.
+- **`views`/`layout`/`assets` set process-global state, not per-app-class
+  state.** Two `Monk::Base` subclasses in one process share one views root
+  and one asset root — invisible for the one-app-per-process case every
+  Monk app is today, wrong the moment someone mounts two. Fixing it means
+  either per-class registries (and a Context that knows its app) or saying
+  out loud that Monk is one app per process. Worth deciding before
+  something depends on the current behavior.
 - **Should `render` also be callable outside a request** (e.g. to render an
   email body from a job)? It only needs a `Context`, so it's nearly free,
   but "a `Context` with no `env`" is a concept the framework doesn't have
@@ -476,18 +556,21 @@ owns CSRF, and its double-submit design will want one small view helper —
 that helper belongs to auth's plan, not this one); live code reloading of
 `.rb` files.
 
-## Recommendation
+## What shipped
 
-Build (1) ERB views and (2) static assets as core, stdlib-only, both
-compiled/enumerated at `Boot` and frozen — the Ractor constraint makes the
-simplest possible design the only available one, which is a good position
-to be in. Take the declared-signature form of locals and auto-escaping by
-default; both trade a little ceremony for errors that arrive at boot or
-with a file and line number, which is the tradeoff Monk has already made
-everywhere else.
+ERB views and static assets, core and stdlib-only (`erb`, `cgi/escape`,
+`digest`), both compiled/enumerated at `Boot` and frozen. Auto-escaping by
+default. Locals as a plain hash, with ivars as the primary idiom for
+ambient page data — no declaration syntax. Layouts via Ruby's `yield`,
+applied to the outermost render only. Assets before routes, `ETag`/`304`,
+a `?v=` digest stamp and `immutable` caching in production, disk re-reads
+in development.
 
-Ship (3) SCSS as an opt-in require in the same slice, because the pattern
-turned out to be four lines of boot-time glue with no request-path
-footprint and no runtime dependency — it clears the "clean and simple" bar.
-Ship no JavaScript tooling of any kind; document ES modules and import maps
-instead, and make the `monk new` scaffold demonstrate them.
+No SCSS and no JavaScript tooling of any kind. `monk new` generates a
+working HTML page — layout, index template, stylesheet, ES-module entry
+point — and this repo's own `config.ru` serves one at `/`, complete with
+an import map, so `bin/server` shows a real page rather than a JSON blob.
+
+Left on the table, in descending order of likelihood: SCSS (designed
+above, one file), a named error for an unbooted app, and `content_for`-style
+named slots (deliberately deferred until something misses them).

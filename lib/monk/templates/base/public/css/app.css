@@ -1,0 +1,17 @@
+:root { --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; }
+
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14140f; --fg: #eceae2; --muted: #97958c; }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main { max-width: 42rem; margin: 0 auto; padding: 3rem 1.5rem; }
+h1 { font-size: 2rem; letter-spacing: -0.02em; margin: 0 0 0.5rem; }
+p { color: var(--muted); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }

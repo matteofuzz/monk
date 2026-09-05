@@ -34,7 +34,7 @@ Save that as `config.ru` and run it with any Rack server (or `bin/server` in thi
 ## Scaffolding a new project — `monk new`
 
 ```
-monk new my_app              # Gemfile, config.ru, .ruby-version
+monk new my_app              # Gemfile, config.ru, .ruby-version, views/, public/
 monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
 ```
 
@@ -45,18 +45,22 @@ install`, `git init`, or anything else on your behalf. `--postgres` adds
 exactly the persistence/migrations wiring documented below, ready for you
 to add your own `db/migrate/*.sql` files and `Model` subclasses.
 
+The base skeleton is a working HTML page, not a bare JSON route: a layout
+and an index template under `views/`, and a stylesheet and an ES-module
+entry point under `public/` (see "Views" and "Static assets" below).
+
 ## Routing
 
 `get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path; an unmatched request gets a plain `404`.
 
 ## Context
 
-Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, and `json(data)`. There are two ways to write a route block:
+Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, and — for HTML — `render`, `h`, `raw` and `asset_path` (see "Views" below). There are two ways to write a route block:
 
 - **Zero-arg** (`get("/x") { params }`) — the common case; helpers are called bare via `instance_exec`.
 - **One-arg** (`get("/x") { |ctx| ctx.params }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.
 
-`halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to).
+`halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to). Ivars set on the `Context` (`@title = "Home"`) are visible to any template the route renders, and to its layout.
 
 ## Error handling
 
@@ -91,6 +95,103 @@ end
 `#value` reads the current state; `#update { |current| new_value }` atomically transforms it. Both are synchronous calls under the hood, safe under real concurrent access from multiple workers.
 
 One constraint worth knowing: the block passed to `#update` must be built where `self` is already `Ractor`-shareable (as above, at app-definition time, where `self` is the `App` class) — not written inline inside a route handler, where `self` is `Context` and deliberately not shareable. Predefine the block once (as `increment` above) and reference it from routes.
+
+## Views — HTML with ERB
+
+Templates live in `views/` (by convention; `views "app/views"` moves them)
+and are compiled **once at boot**, in the main Ractor, into ordinary
+methods — never at request time. That's not a performance preference, it's
+what Ractor-safety leaves available: a worker can't hold a template cache
+or install methods on a shared module. It also means a template with a
+syntax error fails `Monk.boot`, naming the file and line, instead of
+blowing up on a live request. See `docs/views.md` for the full design.
+
+```ruby
+class App < Monk::Base
+  views  "views"          # default
+  layout "layouts/app"    # optional default layout
+  assets "public"         # default; `assets false` turns static serving off
+
+  get("/") { @title = "Home"; render "index", posts: Post.where(published: true) }
+end
+```
+
+```erb
+<%# views/layouts/app.erb %>
+<!doctype html>
+<html>
+  <head>
+    <title><%= @title %></title>
+    <link rel="stylesheet" href="<%= asset_path "/css/app.css" %>">
+    <script type="module" src="<%= asset_path "/js/app.js" %>"></script>
+  </head>
+  <body><%= yield %></body>
+</html>
+```
+
+```erb
+<%# views/index.erb %>
+<h1><%= @title %></h1>
+<ul>
+  <% locals[:posts].each do |post| -%>
+    <%= render "posts/row", post: post -%>
+  <% end -%>
+</ul>
+```
+
+`render` **returns** the HTML rather than throwing the way `json` and
+`halt` do — that's what makes a partial work: a template rendering another
+template is the same call. A route block's return value is already the
+response body, so `get("/") { render "index" }` needs nothing else, and
+`content-type: text/html; charset=utf-8` is set for you.
+
+**`<%= %>` HTML-escapes by default.** This is a deliberate break from stock
+ERB, where it doesn't; `<%= raw(html) %>` opts out for a fragment you know
+is safe, and `h(value)` escapes explicitly without escaping twice.
+
+**Data reaches a template two ways, neither of which is machinery.** Ivars
+set in the route (`@title`) are visible in the template *and* the layout,
+because the route block, the template and the layout all execute with
+`self` bound to the same `Context`. The `locals` hash passed to `render` is
+the other, and it's what a partial rendered inside a loop wants. There's no
+locals declaration syntax and no strict-locals checking — a local you
+didn't pass reads as `nil`.
+
+Layouts are just Ruby's `yield`: a compiled template is a real method, so
+`<%= yield %>` in a layout receives the page's HTML. The default layout
+wraps the outermost `render` of a request only, so partials aren't wrapped
+again; `render "x", layout: false` skips it and `layout: "layouts/print"`
+swaps it.
+
+There is no JavaScript build step, and there won't be one — no bundler, no
+transpiler, no `node_modules`. Use `<script type="module">`, relative
+imports with real extensions between your own files, and an import map in
+the layout for bare specifiers. An app that needs a bundler should run one
+itself and drop the output into `public/`.
+
+## Static assets
+
+`public/` is walked at boot into a frozen manifest (body, content-type,
+ETag) that worker Ractors read by reference. Assets are looked up **before**
+routes, for `GET`/`HEAD` only — the position `Rack::Static` would occupy in
+front of the app, so a catch-all splat route can't shadow a stylesheet. The
+tradeoff: a route can't override a path that exists as a file.
+
+Responses carry an `ETag` and answer `if-none-match` with a `304`.
+`asset_path("/css/app.css")` stamps the URL with a content digest in
+production, and a request carrying that stamp is served
+`cache-control: public, max-age=31536000, immutable`; everything else gets
+`must-revalidate`. No digested filenames, no build manifest.
+
+In production a lookup is an exact-match fetch of a path enumerated at
+boot, which makes path traversal structurally impossible rather than
+defended against. In development (`MONK_ENV != "production"`) the body is
+re-read from disk per request instead, so an edited `.css` or `.js` shows
+up on the next refresh with no restart — and `asset_path` doesn't stamp,
+since a boot-time digest would go stale the moment you save.
+
+Putting nginx or a CDN in front of Monk is still the right call in
+production; this exists so an app is complete on its own.
 
 ## Persistence — `Monk::Persistence::Pg`
 
@@ -241,3 +342,9 @@ Tests are Minitest, calling `App.call(env)` directly against hand-built Rack env
 v1 is done, built out gradually with TDD — see `PLAN.md` for its phase-by-phase plan and `CONTEXT.md` / `docs/adr/` for the domain vocabulary and key architectural decisions it left behind. v1 deliberately left out HTML templating, sessions/cookies, persistence, and Rack middleware composition.
 
 Monk is now on v2, worked one candidate at a time, agile-style, rather than against a fixed upfront plan. The living list of candidates and their status is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `NOTES-V2.md`); each candidate gets its own plan doc once work on it actually starts — e.g. `PLAN-PERSISTENCE.md` for persistence, the first candidate done.
+
+HTML templating is done as of 2026-09-05: ERB views and static asset
+serving, both compiled/enumerated at boot and frozen (`docs/views.md` for
+the design and the spikes behind it, `PLAN-VIEWS.md` for the phase-by-phase
+plan). SCSS was explored in the same pass and deliberately left out for
+now — plain CSS only.

@@ -1,9 +1,25 @@
 # Monk views & assets — implementation plan
 
-Branch: `claude/html-css-js-erb-render-j9xyef` — nothing in this plan is
-implemented yet. Companion doc: `docs/views.md` (why everything compiles at
-boot, the six spikes, the API this plan builds out, the rejected
-alternatives).
+Branch: `claude/html-css-js-erb-render-j9xyef`. **Status: Phases 1-6, 8 and
+9 are implemented; Phase 7 (SCSS) is dropped by decision, and Phase 2
+(declared locals) is dropped by decision.** Companion doc: `docs/views.md`
+(why everything compiles at boot, the six spikes, the API as built, the two
+Ractor bugs the integration tests caught, and the SCSS design that wasn't
+built).
+
+Three decisions taken after the plan was written, all narrowing it:
+
+- **No declared locals.** Data reaches a template as a `locals` hash and as
+  ivars set in the route. Phase 2 below is dropped entirely; the
+  `docs/views.md` "Locals" section records what the machinery would have
+  bought and what its absence costs.
+- **Monk serves assets** (Phase 6 as written) rather than leaving it to
+  nginx.
+- **No SCSS, plain CSS only.** Phase 7 is dropped; the design stays in
+  `docs/views.md` as a one-file addition if that changes.
+
+Steps are struck through below where the decision dropped them, rather
+than deleted, so the plan still reads as the record of what was considered.
 
 Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
@@ -52,18 +68,19 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
 - Templates compile at `Boot`, in the main Ractor, never at request time.
 - `<%= %>` escapes; `<%= raw(x) %>` doesn't. `Raw < String` with
   `#to_s` → `self`.
-- Locals are declared by the template: `<%# locals: (title:, badge: nil) %>`,
-  compiled into keyword parameters. No declaration means no locals accepted.
-  The declaration line is blanked, not removed, so line numbers survive.
+- ~~Locals are declared by the template.~~ **Dropped.** Locals are a plain
+  hash (`locals[:post]`); ambient page data is an ivar set in the route,
+  visible to the template and the layout because all three run with `self`
+  bound to the same `Context`.
 - `render` returns a `Raw` and sets `content-type: text/html; charset=utf-8`
   unless already set; it does not `throw`.
-- `layout:` is a reserved keyword of `render`; a template declaring a local
-  named `layout` is a boot error.
+- `layout:` is a reserved keyword of `render`. With locals as a hash there
+  is no collision to design around.
 - Assets are looked up before routes, for `GET`/`HEAD` only.
-- SCSS is opt-in (`require "monk/views/scss"`), compiles at boot into the
-  same manifest, and closes its compiler afterwards.
-- Stdlib only for views and assets (`erb`, `cgi/escape`, `digest`).
-  `sass-embedded` is the app's dependency, never Monk's.
+- ~~SCSS is opt-in.~~ **Dropped** — plain CSS only.
+- Stdlib only for views and assets (`erb`, `cgi/escape`, `digest`). Note
+  `cgi/escape`, not `erb/util`: `ERB::Util.html_escape` turned out not to
+  be Ractor-safe (`docs/views.md`, "What the real Ractor tests caught").
 
 ## Seams
 
@@ -93,17 +110,18 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
 6. A template rendering another template (`<%= render "row" %>`) nests
    correctly, with no double-escaping
 
-## Phase 2 — Locals (Seam V)
+## Phase 2 — Locals (Seam V) — dropped, replaced by two steps
 
-7. A template with `<%# locals: (title:) %>` renders with
-   `render("x", title: "…")`
-8. A missing required local raises `ArgumentError: missing keyword: :title`
-9. An undeclared local passed in raises `ArgumentError: unknown keyword:`
-10. A default (`badge: nil`) is honored when the local is omitted
-11. A template with no declaration raises when passed any local, with the
-    template name in the message
-12. Line numbers survive the declaration: a `raise` on the template's third
-    line reports `views/x.erb:3`
+Declared locals aren't built. What replaced the phase:
+
+7. `render "x", label: "…"` reaches the template as `locals[:label]`; a
+   local that wasn't passed reads as `nil`
+8. An ivar set in the route block is visible in the page *and* the layout
+9. ~~A missing required local raises `ArgumentError: missing keyword:`~~
+10. ~~An undeclared local passed in raises `ArgumentError: unknown keyword:`~~
+11. ~~A default (`badge: nil`) is honored when the local is omitted~~
+12. Line numbers still map: a `raise` on the template's third line reports
+    `views/x.erb:3`
 
 ## Phase 3 — Discovery and boot integration (Seams V, B)
 
@@ -113,7 +131,8 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
     `Monk::TemplateSyntaxError` naming file and line — never at request time
 15. `render` of an unknown name raises `Monk::TemplateNotFoundError` listing
     the root it looked under
-16. A template declaring a local named `layout` fails the boot
+16. ~~A template declaring a local named `layout` fails the boot~~ — moot
+    without declarations
 17. After `Monk.boot(App)`, the views registry is `Ractor.shareable?`
     (Seam B, alongside the existing route assertions)
 18. `views "app/views"` overrides the default root; an app with no views
@@ -125,8 +144,7 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
     inner HTML unescaped
 20. `render "x", layout: false` skips the class-level layout
 21. `render "x", layout: "layouts/print"` overrides it
-22. A layout receives the page's locals filtered to what it declares; a
-    layout declaring nothing receives nothing
+22. A layout receives the page's locals hash, unfiltered
 23. An ivar set in the route block is readable in both the page and the
     layout (documents the ambient-value path)
 
@@ -162,7 +180,7 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
     after the file changes on disk
 37. `assets false` disables the whole lookup
 
-## Phase 7 — SCSS (Seam Y)
+## Phase 7 — SCSS (Seam Y) — dropped by decision, plain CSS only
 
 38. `Monk::Views::Scss.register("styles/app.scss", as: "/css/app.css")`
     plus `Monk.boot(App)` puts compiled CSS in the manifest at that path,
@@ -190,11 +208,10 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
 
 ## Phase 9 — Scaffold, docs, demo
 
-47. `monk new my_app --views` (or views by default — decide at this step
-    from how Phase 3's "no views directory" case feels) writes
-    `views/layouts/app.erb`, `views/index.erb`, `public/css/app.css` and
-    `public/js/app.js`, and the scaffold test asserts the generated app
-    boots and renders
+47. `monk new my_app` writes `views/layouts/app.erb`, `views/index.erb`,
+    `public/css/app.css` and `public/js/app.js` by default (no flag — an
+    app that doesn't want them deletes two directories), and the scaffold
+    test asserts the generated app boots and renders its own index page
 48. The generated layout demonstrates `<script type="module">` and an
     import map, since that's the entire JS story (`docs/views.md`, "Vanilla
     JS with no build step")
@@ -204,7 +221,8 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
     the three vocabulary entries proposed in `docs/views.md`; `NOTES-V2.md`
     marks the templating candidate done
 51. An ADR for the two calls most likely to be questioned later:
-    compile-at-boot-only, and escape-by-default
+    compile-at-boot-only, and escape-by-default — **not written yet**, the
+    one piece of Phase 9 still outstanding
 
 ## Explicitly out of scope for this plan
 

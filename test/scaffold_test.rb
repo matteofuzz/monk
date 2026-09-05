@@ -12,6 +12,42 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/Gemfile"), read(dest, "Gemfile")
       assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
+      assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
+      assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
+      assert_equal template("base/public/css/app.css"), read(dest, "public/css/app.css")
+      assert_equal template("base/public/js/app.js"), read(dest, "public/js/app.js")
+    end
+  end
+
+  # The generated app has to actually boot and serve its own page --
+  # a scaffold whose templates don't compile is worse than none.
+  def test_the_generated_app_boots_and_renders_its_index_page
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest).write!
+
+      app = Class.new(Monk::Base) do
+        get("/") { @title = "App"; render "index" }
+      end
+      app.views(File.join(dest, "views"))
+      app.layout("layouts/app")
+      app.assets(File.join(dest, "public"))
+      Monk.boot(app)
+
+      status, headers, body = app.call(env_for("GET", "/"))
+
+      assert_equal 200, status
+      assert_equal "text/html; charset=utf-8", headers["content-type"]
+      assert_includes body.join, "<h1>It works</h1>"
+      assert_includes body.join, %(<link rel="stylesheet" href="/css/app.css)
+
+      css_status, css_headers, _css_body = app.call(env_for("GET", "/css/app.css"))
+
+      assert_equal 200, css_status
+      assert_equal "text/css; charset=utf-8", css_headers["content-type"]
+    ensure
+      Monk::Views.reset!
+      Monk::Assets.reset!
     end
   end
 

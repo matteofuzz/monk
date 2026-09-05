@@ -16,6 +16,25 @@ module Monk
         @routes ||= []
       end
 
+      # Where .erb templates live (default "views"), relative to the
+      # process's working directory and read at Boot.
+      def views(dir)
+        Monk::Views.root = dir
+      end
+
+      # Default layout template wrapped around every render, e.g.
+      # layout "layouts/app". Individual renders opt out with
+      # `render "x", layout: false`.
+      def layout(name)
+        Monk::Views.layout = name
+      end
+
+      # Where static files live (default "public"); `assets false`
+      # disables serving them.
+      def assets(dir)
+        Monk::Assets.root = dir
+      end
+
       def freeze!
         routes.each do |route|
           begin
@@ -61,6 +80,13 @@ module Monk
       private
 
       def dispatch(env)
+        # Assets before routes, the position Rack::Static would occupy in
+        # front of the app -- so a catch-all splat route can't shadow a
+        # stylesheet. The tradeoff, worth knowing: a route can't override
+        # a path that exists as a file.
+        asset = Monk::Assets.response(env)
+        return asset if asset
+
         route, path_params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
         return not_found_response(env) unless route
 
