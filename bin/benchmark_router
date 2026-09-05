@@ -1,0 +1,47 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Micro-benchmark for Monk::Base's router. Not run in CI or by `rake test`
+# -- it's a manual tool for validating routing changes, since the test
+# suite checks correctness, not throughput.
+#
+# Usage: bin/benchmark_router [route_count]
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+ENV["MONK_ENV"] ||= "test"
+
+require "benchmark"
+require "stringio"
+require "monk"
+
+ROUTE_COUNT = (ARGV[0] || 200).to_i
+ITERATIONS = 20_000
+
+def env_for(method, path)
+  { "REQUEST_METHOD" => method, "PATH_INFO" => path, "rack.input" => StringIO.new("") }
+end
+
+# A route table shaped like a real app's: mostly static pages/resources,
+# a handful of ":id"-style routes, one splat. The two paths measured below
+# are deliberately the *last* one registered of each kind -- the worst
+# case for a linear scan, and unaffected by table position for an indexed
+# lookup.
+app = Class.new(Monk::Base) do
+  ROUTE_COUNT.times { |i| get("/static/page-#{i}") { "ok" } }
+  (ROUTE_COUNT / 10).times { |i| get("/dynamic/:id/section-#{i}") { params[:id] } }
+  get("/files/*") { params[:splat] }
+end
+app.freeze!
+
+static_env = env_for("GET", "/static/page-#{ROUTE_COUNT - 1}")
+dynamic_env = env_for("GET", "/dynamic/42/section-#{(ROUTE_COUNT / 10) - 1}")
+miss_env = env_for("GET", "/does-not-exist")
+
+puts "route table: #{ROUTE_COUNT} static, #{ROUTE_COUNT / 10} dynamic, 1 splat"
+puts "#{ITERATIONS} requests per case\n\n"
+
+Benchmark.bm(24) do |bm|
+  bm.report("static (last registered)") { ITERATIONS.times { app.call(static_env) } }
+  bm.report("dynamic (last registered)") { ITERATIONS.times { app.call(dynamic_env) } }
+  bm.report("miss (404)") { ITERATIONS.times { app.call(miss_env) } }
+end
