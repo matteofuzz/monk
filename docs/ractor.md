@@ -39,6 +39,18 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   wrapper methods — it silently only works under `:threaded` mode, never
   `:ractor` mode, regardless of whether the gem is otherwise pure Ruby with
   no C extension.
+- **A module ivar holding an unshareable object is the other recurring gem
+  hazard.** `can not get unshareable values from instance variables of
+  classes/modules from non-main Ractors` is what a worker gets from any
+  library that lazily memoizes a connection, parser, or compiler into an
+  `@ivar` on a module or class. Three found so far, all for structurally
+  different objects: Sequel's connection handling
+  (`docs/persistence-ractor-connections.md`), `Rack::Utils`' default query
+  parser (`lib/monk/base.rb`, `parse_query_string`), and `sass-embedded`'s
+  lazily-created `Sass::Compiler`, which owns a pipe to a subprocess
+  (`docs/views.md`, spike 4). The fix is never to patch the gem: do that
+  work once in the main Ractor at boot and hand workers nothing but the
+  frozen result.
 
 Ruby 4 (this repo targets 4.0+, see `.ruby-version`) is where Ractor's communication
 primitives finally stabilized: the old `Ractor.yield`/`Ractor.take` main-Ractor-centric

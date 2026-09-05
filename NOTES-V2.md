@@ -22,7 +22,14 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 
 ## Candidates (from v1's deliberate scope cuts)
 
-- HTML templating
+- HTML templating — design proposed 2026-09-05, widened to the whole
+  server-rendered surface (ERB compiled at boot into methods on a shareable
+  module, escape-by-default; a boot-built frozen manifest for static CSS/JS;
+  SCSS opt-in and boot-only, because `sass-embedded` is the third gem found
+  to raise `Ractor::IsolationError` from a worker; no JS build step, ever):
+  `docs/views.md` + `PLAN-VIEWS.md`. Six spikes back it, but they ran on
+  Ruby 3.3.6 rather than 4.0.6 — `PLAN-VIEWS.md` Phase 0 re-measures the
+  Ractor-flavored ones before anything is built on them. Not implemented.
 - Sessions / cookies
 - Persistence
 - Rack middleware composition
