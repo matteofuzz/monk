@@ -6,8 +6,14 @@ require_relative "environment"
 
 module Monk
   class Base
+    VERBS = %w[GET POST PUT PATCH DELETE].freeze
+    private_constant :VERBS
+
+    EMPTY_ARRAY = [].freeze
+    private_constant :EMPTY_ARRAY
+
     class << self
-      %w[GET POST PUT PATCH DELETE].each do |verb|
+      VERBS.each do |verb|
         define_method(verb.downcase) do |path, &block|
           routes << { verb: verb, path: path, block: block }
         end
@@ -61,7 +67,11 @@ module Monk
         # guards against the same way.
         @quiet_logging = !Monk.env.development?
 
+        index_routes!
+
         Ractor.make_shareable(routes)
+        Ractor.make_shareable(@static_routes)
+        Ractor.make_shareable(@dynamic_routes)
         Ractor.make_shareable(error_handlers)
         self
       end
@@ -170,42 +180,82 @@ module Monk
         {}
       end
 
-      def find_route(verb, path)
-        path_segments = path.split("/")
+      # Routes are static (literal path, no ":param" or trailing "*") in
+      # the overwhelming common case, so freeze! (#index_routes!) splits
+      # them into an O(1) exact-match table up front; only routes that
+      # actually need segment-by-segment matching pay for it at request
+      # time. Both structures hold the exact same route Hash objects that
+      # `routes` does, so making `routes` shareable would freeze them too
+      # -- but since they're not reachable *from* `routes`, they need
+      # their own Ractor.make_shareable call in #freeze!.
+      def index_routes!
+        static = {}
+        dynamic = {}
+        VERBS.each do |verb|
+          static[verb] = {}
+          dynamic[verb] = []
+        end
 
         routes.each do |route|
-          next unless route[:verb] == verb
+          segments = route[:path].split("/")
+          route[:segments] = segments
 
-          route_segments = route[:path].split("/")
-          params = {}
+          if segments.last == "*"
+            route[:prefix_segments] = segments[0...-1]
+            dynamic[route[:verb]] << route
+          elsif segments.any? { |s| s.start_with?(":") }
+            dynamic[route[:verb]] << route
+          else
+            static[route[:verb]][route[:path]] = route
+          end
+        end
 
-          if route_segments.last == "*"
-            prefix = route_segments[0...-1]
+        @static_routes = static
+        @dynamic_routes = dynamic
+      end
+
+      def find_route(verb, path)
+        static_route = @static_routes.dig(verb, path)
+        return [static_route, {}] if static_route
+
+        path_segments = path.split("/")
+
+        (@dynamic_routes[verb] || EMPTY_ARRAY).each do |route|
+          if route[:prefix_segments]
+            prefix = route[:prefix_segments]
             next if path_segments.size < prefix.size
-            next unless segments_match?(prefix, path_segments, params)
+            next unless segments_match?(prefix, path_segments)
 
+            params = extract_params(prefix, path_segments)
             params[:splat] = path_segments[prefix.size..].join("/")
             return [route, params]
           else
+            route_segments = route[:segments]
             next unless route_segments.size == path_segments.size
-            next unless segments_match?(route_segments, path_segments, params)
+            next unless segments_match?(route_segments, path_segments)
 
-            return [route, params]
+            return [route, extract_params(route_segments, path_segments)]
           end
         end
 
         nil
       end
 
-      def segments_match?(route_segments, path_segments, params)
+      # Boolean-only: whether a candidate route matches is decided before
+      # any params Hash is allocated, so a failed candidate costs nothing
+      # beyond the comparisons themselves.
+      def segments_match?(route_segments, path_segments)
         route_segments.each_with_index.all? do |segment, i|
-          if segment.start_with?(":")
-            params[segment[1..].to_sym] = path_segments[i]
-            true
-          else
-            segment == path_segments[i]
-          end
+          segment.start_with?(":") || segment == path_segments[i]
         end
+      end
+
+      def extract_params(route_segments, path_segments)
+        params = {}
+        route_segments.each_with_index do |segment, i|
+          params[segment[1..].to_sym] = path_segments[i] if segment.start_with?(":")
+        end
+        params
       end
     end
 
