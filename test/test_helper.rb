@@ -50,11 +50,27 @@ module ViewTestHelpers
   # Monk reads MONK_ENV once, at boot, never per request -- so a test
   # that wants development behavior has to set it before .freeze!.
   def with_monk_env(value)
-    previous = ENV["MONK_ENV"]
-    ENV["MONK_ENV"] = value
+    with_env("MONK_ENV", value) { yield }
+  end
+
+  # Sets (or, given nil, clears) an arbitrary ENV var for the duration of
+  # the block, restoring whatever was there before either way.
+  def with_env(name, value)
+    previous = ENV[name]
+    ENV[name] = value
     yield
   ensure
-    ENV["MONK_ENV"] = previous
+    ENV[name] = previous
+  end
+
+  # Monk::Settings is global, module-level state, same as Monk::Assets/
+  # Monk::Views -- reset on both sides of the block so one test's
+  # declared keys never leak into another's.
+  def with_settings
+    Monk::Settings.reset!
+    yield
+  ensure
+    Monk::Settings.reset!
   end
 
   def write_file(dir, relative, content)
