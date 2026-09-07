@@ -46,6 +46,43 @@ class WebSocketRegistryTest < Minitest::Test
     port&.close
   end
 
+  # Simulates the race gap 2 of docs/chat-gap-analysis.md describes: a
+  # port closed out from under the registry without ever going through
+  # #unregister (e.g. the owning connection Ractor died before its own
+  # cleanup ran). Before the rescue in Registry#initialize, port.send
+  # raising Ractor::ClosedError here would have propagated out of the
+  # registry Ractor's own loop and killed it -- taking down delivery for
+  # every key, not just this one.
+  def test_broadcast_skips_a_closed_port_without_crashing_the_registry
+    registry = Monk::WebSocket::Registry.new
+    dead_port = Ractor::Port.new
+    live_port = Ractor::Port.new
+    registry.register(:room1, dead_port)
+    registry.register(:room1, live_port)
+    dead_port.close
+
+    registry.broadcast(:room1, "hi")
+
+    assert_equal "hi", live_port.receive
+    # The registry Ractor is still alive and answering -- the crash this
+    # guards against would otherwise have made every subsequent call hang
+    # or raise.
+    assert_equal 1, registry.count(:room1)
+  ensure
+    live_port&.close
+  end
+
+  def test_broadcast_removes_a_closed_port_so_later_broadcasts_do_not_retry_it
+    registry = Monk::WebSocket::Registry.new
+    dead_port = Ractor::Port.new
+    registry.register(:room1, dead_port)
+    dead_port.close
+
+    registry.broadcast(:room1, "hi")
+
+    assert_equal 0, registry.count(:room1)
+  end
+
   def test_count_reflects_registrations_and_unregistrations
     registry = Monk::WebSocket::Registry.new
     port = Ractor::Port.new

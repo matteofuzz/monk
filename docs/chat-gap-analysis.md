@@ -117,13 +117,14 @@ Concrete, ordered by how likely a chat workload is to hit them.
    `docs/persistence-ractor-connections.md` decision 4's update. `OR` is
    still out of scope: a sender/recipient-pair query still needs a raw
    `Pg.checkout` block in an app-level repository object.
-2. **`Registry` fan-out is fragile under a race.** `broadcast` calls
-   `port.send(arg)` unguarded inside the registry Ractor
-   (`lib/monk/websocket/registry.rb`). If a connection closes its port
-   between `unregister` and a concurrent `broadcast`, the resulting
-   `Ractor::ClosedError` kills the *registry Ractor*, and with it all
-   delivery for the whole process. Chat is precisely the workload that
-   exercises this. Wants a `rescue` at that send — a framework fix.
+2. ~~**`Registry` fan-out is fragile under a race.**~~ **Fixed
+   2026-09-07.** `broadcast` now rescues `Ractor::ClosedError` per port
+   (`lib/monk/websocket/registry.rb`) instead of letting it propagate out
+   of the registry Ractor's own loop — a closed port used to kill that
+   Ractor outright, taking down delivery for every key in the whole
+   process, not just the dead connection's. A send to a closed port is now
+   skipped, the rest of the broadcast still goes out, and the dead port is
+   dropped from that key so it isn't retried on the next broadcast.
 3. **No server-initiated ping.** `Connection` answers pings but never
    sends them, and browser JavaScript cannot send WS pings at all — so
    idle reverse-proxy timeouts will drop connections. Needs an

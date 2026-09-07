@@ -21,7 +21,23 @@ module Monk
                 keys[key].delete(arg)
                 true
               when :broadcast
-                keys[key].each { |port| port.send(arg) }
+                # A port can be closed out from under this loop without
+                # ever going through #unregister -- e.g. the owning
+                # connection Ractor dies before its own cleanup runs.
+                # port.send on a closed port raises Ractor::ClosedError;
+                # left unguarded, that exception would propagate out of
+                # this single-threaded loop and kill the *registry*
+                # Ractor, taking down delivery for every key, not just
+                # this one. Rescuing it here, per port, keeps the
+                # broadcast going for every other subscriber and also
+                # drops the dead port from keys[key] -- self-healing the
+                # stale entry #unregister was supposed to have caught.
+                keys[key].reject! do |port|
+                  port.send(arg)
+                  false
+                rescue Ractor::ClosedError
+                  true
+                end
                 true
               when :count
                 keys[key].size
