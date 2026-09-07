@@ -27,6 +27,12 @@ module Monk
         configs[name] = opts
       end
 
+      # Registered connection names (e.g. :primary) -- Monk.boot's log
+      # line reads this to report which backends an app actually uses.
+      def names
+        configs.keys
+      end
+
       def [](name)
         entry(name).conn
       end
