@@ -148,6 +148,27 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
+  def test_write_bang_with_auth_adds_the_auth_scaffold_on_top_of_postgres
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_equal template("auth/config/auth.rb"), read(dest, "config/auth.rb")
+      assert_equal(
+        template("auth/db/migrate/00000000000001_create_auth_tables.up.sql"),
+        read(dest, "db/migrate/00000000000001_create_auth_tables.up.sql"),
+      )
+      assert_equal(
+        template("auth/db/migrate/00000000000001_create_auth_tables.down.sql"),
+        read(dest, "db/migrate/00000000000001_create_auth_tables.down.sql"),
+      )
+      # auth: true implies postgres: true -- Auth is Postgres-only
+      assert_equal template("postgres/config/persistence.rb"), read(dest, "config/persistence.rb")
+      assert File.exist?(File.join(dest, "bin/migrate"))
+    end
+  end
+
   private
 
   def template(relative)

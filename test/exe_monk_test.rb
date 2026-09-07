@@ -30,6 +30,20 @@ class ExeMonkTest < Minitest::Test
     end
   end
 
+  def test_new_with_auth_adds_the_auth_scaffold_and_implies_postgres
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      stdout, _stderr, status = run_monk("new", dest, "--auth")
+
+      assert status.success?
+      assert File.exist?(File.join(dest, "config/auth.rb"))
+      assert File.exist?(File.join(dest, "db/migrate/00000000000001_create_auth_tables.up.sql"))
+      assert File.exist?(File.join(dest, "bin/migrate")) # postgres scaffold, implied by --auth
+      assert_match(/AUTH_SECRET/, stdout)
+    end
+  end
+
   def test_missing_app_name_prints_usage_and_exits_non_zero
     _stdout, stderr, status = run_monk("new")
 
@@ -51,6 +65,7 @@ class ExeMonkTest < Minitest::Test
       assert status.success?, "expected `monk #{args.join(" ")}` to exit successfully"
       assert_match(/Usage: monk new APP_NAME/, stdout)
       assert_match(/--postgres/, stdout)
+      assert_match(/--auth/, stdout)
       assert_match(/bin\/migrate/, stdout)
     end
   end
