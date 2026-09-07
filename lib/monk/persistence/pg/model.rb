@@ -9,6 +9,16 @@ module Monk
       # takes or returns plain Hashes (Symbol-keyed), so nothing here has
       # to cross a Ractor boundary as anything but copyable data.
       class Model < Monk::Persistence::Model
+        # Maps a `where` comparison-operator key to its SQL operator.
+        # Deliberately a small, closed set -- not a general expression DSL.
+        COMPARISON_OPERATORS = {
+          gt: ">",
+          gte: ">=",
+          lt: "<",
+          lte: "<=",
+          ne: "<>",
+        }.freeze
+
         class << self
           def create(data)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
@@ -27,19 +37,42 @@ module Monk
             end
           end
 
-          # Equality + AND only -- no >, IN, LIKE, OR. An empty Hash means no
-          # filter (all rows), not an error: the natural degenerate case of
-          # zero AND'd conditions.
-          def where(conditions)
+          # AND-only -- still no OR, no arbitrary boolean trees. A condition
+          # value is either a scalar (equality), an Array (IN -- an empty
+          # Array matches no rows rather than producing invalid SQL), or a
+          # Hash of comparison-operator => operand (see
+          # COMPARISON_OPERATORS; multiple keys on one column AND together,
+          # e.g. `quantity: { gte: 1, lt: 10 }`). An empty conditions Hash
+          # means no filter (all rows), not an error: the natural
+          # degenerate case of zero AND'd conditions.
+          #
+          # `options[:order]` is a column Symbol/String (ascending) or a
+          # Hash of column => :asc/:desc for more than one column.
+          # `options[:limit]` is an Integer row cap. Both are optional and
+          # independent of conditions.
+          #
+          # `options` is a plain trailing Hash, not `order:`/`limit:`
+          # keyword parameters -- Ruby only lets a bare `where(col: val)`
+          # call collapse into the `conditions` positional Hash (the
+          # calling convention every existing caller uses) as long as
+          # `where` declares no real keyword parameters of its own; adding
+          # `order:`/`limit:` as keywords would make Ruby try to parse
+          # `col: val` as keyword arguments instead and raise.
+          def where(conditions, options = {})
             Monk::Persistence::Pg.checkout(db_name) do |conn|
-              if conditions.empty?
-                to_rows(conn.exec("SELECT * FROM #{conn.quote_ident(table_name)}"))
-              else
-                clause = conditions.keys.each_with_index
-                  .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 1}" }.join(" AND ")
-                sql = "SELECT * FROM #{conn.quote_ident(table_name)} WHERE #{clause}"
-                to_rows(conn.exec_params(sql, conditions.values))
+              clause, values = where_clause(conn, conditions)
+
+              sql = +"SELECT * FROM #{conn.quote_ident(table_name)}"
+              sql << " WHERE #{clause}" if clause
+              sql << order_clause(conn, options[:order]) if options[:order]
+              if (limit = options[:limit])
+                raise ArgumentError, "limit must be an Integer, got #{limit.inspect}" unless limit.is_a?(Integer)
+
+                values << limit
+                sql << " LIMIT $#{values.size}"
               end
+
+              to_rows(conn.exec_params(sql, values))
             end
           end
 
@@ -82,6 +115,59 @@ module Monk
           end
 
           private
+
+          # Returns [clause_string_or_nil, bound_values]. Building the
+          # values array alongside the clause (rather than a separate
+          # pass) keeps each condition's placeholder index in lockstep
+          # with where it lands in `values`, including the multi-operator
+          # Hash case where one column contributes more than one param.
+          def where_clause(conn, conditions)
+            values = []
+            parts = conditions.map do |column, condition|
+              ident = conn.quote_ident(column.to_s)
+              case condition
+              when Hash
+                condition.map { |op, operand| comparison(ident, op, operand, values) }.join(" AND ")
+              when Array
+                in_clause(ident, condition, values)
+              else
+                values << condition
+                "#{ident} = $#{values.size}"
+              end
+            end
+            [parts.empty? ? nil : parts.join(" AND "), values]
+          end
+
+          def comparison(ident, op, operand, values)
+            operator = COMPARISON_OPERATORS.fetch(op) do
+              raise ArgumentError, "unsupported where operator #{op.inspect}"
+            end
+            values << operand
+            "#{ident} #{operator} $#{values.size}"
+          end
+
+          def in_clause(ident, list, values)
+            return "1 = 0" if list.empty?
+
+            placeholders = list.map do |item|
+              values << item
+              "$#{values.size}"
+            end
+            "#{ident} IN (#{placeholders.join(", ")})"
+          end
+
+          def order_clause(conn, order)
+            columns = order.is_a?(Hash) ? order : { order => :asc }
+            clause = columns.map do |column, direction|
+              direction = direction.to_sym
+              unless %i[asc desc].include?(direction)
+                raise ArgumentError, "order direction must be :asc or :desc, got #{direction.inspect}"
+              end
+
+              "#{conn.quote_ident(column.to_s)} #{direction.to_s.upcase}"
+            end.join(", ")
+            " ORDER BY #{clause}"
+          end
 
           def to_rows(result)
             result.map { |row| row.transform_keys(&:to_sym) }

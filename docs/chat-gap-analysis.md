@@ -111,11 +111,12 @@ connection with `Authorization: Bearer`.
 
 Concrete, ordered by how likely a chat workload is to hit them.
 
-1. **`Pg::Model` cannot express message history.** `where` is equality
-   plus `AND` only — no `OR`, no `ORDER BY`, no `LIMIT`, no `id > $n`
-   (`lib/monk/persistence/pg/model.rb`). Every history query therefore
-   goes through a raw `Pg.checkout` block in an app-level repository
-   object. Not a blocker, but the app owns real SQL from day one.
+1. ~~**`Pg::Model` cannot express message history.**~~ **Fixed
+   2026-09-07.** `where` now supports comparison operators (`gt`/`gte`/
+   `lt`/`lte`/`ne`), `IN`, `ORDER BY`, and `LIMIT` — see
+   `docs/persistence-ractor-connections.md` decision 4's update. `OR` is
+   still out of scope: a sender/recipient-pair query still needs a raw
+   `Pg.checkout` block in an app-level repository object.
 2. **`Registry` fan-out is fragile under a race.** `broadcast` calls
    `port.send(arg)` unguarded inside the registry Ractor
    (`lib/monk/websocket/registry.rb`). If a connection closes its port

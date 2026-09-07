@@ -175,6 +175,26 @@ Four decisions locked in alongside this:
    (`>`, `IN`, `LIKE`, `OR`) is a query-condition DSL — real scope growth,
    left out until something actually needs it.
 
+   **Update (2026-09-07):** `docs/chat-gap-analysis.md` gap 1 was that
+   "something" — a message-history query needs `id > $n`, `ORDER BY`, and
+   `LIMIT`, and every one of them went through app-level raw SQL instead of
+   `Model`. `where` now takes comparison operators (`gt`/`gte`/`lt`/`lte`/
+   `ne`, as `column: { op: value }`), `IN` (`column: [v1, v2]`), and a
+   trailing options Hash for `order:`/`limit:` (`lib/monk/persistence/pg/
+   model.rb`). `OR` is still deliberately absent — a composite condition
+   like "sender = A and recipient = B, or the reverse" still needs a raw
+   `Pg.checkout` block; that boundary didn't move.
+
+   The options Hash (`where(conditions, order: ..., limit: ...)` written as
+   a second positional argument, not real keyword parameters) is a direct
+   consequence of the *first* decision here: every existing caller relies
+   on `where(col: val)` collapsing into the `conditions` positional Hash,
+   and Ruby only allows that collapse when the method declares zero actual
+   keyword parameters. Adding `order:`/`limit:` as real keywords would have
+   made Ruby try to parse every existing bare-hash call
+   (`Widget.where(name: "bolt")`, `LoginToken.where(token_hash: ...)`) as
+   keyword arguments instead, breaking them outright.
+
 Not yet decided/built: table-name inference (currently explicit-only, no
 pluralization magic) and `PG::Result`'s string-typed values need
 `conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)` set up

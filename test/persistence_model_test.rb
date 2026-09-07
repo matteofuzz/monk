@@ -94,6 +94,90 @@ class PersistenceModelTest < Minitest::Test
     assert_equal [a, b].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
   end
 
+  def test_where_with_a_comparison_operator_matches_rows_past_the_bound
+    Widget.create(name: "bolt", quantity: 1)
+    b = Widget.create(name: "nut", quantity: 5)
+    c = Widget.create(name: "screw", quantity: 10)
+
+    rows = Widget.where(quantity: { gt: 1 })
+
+    assert_equal [b, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+  end
+
+  def test_where_with_multiple_operators_on_one_column_ands_them_together
+    Widget.create(name: "bolt", quantity: 1)
+    b = Widget.create(name: "nut", quantity: 5)
+    Widget.create(name: "screw", quantity: 10)
+
+    rows = Widget.where(quantity: { gte: 5, lt: 10 })
+
+    assert_equal [b], rows
+  end
+
+  def test_where_with_an_unsupported_operator_raises
+    error = assert_raises(ArgumentError) { Widget.where(quantity: { like: "5" }) }
+
+    assert_match(/like/, error.message)
+  end
+
+  def test_where_with_an_array_condition_matches_any_value_in_it
+    a = Widget.create(name: "bolt", quantity: 1)
+    Widget.create(name: "nut", quantity: 5)
+    c = Widget.create(name: "screw", quantity: 10)
+
+    rows = Widget.where(quantity: [1, 10])
+
+    assert_equal [a, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+  end
+
+  def test_where_with_an_empty_array_condition_matches_no_rows
+    Widget.create(name: "bolt", quantity: 1)
+
+    assert_equal [], Widget.where(quantity: [])
+  end
+
+  def test_where_with_order_sorts_the_results
+    a = Widget.create(name: "bolt", quantity: 1)
+    b = Widget.create(name: "nut", quantity: 5)
+    c = Widget.create(name: "screw", quantity: 10)
+
+    assert_equal [a, b, c], Widget.where({}, order: :quantity)
+    assert_equal [c, b, a], Widget.where({}, order: { quantity: :desc })
+  end
+
+  def test_where_with_an_invalid_order_direction_raises
+    error = assert_raises(ArgumentError) { Widget.where({}, order: { quantity: :sideways }) }
+
+    assert_match(/sideways/, error.message)
+  end
+
+  def test_where_with_limit_caps_the_number_of_rows
+    Widget.create(name: "bolt", quantity: 1)
+    Widget.create(name: "nut", quantity: 5)
+    Widget.create(name: "screw", quantity: 10)
+
+    rows = Widget.where({}, order: :quantity, limit: 2)
+
+    assert_equal [1, 5], rows.map { |r| r[:quantity] }
+  end
+
+  def test_where_with_a_non_integer_limit_raises
+    error = assert_raises(ArgumentError) { Widget.where({}, limit: "2") }
+
+    assert_match(/limit/, error.message)
+  end
+
+  def test_where_combines_operators_order_and_limit_for_a_history_style_query
+    Widget.create(name: "bolt", quantity: 1)
+    b = Widget.create(name: "nut", quantity: 5)
+    c = Widget.create(name: "screw", quantity: 10)
+    Widget.create(name: "washer", quantity: 20)
+
+    rows = Widget.where({ id: { gt: b[:id] - 1 } }, order: :id, limit: 2)
+
+    assert_equal [b[:id], c[:id]], rows.map { |r| r[:id] }
+  end
+
   def test_update_returns_the_updated_row
     created = Widget.create(name: "bolt", quantity: 10)
 
