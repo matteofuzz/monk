@@ -8,7 +8,7 @@ require "socket"
 # in the same spirit as test/ractor_integration_test.rb's hammer test for
 # StateRactor.
 class WebSocketRactorIntegrationTest < Minitest::Test
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+  include WebSocketTestHelpers
 
   # Mirrors the spike exactly: one ordinary connection, one that sleeps
   # before replying, one whose payload is engineered to raise inside the
@@ -34,50 +34,6 @@ class WebSocketRactorIntegrationTest < Minitest::Test
         loop { break unless connection.read }
       end,
     )
-  end
-
-  def teardown
-    @server_thread&.kill
-    @server_thread&.join
-  end
-
-  def start_server(&block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
-    @server_thread = Thread.new { server.run(&block) }
-    server
-  end
-
-  def handshake!(socket)
-    socket.write(
-      "GET / HTTP/1.1\r\n" \
-      "Host: 127.0.0.1\r\n" \
-      "Upgrade: websocket\r\n" \
-      "Connection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\n" \
-      "Sec-WebSocket-Version: 13\r\n" \
-      "\r\n",
-    )
-    response = +""
-    until response.end_with?("\r\n\r\n")
-      byte = socket.read(1)
-      return nil if byte.nil?
-
-      response << byte
-    end
-    response
-  end
-
-  def read_frame(socket)
-    Monk::WebSocket::Connection.new(socket).read
-  end
-
-  def wait_until(timeout: 1.0)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until yield
-      raise "condition not met within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-
-      sleep 0.01
-    end
   end
 
   def test_ordinary_and_crashing_connections_complete_without_waiting_on_a_slow_one

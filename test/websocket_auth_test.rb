@@ -5,11 +5,11 @@ require "socket"
 require "open3"
 
 class WebSocketAuthTest < Minitest::Test
+  include WebSocketTestHelpers
   include PersistenceTestHelpers
   include AuthTestHelpers
 
   DB_NAME = :websocket_auth_test_db
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
 
   ECHO_ONE_MESSAGE = proc do |connection|
     message = connection.read
@@ -21,8 +21,7 @@ class WebSocketAuthTest < Minitest::Test
   end
 
   def teardown
-    @server_thread&.kill
-    @server_thread&.join
+    super
     if postgres_available?
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
@@ -31,29 +30,6 @@ class WebSocketAuthTest < Minitest::Test
     end
     Monk::Persistence::Pg.reset!
     Monk::Auth.reset!
-  end
-
-  def start_server(**kwargs, &block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **kwargs)
-    @server_thread = Thread.new { server.run(&block) }
-    server
-  end
-
-  def handshake(socket, extra_headers: {})
-    request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
-    extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
-    request << "\r\n"
-    socket.write(request)
-
-    response = +""
-    until response.end_with?("\r\n\r\n")
-      byte = socket.read(1)
-      return nil if byte.nil?
-
-      response << byte
-    end
-    response
   end
 
   def status_line(response)
@@ -73,7 +49,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+    response = handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
 
     assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
   ensure
@@ -85,7 +61,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(socket)
+    response = handshake!(socket)
 
     assert_equal "HTTP/1.1 401 Unauthorized", status_line(response)
     assert_nil socket.read(1), "expected the socket to be closed after a 401"
@@ -98,7 +74,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(socket, extra_headers: { "Authorization" => "Bearer nonsense" })
+    response = handshake!(socket, extra_headers: { "Authorization" => "Bearer nonsense" })
 
     assert_equal "HTTP/1.1 401 Unauthorized", status_line(response)
   ensure
@@ -111,7 +87,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(
+    response = handshake!(
       socket,
       extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://example.com" },
     )
@@ -127,7 +103,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(
+    response = handshake!(
       socket,
       extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://evil.example" },
     )
@@ -143,7 +119,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(
+    response = handshake!(
       socket,
       extra_headers: { "Authorization" => "Bearer #{session[:token]}", "Origin" => "https://evil.example" },
     )
@@ -180,7 +156,7 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(&ECHO_ONE_MESSAGE) # authenticate defaults to false, no Monk::Auth setup at all
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake(socket)
+    response = handshake!(socket)
 
     assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
   ensure

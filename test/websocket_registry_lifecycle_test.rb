@@ -3,7 +3,8 @@ require "monk/websocket"
 require "socket"
 
 class WebSocketRegistryLifecycleTest < Minitest::Test
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+  include WebSocketTestHelpers
+
   KEY = :room1
 
   # Defined at class-body scope -- see websocket_server_test.rb's comment
@@ -44,41 +45,6 @@ class WebSocketRegistryLifecycleTest < Minitest::Test
     )
   end
 
-  def teardown
-    @server_thread&.kill
-    @server_thread&.join
-  end
-
-  def start_server(&block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
-    @server_thread = Thread.new { server.run(&block) }
-    server
-  end
-
-  def handshake!(socket)
-    socket.write(
-      "GET / HTTP/1.1\r\n" \
-      "Host: 127.0.0.1\r\n" \
-      "Upgrade: websocket\r\n" \
-      "Connection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\n" \
-      "Sec-WebSocket-Version: 13\r\n" \
-      "\r\n",
-    )
-    response = +""
-    until response.end_with?("\r\n\r\n")
-      byte = socket.read(1)
-      return nil if byte.nil?
-
-      response << byte
-    end
-    response
-  end
-
-  def read_frame(socket)
-    Monk::WebSocket::Connection.new(socket).read
-  end
-
   # No non-blocking read on a raw socket either, so this is the same
   # bounded-wait shape websocket_registry_test.rb uses to assert a
   # negative against a Ractor::Port.
@@ -89,15 +55,6 @@ class WebSocketRegistryLifecycleTest < Minitest::Test
     waiter.kill unless delivered
 
     refute delivered, "expected no broadcast delivered, but got #{received.inspect}"
-  end
-
-  def wait_until(timeout: 1.0)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until yield
-      raise "condition not met within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-
-      sleep 0.01
-    end
   end
 
   def test_a_connection_registers_itself_and_unregisters_on_disconnect

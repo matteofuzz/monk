@@ -132,6 +132,86 @@ module PersistenceTestHelpers
   end
 end
 
+# Shared by the raw-socket websocket tests (websocket_server_test.rb,
+# websocket_close_test.rb, websocket_ping_pong_test.rb,
+# websocket_registry_lifecycle_test.rb, websocket_ractor_integration_test.rb,
+# websocket_auth_test.rb) -- a minimal client that speaks the handshake and
+# frame wire format itself, deliberately independent of
+# Monk::WebSocket::Connection where a test needs to see something
+# Connection#read hides (close/ping/pong control frames).
+module WebSocketTestHelpers
+  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+
+  def teardown
+    @server_thread&.kill
+    @server_thread&.join
+  end
+
+  def start_server(**kwargs, &block)
+    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **kwargs)
+    @server_thread = Thread.new { server.run(&block) }
+    server
+  end
+
+  def handshake!(socket, extra_headers: {})
+    request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
+    extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
+    request << "\r\n"
+    socket.write(request)
+
+    response = +""
+    until response.end_with?("\r\n\r\n")
+      byte = socket.read(1)
+      return nil if byte.nil?
+
+      response << byte
+    end
+    response
+  end
+
+  # Uses Connection#read directly as the test client's own frame parser --
+  # hides control frames (ping/pong/close) the way real app code would.
+  # Use #read_raw_frame instead when a test needs to see the opcode itself.
+  def read_frame(socket)
+    Monk::WebSocket::Connection.new(socket).read
+  end
+
+  # Deliberately independent of Connection#read -- reads whatever frame type
+  # the server actually sent, opcode included, for tests that need to see
+  # control frames Connection#read would otherwise hide.
+  def read_raw_frame(socket)
+    header = socket.read(2)
+    return nil unless header
+
+    byte1 = header.getbyte(1)
+    length_indicator = byte1 & 0x7F
+    extended =
+      case length_indicator
+      when 126 then socket.read(2)
+      when 127 then socket.read(8)
+      else ""
+      end
+    length = case length_indicator
+             when 126 then extended.unpack1("n")
+             when 127 then extended.unpack1("Q>")
+             else length_indicator
+             end
+    payload = length.zero? ? "" : socket.read(length)
+
+    Monk::WebSocket::Frame.decode(header + extended.to_s + payload.to_s)
+  end
+
+  def wait_until(timeout: 1.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    until yield
+      raise "condition not met within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.01
+    end
+  end
+end
+
 # Shared by tests that need real login_tokens/sessions tables and a
 # configured Monk::Auth (auth_test.rb, auth_helpers_test.rb). Include
 # PersistenceTestHelpers alongside this -- it's built on top of it.
