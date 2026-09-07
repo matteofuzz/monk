@@ -29,11 +29,21 @@ module Monk
       "bin/migrate" => "postgres/bin/migrate",
     }.freeze
 
+    AUTH_FILES = {
+      "config/auth.rb" => "auth/config/auth.rb",
+      "db/migrate/00000000000001_create_auth_tables.up.sql" => "auth/db/migrate/00000000000001_create_auth_tables.up.sql",
+      "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
+    }.freeze
+
     EXECUTABLE_FILES = %w[bin/server bin/console bin/setup_db bin/migrate].freeze
 
-    def initialize(dir, postgres: false)
+    # auth: implies postgres -- Monk::Auth is Postgres-only (lib/monk/auth.rb
+    # subclasses Monk::Persistence::Pg::Model), so there's no combination
+    # where an app gets Auth without also getting the persistence scaffold.
+    def initialize(dir, postgres: false, auth: false)
       @dir = dir
-      @postgres = postgres
+      @auth = auth
+      @postgres = postgres || auth
     end
 
     def write!
@@ -42,11 +52,15 @@ module Monk
       FileUtils.mkdir_p(@dir)
       BASE_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
 
-      return unless @postgres
+      if @postgres
+        POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
+        FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
+        append_postgres_gems
+      end
 
-      POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
-      FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
-      append_postgres_gems
+      return unless @auth
+
+      AUTH_FILES.each { |relative, template| write_file(relative, template) }
     end
 
     private

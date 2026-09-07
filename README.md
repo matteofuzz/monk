@@ -8,9 +8,20 @@ Requires **Ruby 4.0+**.
 
 ## Quick start
 
-```ruby
-require "monk"
+```
+monk new my_app && cd my_app
+bundle install
+bin/server           # -> http://localhost:9292/hello
+bundle exec rake test
+```
 
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, views/, public/) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does.
+
+## Routing
+
+`get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`):
+
+```ruby
 class App < Monk::Base
   get("/hello") { "hello from monk" }
 
@@ -18,42 +29,11 @@ class App < Monk::Base
 
   get("/files/*") { params[:splat] }
 
-  get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }
-
   get("/search") { json(query: params[:q]) } # GET /search?q=monk -> {"query":"monk"}
-
-  get("/protected") { halt 401, "nope" }
-
-  error(ArgumentError) { json(error: "bad input") }
-  error(404) { json(error: "not found") }
 end
-
-run Monk.boot(App)
 ```
 
-Save that as `config.ru` and run it with any Rack server (or `bin/server` in this repo, which runs it under Kino).
-
-## Scaffolding a new project — `monk new`
-
-```
-monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server, views/, public/
-monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
-```
-
-Writes a fresh project directory from static templates (never overwrites
-an existing directory — `monk new` refuses if `my_app` already exists) and
-prints the next manual step (`bundle install`); it never runs `bundle
-install`, `git init`, or anything else on your behalf. `--postgres` adds
-exactly the persistence/migrations wiring documented below, ready for you
-to add your own `db/migrate/*.sql` files and `Model` subclasses.
-
-The base skeleton is a working HTML page, not a bare JSON route: a layout
-and an index template under `views/`, and a stylesheet and an ES-module
-entry point under `public/` (see "Views" and "Static assets" below).
-
-## Routing
-
-`get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
+Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
 
 ### REST resources — `resources` (experimental)
 
@@ -87,16 +67,23 @@ resources("/orders", OrdersController, :index, :create) # only these two
 
 ## Context
 
-Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, and — for HTML — `render`, `h`, `raw` and `asset_path` (see "Views" below). There are two ways to write a route block:
+Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, `settings` (see "Settings" below) and — for HTML — `render`, `h`, `raw` and `asset_path` (see "Views" below). There are two ways to write a route block:
 
 - **Zero-arg** (`get("/x") { params }`) — the common case; helpers are called bare via `instance_exec`.
-- **One-arg** (`get("/x") { |ctx| ctx.params }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.
+- **One-arg** (`get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.
 
 `halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to). Ivars set on the `Context` (`@title = "Home"`) are visible to any template the route renders, and to its layout.
 
 ## Error handling
 
-`error(SomeExceptionClass) { ... }` registers a handler for that exception class; unhandled exceptions get a default `500` JSON response. `error(404) { ... }` overrides the default not-found response. Handler blocks run with the same `Context` as routes.
+`error(SomeExceptionClass) { ... }` registers a handler for that exception class; unhandled exceptions get a default `500` JSON response. `error(404) { ... }` overrides the default not-found response. Handler blocks run with the same `Context` as routes:
+
+```ruby
+get("/protected") { halt 401, "nope" }
+
+error(ArgumentError) { json(error: "bad input") }
+error(404) { json(error: "not found") }
+```
 
 ## Boot and Ractor-shareability
 
@@ -110,6 +97,25 @@ get("/hits") { count += 1 }  # raises at boot: routes can't close over mutable s
 ```
 
 `.freeze!` (which `Monk.boot` calls) raises `Monk::UnshareableRouteError` naming the offending route, rather than letting it fail silently or crash on the first live request.
+
+## Settings — `Monk::Settings`
+
+App-level configuration, declared once via `configure` and read back anywhere with `Monk::Settings[:key]` or, inside a route, `settings[:key]`:
+
+```ruby
+Monk::Settings.configure do
+  required :api_key
+  optional :port, default: "9292"
+end
+
+Monk::Settings[:api_key] # reads ENV["API_KEY"]
+```
+
+Each declared key reads from the uppercased env var of the same name, falling back to its default if optional. `MONK_ENV` is a built-in key every app gets for free — validated at boot against `development`/`test`/`staging`/`production` — and `Monk.env` returns a frozen `Environment` object with `.development?`/`.test?`/`.staging?`/`.production?` predicates.
+
+`Monk.boot(App)` — the same step that freezes routes — checks every required key is present and freezes the resolved values into a `Ractor.shareable?` snapshot, so a worker Ractor can read `Settings[:key]` without `Ractor::IsolationError`. A missing required key raises `MissingSettingError` at boot rather than on the first request that needs it; `configure` after boot raises `SettingsFrozenError`; reading a key nobody declared raises `UnknownSettingError` either way.
+
+`monk new` scaffolds ship a `config/settings.rb`, required at the top of `config.ru` before the app class body, that loads `dotenv` if the app's `Gemfile` has it uncommented — a missing `.env` file, or the gem not being bundled at all, is a harmless no-op; production deploys get their env vars from the hosting platform, not this file.
 
 ## Shared state — `Monk::StateRactor`
 
@@ -224,6 +230,25 @@ since a boot-time digest would go stale the moment you save.
 
 Putting nginx or a CDN in front of Monk is still the right call in
 production; this exists so an app is complete on its own.
+
+## Request logging — `Monk::Log`
+
+Every request is appended as one line to `log/<env>.log` —
+`log/development.log`, `log/test.log`, `log/production.log`, `log/staging.log`,
+Rails-style — unconditionally, in every environment:
+
+```
+GET /hello -> 200 (1.2ms)
+```
+
+In development that same line is also echoed to `$stdout`, for a human
+tailing the console; the file write happens either way. Each worker Ractor
+lazily opens and keeps its own append-mode handle to the log file (a `File`
+isn't `Ractor`-shareable the way `$stdout` is, so there's no single handle
+every worker can share), and concurrent `O_APPEND` writers to the same path
+need no extra locking — the same guarantee already relied on for several
+worker Ractors sharing `$stdout`. `Monk::Log.root = "log"` is the only
+knob; there's no per-route opt-out.
 
 ## Persistence — `Monk::Persistence::Pg`
 
@@ -344,7 +369,13 @@ design and phase-by-phase plan.
 ## Auth & sessions — `Monk::Auth`
 
 Passwordless token auth, opt-in (`require "monk"` never loads it) and built
-on `Monk::Persistence::Pg`:
+on `Monk::Persistence::Pg` — not just an integration, a hard dependency:
+`Monk::Auth::LoginToken`/`Session` are themselves `Pg::Model` subclasses, so
+`require "monk/auth"` always needs the `pg` gem and a registered Postgres
+connection, whether or not your app uses persistence for anything else.
+`monk new my_app --auth` scaffolds all of it in one step (implying
+`--postgres`): `config/auth.rb` and a migration creating the tables below —
+see "Scaffolding a new project" further down.
 
 ```ruby
 require "monk/auth"
@@ -368,9 +399,9 @@ end
 ```
 
 Two Postgres tables back this — `login_tokens` (single-use, short-lived)
-and `sessions` (multi-use, long-lived) — create them yourself the same way
-persistence tables aren't generated either; schema in
-`docs/auth-sessions.md`.
+and `sessions` (multi-use, long-lived). `monk new --auth` scaffolds a
+migration for both; otherwise create them yourself the same way persistence
+tables aren't generated either — schema in `docs/auth-sessions.md`.
 
 Both an `Authorization: Bearer <token>` header and a `session_token`
 cookie work identically via `current_subject`/`require_user!`. For
@@ -425,17 +456,99 @@ this process and everything else to Kino, on the **same host** — see
 `docs/deploying.md` for a worked Caddy/nginx example. Full design and
 phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
 
-## Running locally
+## Scaffolding a new project — `monk new`
+
+```
+monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server, views/, public/
+monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
+monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a migration for
+                              #   login_tokens/sessions (needs AUTH_SECRET set before boot)
+```
+
+Writes a fresh project directory from static templates (never overwrites
+an existing directory — `monk new` refuses if `my_app` already exists) and
+prints the next manual step (`bundle install`); it never runs `bundle
+install`, `git init`, or anything else on your behalf. `--postgres` adds
+exactly the persistence/migrations wiring documented above, ready for you
+to add your own `db/migrate/*.sql` files and `Model` subclasses.
+
+`--auth` always implies `--postgres` — `Monk::Auth` has no path that avoids
+Postgres (see "Auth & sessions" above), so there's no flag combination that
+scaffolds Auth without also scaffolding persistence underneath it. Plain
+`monk new my_app` (no flags) and `--postgres` alone both leave Auth
+unconfigured; `require "monk/auth"` still works if you wire it by hand, but
+nothing generated by those two commands does it for you. `Monk::WebSocket`
+needs no flag either way — `authenticate: true` is a constructor kwarg you
+pass yourself, not something scaffolding turns on.
+
+The base skeleton is a working HTML page, not a bare JSON route: a layout
+and an index template under `views/`, and a stylesheet and an ES-module
+entry point under `public/` (see "Views" and "Static assets" above).
+
+### Adding Postgres or Auth to an existing app
+
+`monk new`'s flags only apply at creation time — there's no `monk add`
+command. Retrofitting an app you already scaffolded plain (or wrote by
+hand) means adding the same files `--postgres`/`--auth` would have
+written, by hand:
+
+**Postgres:**
+
+1. Add `gem "pg"` to your `Gemfile` (and `gem "irb"` if you want
+   `bin/console`), then `bundle install`.
+2. Create `config/persistence.rb` — same content as the "Connecting"
+   example under "Persistence" above.
+3. `require_relative "config/persistence"` near the top of `config.ru`,
+   before `Monk.boot(App)` — `register` and any `Model` classes must exist
+   before boot (see "Persistence" → "Models").
+4. `mkdir -p db/migrate`, and add `bin/setup_db`/`bin/migrate` scripts if
+   you want migrations (copy the pattern from "Migrations" above, or lift
+   `bin/setup_db`/`bin/migrate`/`bin/console` verbatim from a
+   `monk new --postgres` app — they're plain scripts, not templated).
+5. Create the database and register/migrate against it (see "Setting up a
+   database" under "Persistence").
+
+**Auth** (do the Postgres steps first — there's no way around them, see
+"Auth & sessions" above):
+
+1. Create `config/auth.rb`:
+   ```ruby
+   require "monk"
+   require "monk/auth"
+   require_relative "persistence"
+
+   Monk::Auth.configure(
+     db_name: :primary, secret: ENV.fetch("AUTH_SECRET"),
+     login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: [],
+   )
+   ```
+2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.
+3. Add a migration creating `login_tokens`/`sessions` — schema under "Auth
+   & sessions" above. Give it a version that sorts after any migrations you
+   already have (a timestamp, e.g. `20260907120000_create_auth_tables`) —
+   don't reuse `00000000000001`, which `monk new --auth` only picks because
+   it assumes it's the first migration in a fresh project.
+4. Set `AUTH_SECRET` (e.g. via `.env`, loaded by the `config/settings.rb`
+   every skeleton already ships) and run your migration script.
+
+## Working on this repo
+
+This is the framework's own source checkout — `config.ru` at the repo root
+is a demo app exercising most of the features above, not a project
+scaffolded with `monk new`. To run its test suite and its demo server:
 
 ```
 bundle install
-bin/server                    # serves config.ru via kino, default (ractor) mode
-bin/server --mode threaded    # threaded mode, useful as a stopgap if something isn't booting cleanly
-bin/server --check            # reports Ractor-shareability without serving
-PORT=9999 bin/server          # change the port (default 9293)
+bundle exec rake test          # Minitest, calling App.call(env) directly
+                                # against hand-built Rack env hashes -- see
+                                # test/test_helper.rb; no Rack::Test dependency
+bin/server                     # serves config.ru via kino, default (ractor) mode
+bin/server --mode threaded     # threaded mode, useful as a stopgap if something isn't booting cleanly
+bin/server --check             # reports Ractor-shareability without serving
+PORT=9999 bin/server           # change the port (default 9293)
 ```
 
-## Running in Docker
+### Running in Docker
 
 ```
 docker build -t monk .
@@ -443,15 +556,6 @@ docker run --rm -p 9293:9293 monk
 ```
 
 This serves `config.ru` via `bin/server`, bound to `0.0.0.0` so it's reachable from outside the container (kino's own default, `127.0.0.1`, wouldn't be). Change the published port with `-p <host-port>:9293`, e.g. `docker run --rm -p 9999:9293 monk`.
-
-## Development
-
-```
-bundle install
-bundle exec rake test
-```
-
-Tests are Minitest, calling `App.call(env)` directly against hand-built Rack env hashes (see `test/test_helper.rb`) — no Rack::Test dependency.
 
 ## Status
 

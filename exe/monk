@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require_relative "../lib/monk/scaffold"
 
-USAGE = "Usage: monk new APP_NAME [--postgres]".freeze
+USAGE = "Usage: monk new APP_NAME [--postgres] [--auth]".freeze
 
 HELP = <<~TEXT.freeze
   #{USAGE}
@@ -15,6 +15,11 @@ HELP = <<~TEXT.freeze
       --postgres      Also scaffold Postgres persistence/migrations support:
                        config/persistence.rb, bin/console, bin/setup_db,
                        bin/migrate, db/migrate/
+      --auth          Also scaffold Monk::Auth (passwordless token auth).
+                       Implies --postgres -- Auth is Postgres-only, so this
+                       always brings the persistence scaffold with it. Adds
+                       config/auth.rb and a migration creating the
+                       login_tokens/sessions tables it needs.
 
   Commands:
       new APP_NAME    Create a new project (see Options above)
@@ -24,11 +29,15 @@ HELP = <<~TEXT.freeze
       cd APP_NAME
       bundle install
 
-  With --postgres, a reachable Postgres is expected (env vars documented
-  in the generated config/persistence.rb), then:
+  With --postgres (or --auth, which implies it), a reachable Postgres is
+  expected (env vars documented in the generated config/persistence.rb),
+  then:
       bin/setup_db    Apply pending migrations
       bin/migrate     migrate | rollback [N] | status
       bin/console     IRB with persistence loaded
+
+  With --auth, also set AUTH_SECRET (e.g. in .env) before booting the app --
+  config/auth.rb reads it via ENV.fetch and raises if it's missing.
 TEXT
 
 def usage_error!
@@ -45,11 +54,13 @@ when "new"
   app_name = rest.find { |arg| !arg.start_with?("-") }
   usage_error! if app_name.nil?
 
-  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres")).write!
+  auth = rest.include?("--auth")
+  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres"), auth: auth).write!
 
   puts "Created #{app_name}. Next steps:"
   puts "  cd #{app_name}"
   puts "  bundle install"
+  puts "  export AUTH_SECRET=... (or add it to .env) -- config/auth.rb requires it" if auth
 else
   usage_error!
 end
