@@ -5,7 +5,10 @@ non-main Ractor, confirmed empirically**. The "Resolved design" below is
 kept as the record of *why* Sequel was chosen and what it bought, but it no
 longer describes the plan going forward; see "Phase 0 result" for the
 finding and its consequences. Implementation plan: `PLAN-PERSISTENCE.md`.
-Working branch: `main_dev/add_db_support`. No ADR yet.
+Working branch: `main_dev/add_db_support`. No ADR yet. Open,
+not-yet-built ideas for this layer (OR support, batch update,
+transactions, ...) are tracked in `docs/persistence-evolutions.md`
+rather than here.
 
 ## Usage: two steps
 
