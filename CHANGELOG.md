@@ -4,6 +4,78 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.8.0 - 2026-09-07
+
+### Added
+
+- **`Base.resources`** (experimental, `lib/monk/base.rb`, #35): registers
+  the seven conventional REST routes (index/new/create/show/edit/update/
+  destroy) for a resource in one call, each dispatching to
+  `controller.new(context).public_send(action)`. Built entirely on the
+  existing `get`/`post`/`put`/`patch`/`delete`, so it doesn't touch
+  routing, dispatch, or `freeze!` — purely additive.
+- **File-based request logging** (`lib/monk/log.rb`, #34): every request
+  now appends a line to `log/<env>.log`, Rails-style (development/test/
+  staging/production each get their own file), unconditionally across
+  all environments. The existing `$stdout` echo (with its per-line
+  flush) stays gated to development, unchanged.
+- **`--auth` scaffold opt-in** (`monk new my_app --auth`, #36): scaffolds
+  `config/auth.rb` and a migration creating the `login_tokens`/`sessions`
+  tables `Monk::Auth` needs. Implies `--postgres` — Auth is
+  Postgres-only, so this always brings the persistence scaffold with it.
+- `monk new` now also scaffolds `bin/server` and a project `.gitignore`
+  (`/log/`, `.env`/`.env.*`, keeping `.env.example`) as part of the base
+  skeleton.
+- **`Pg::Model.where`**: accepts comparison operators (`gt:`/`gte:`/
+  `lt:`/`lte:`/`ne:`) and `column: [v1, v2]` for `IN`, plus a trailing
+  options `Hash` for `order:`/`limit:` — previously equality-only. `OR`
+  stays out of scope; composite conditions still need a raw `Pg.checkout`
+  block.
+- **`Pg::Model.find_all`/`.create_all`**: `find_all(ids)` does one
+  `SELECT ... WHERE id IN (...)` round trip, returning rows positionally
+  matched to `ids` (`nil` for any missing, consistent with `find`).
+  `create_all(rows)` does one multi-row `INSERT ... VALUES ...
+  RETURNING *`; every row must share the same set of keys.
+- **WebSocket `Server` heartbeat and reverification** (#39, #40):
+  `ping_interval:` spawns a per-connection thread sending an unsolicited
+  ping on that cadence, so a spec-compliant client's automatic pong
+  resets a reverse proxy's idle timer even on an otherwise-idle browser
+  connection. `reverify_interval:` (requires `authenticate: true`)
+  re-runs `Monk::Auth.verify` against the same credential on that
+  cadence and closes the connection (RFC 6455 code 1008) the moment
+  verify comes back `nil`. Both default to `nil` (off).
+- **WebSocket `Connection` fragmentation reassembly and a payload cap**
+  (#41): `#read` now reassembles a fragmented message (`fin: false`
+  starts it, opcode `0x0` continues it, `fin: true` ends it) instead of
+  returning the first fragment as if it were the whole message, closing
+  with 1002 on an out-of-sequence fragment. `max_payload_size:` (1 MiB
+  default, always on) rejects any single frame — or a fragmented
+  message's reassembled total — over the cap with 1009, checked before
+  ever attempting to buffer it.
+- `Monk.boot` now logs a startup line reporting the running environment,
+  route count, and (only when actually configured) `auth=on` and which
+  `Persistence::Registry` backends have registered connections;
+  `Persistence::Registry` gained a public `#names` reader backing that.
+
+### Fixed
+
+- **WebSocket `Registry#broadcast`** (#38): a port that closed without
+  ever going through `#unregister` (e.g. its owning connection Ractor
+  died first) raised `Ractor::ClosedError` unguarded inside the
+  registry Ractor's own loop, killing delivery for every key in the
+  whole process, not just the dead connection's one. `#broadcast` now
+  skips a closed port, keeps delivering to the rest of that key's
+  subscribers, and drops the dead port so it isn't retried.
+
+### Changed
+
+- **Error classes reorganized by subsystem** (#42): each subsystem's
+  error classes now live in a single `errors.rb` next to the code that
+  raises them (`auth/`, `persistence/`, `persistence/pg/`, `websocket/`),
+  rather than 19 one-class-per-file error files at the `lib/monk/` root.
+  Errors shared by single-file subsystems (settings, views/templates,
+  scaffold, Ractor-sharing) land in a shared `lib/monk/errors.rb`.
+
 ## 0.7.0 - 2026-09-05
 
 ### Added
