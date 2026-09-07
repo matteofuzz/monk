@@ -13,7 +13,16 @@ module Monk
       # already be configured, fail-fast the same way Monk::Auth's own
       # methods do (ADR 0003) rather than failing obscurely on the first
       # connection.
-      def initialize(port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false)
+      #
+      # ping_interval: (seconds) opts a connection into a server-sent
+      # heartbeat ping -- see Connection#start_heartbeat. Defaults to nil
+      # (disabled) for the same reason authenticate: defaults false: a
+      # server that doesn't ask for it behaves exactly as before.
+      def initialize(port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil)
+        if ping_interval && !ping_interval.positive?
+          raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
+        end
+
         if authenticate
           unless defined?(Monk::Auth) && Monk::Auth.config
             raise Monk::AuthNotConfiguredError,
@@ -34,6 +43,7 @@ module Monk
         @tcp_server = TCPServer.new(bind, port)
         @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
         @authenticate = authenticate
+        @ping_interval = ping_interval
       end
 
       def port
@@ -53,9 +63,12 @@ module Monk
 
         loop do
           socket = @tcp_server.accept
-          ractor = Ractor.new(shareable_block, @authenticate, @allowed_origins) do |blk, authenticate, origins|
-            Monk::WebSocket::Server.serve(Ractor.receive, blk, authenticate: authenticate, allowed_origins: origins)
-          end
+          ractor = Ractor.new(shareable_block, @authenticate, @allowed_origins, @ping_interval) \
+            do |blk, authenticate, origins, ping_interval|
+              Monk::WebSocket::Server.serve(
+                Ractor.receive, blk, authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval
+              )
+            end
           ractor.send(socket, move: true)
         end
       end
@@ -64,7 +77,7 @@ module Monk
       # (PLAN-WEBSOCKET.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
-      def self.serve(socket, block, authenticate: false, allowed_origins: nil)
+      def self.serve(socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil)
         request = read_handshake_request(socket)
         return socket.close unless request
 
@@ -84,6 +97,7 @@ module Monk
         socket.write(Handshake.response_for(request))
 
         connection = Connection.new(socket, subject: subject)
+        connection.start_heartbeat(ping_interval) if ping_interval
         begin
           block.call(connection)
         rescue StandardError
@@ -96,8 +110,10 @@ module Monk
       ensure
         # Runs on every exit path -- normal completion, the close
         # handshake, and a crashed handler alike -- so a subscribed
-        # connection never leaks a stale registry entry (step 17).
+        # connection never leaks a stale registry entry (step 17) or a
+        # heartbeat thread outliving its socket.
         connection&.unsubscribe!
+        connection&.stop_heartbeat!
         socket.close
       end
 

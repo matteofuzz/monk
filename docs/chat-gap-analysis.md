@@ -125,11 +125,15 @@ Concrete, ordered by how likely a chat workload is to hit them.
    process, not just the dead connection's. A send to a closed port is now
    skipped, the rest of the broadcast still goes out, and the dead port is
    dropped from that key so it isn't retried on the next broadcast.
-3. **No server-initiated ping.** `Connection` answers pings but never
-   sends them, and browser JavaScript cannot send WS pings at all — so
-   idle reverse-proxy timeouts will drop connections. Needs an
-   app-level `{"type":"ping"}` heartbeat from the client, or a ping
-   thread on the server side.
+3. ~~**No server-initiated ping.**~~ **Fixed 2026-09-07,** as the ping
+   thread option rather than an app-level heartbeat: `Server.new(...,
+   ping_interval: 30)` spawns a thread per connection
+   (`Connection#start_heartbeat`) that sends an unsolicited ping on that
+   cadence. A spec-compliant client — every browser's own WebSocket
+   implementation included, no app JS involved — answers it with a pong
+   automatically, which is what actually resets a reverse proxy's idle
+   timer. Off by default (`ping_interval: nil`), so an existing server
+   behaves exactly as before until it opts in.
 4. **Auth is verified once, at the handshake.** A revoked or expired
    session keeps a live socket indefinitely. Needs periodic re-verify in
    the read loop, or a maximum connection lifetime.

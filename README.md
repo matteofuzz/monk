@@ -448,6 +448,7 @@ end
 
 server = Monk::WebSocket::Server.new(
   port: 9293, authenticate: true, allowed_origins: ["https://example.com"],
+  ping_interval: 30,
 )
 server.run(&Chat::HANDLER)
 ```
@@ -457,7 +458,13 @@ server.run(&Chat::HANDLER)
 accepts, verified before the `101` response is sent; a missing or invalid
 credential gets a `401`. `allowed_origins:` guards the cookie path
 specifically against Cross-Site WebSocket Hijacking (a Bearer connection
-has no `Origin` header to forge). A reverse proxy in front routes `/ws` to
+has no `Origin` header to forge). `ping_interval:` (seconds, off by
+default) sends a server-initiated ping on that cadence — a spec-compliant
+client answers it with a pong automatically, no app code involved either
+side, which is what actually defeats an idle reverse-proxy timeout: a
+connection that only ever answers a client's own pings stays vulnerable
+whenever the client is a browser, since browser JavaScript has no API to
+send WS pings at all. A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 `docs/deploying.md` for a worked Caddy/nginx example. Full design and
 phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
