@@ -1,5 +1,5 @@
 require_relative "../pg"
-require_relative "../../malformed_migration_error"
+require_relative "errors"
 
 module Monk
   module Persistence

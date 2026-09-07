@@ -1,10 +1,9 @@
-require_relative "unshareable_block_error"
+require_relative "errors"
 # Standalone, dependency-free -- required here so Server.new(authenticate:
 # true) always raises this precise error, per ADR 0003, rather than a bare
 # NameError when an app calls it without ever requiring "monk/auth" at all.
-require_relative "auth_not_configured_error"
-require_relative "websocket_handshake_error"
-require_relative "websocket_protocol_error"
+require_relative "auth/errors"
+require_relative "websocket/errors"
 require_relative "websocket/handshake"
 require_relative "websocket/frame"
 require_relative "websocket/connection"
