@@ -22,7 +22,7 @@ class ResourcesTest < Minitest::Test
     end
   end
 
-  def test_rest_with_no_actions_registers_all_seven_default_routes
+  def test_resources_with_no_actions_registers_all_seven_default_routes
     controller = build_controller
     app = Class.new(Monk::Base) { resources("widgets", controller) }
 
@@ -35,7 +35,7 @@ class ResourcesTest < Minitest::Test
     end
   end
 
-  def test_rest_with_explicit_actions_only_registers_those_routes
+  def test_resources_with_explicit_actions_only_registers_those_routes
     controller = build_controller
     app = Class.new(Monk::Base) { resources("widgets", controller, :index, :create) }
 
@@ -49,7 +49,7 @@ class ResourcesTest < Minitest::Test
     assert_equal 404, status, "show wasn't requested, so it shouldn't be routed"
   end
 
-  def test_rest_leaves_other_routes_registered_the_ordinary_way_untouched
+  def test_resources_leaves_other_routes_registered_the_ordinary_way_untouched
     controller = build_controller
     app = Class.new(Monk::Base) do
       get("/hello") { "hi" }
@@ -63,7 +63,7 @@ class ResourcesTest < Minitest::Test
     assert_equal "index:", body.join
   end
 
-  def test_rest_with_an_unknown_action_raises_immediately
+  def test_resources_with_an_unknown_action_raises_immediately
     controller = build_controller
 
     error = assert_raises(ArgumentError) do
@@ -73,7 +73,7 @@ class ResourcesTest < Minitest::Test
     assert_match(/unknown REST action :nope/, error.message)
   end
 
-  def test_rest_strips_a_leading_slash_from_the_resource
+  def test_resources_strips_a_leading_slash_from_the_path
     controller = build_controller
     app = Class.new(Monk::Base) { resources("/widgets", controller, :index) }
 
@@ -81,7 +81,7 @@ class ResourcesTest < Minitest::Test
     assert_equal 200, status
   end
 
-  def test_rest_routes_survive_freeze_and_dispatch_correctly_from_real_worker_ractors
+  def test_resources_routes_survive_freeze_and_dispatch_correctly_from_real_worker_ractors
     controller = build_controller
     app = Class.new(Monk::Base) { resources("widgets", controller, :index, :show) }
     Monk.boot(app)

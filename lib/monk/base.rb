@@ -38,29 +38,35 @@ module Monk
         @routes ||= []
       end
 
-      # Registers a conventional set of REST routes for `resource` (a bare
-      # path segment, e.g. "orders" -> "/orders", "/orders/new",
-      # "/orders/:id", ...), each dispatching to
-      # `controller.new(context).public_send(action)`. `actions` defaults
-      # to all seven (index/new/create/show/edit/update/destroy); pass a
-      # subset to only wire up what `controller` actually implements --
-      # an action not listed here raises ArgumentError immediately, rather
-      # than registering a route to a method that doesn't exist.
+      # EXPERIMENTAL: this is the one place Base's routing DSL departs
+      # from "verb(path) { block }" -- a controller class plus a list of
+      # action symbols, instead of a block. Not yet convinced that's the
+      # right shape (see monk-consumer-test session notes); may be
+      # reworked or removed rather than kept as-is.
+      #
+      # Registers a conventional set of REST routes rooted at `path` (e.g.
+      # "/orders" -> "/orders", "/orders/new", "/orders/:id", ...), each
+      # dispatching to `controller.new(context).public_send(action)`.
+      # `actions` defaults to all seven (index/new/create/show/edit/
+      # update/destroy); pass a subset to only wire up what `controller`
+      # actually implements -- an action not listed here raises
+      # ArgumentError immediately, rather than registering a route to a
+      # method that doesn't exist.
       #
       # Built entirely on top of #get/#post/#put/#patch/#delete above --
       # no change to routing, dispatch, or freeze!, so an app that never
       # calls #resources is unaffected.
-      def resources(resource, controller, *actions)
+      def resources(path, controller, *actions)
         actions = REST_ACTIONS.keys if actions.empty?
-        resource = resource.to_s.delete_prefix("/")
+        path = path.to_s.delete_prefix("/")
 
         actions.each do |action|
           mapping = REST_ACTIONS.fetch(action) do
             raise ArgumentError, "unknown REST action #{action.inspect} (known: #{REST_ACTIONS.keys.join(", ")})"
           end
 
-          path = "/#{resource}#{mapping[:path]}"
-          mapping[:verbs].each { |verb| send(verb.downcase, path) { controller.new(self).public_send(action) } }
+          route = "/#{path}#{mapping[:path]}"
+          mapping[:verbs].each { |verb| send(verb.downcase, route) { controller.new(self).public_send(action) } }
         end
       end
 

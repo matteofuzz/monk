@@ -55,7 +55,9 @@ entry point under `public/` (see "Views" and "Static assets" below).
 
 `get`/`post`/`put`/`patch`/`delete` register routes with path params (`:id`) and a trailing wildcard/splat (`*`). Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
 
-### REST resources — `resources`
+### REST resources — `resources` (experimental)
+
+**Experimental — the one place this DSL departs from `verb(path) { block }`, in favor of a controller class plus a list of action symbols. Not settled as the right shape yet; may be reworked or removed rather than kept as-is.**
 
 For a controller-style resource, `resources` registers the conventional seven routes at once, each dispatching to `controller.new(context).public_send(action)`:
 
@@ -67,8 +69,8 @@ class OrdersController
   # ...
 end
 
-resources("orders", OrdersController) # every action
-resources("orders", OrdersController, :index, :create) # only these two
+resources("/orders", OrdersController) # every action
+resources("/orders", OrdersController, :index, :create) # only these two
 ```
 
 | action    | verb(s)      | path              |
