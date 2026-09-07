@@ -2,8 +2,7 @@ require "erb"
 require "cgi/escape"
 
 require_relative "freeze_hooks"
-require_relative "template_not_found_error"
-require_relative "template_syntax_error"
+require_relative "errors"
 
 module Monk
   # ERB templates, compiled once at Boot into real instance methods on a

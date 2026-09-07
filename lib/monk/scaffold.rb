@@ -1,6 +1,6 @@
 require "fileutils"
 
-require_relative "scaffold_exists_error"
+require_relative "errors"
 
 module Monk
   # Writes a new Monk project's skeleton to disk. Templates are static
