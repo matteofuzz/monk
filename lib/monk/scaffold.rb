@@ -15,6 +15,7 @@ module Monk
       "config.ru" => "base/config.ru",
       "config/settings.rb" => "base/config/settings.rb",
       ".ruby-version" => "base/.ruby-version",
+      ".gitignore" => "base/.gitignore",
       "bin/server" => "base/bin/server",
       "views/layouts/app.erb" => "base/views/layouts/app.erb",
       "views/index.erb" => "base/views/index.erb",

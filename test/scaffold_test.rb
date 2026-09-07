@@ -13,6 +13,7 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("base/config/settings.rb"), read(dest, "config/settings.rb")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
+      assert_equal template("base/.gitignore"), read(dest, ".gitignore")
       assert_equal template("base/bin/server"), read(dest, "bin/server")
       assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
       assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
