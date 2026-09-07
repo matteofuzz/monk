@@ -18,9 +18,28 @@ module Monk
       # heartbeat ping -- see Connection#start_heartbeat. Defaults to nil
       # (disabled) for the same reason authenticate: defaults false: a
       # server that doesn't ask for it behaves exactly as before.
-      def initialize(port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil)
+      #
+      # reverify_interval: (seconds) re-runs Monk::Auth.verify against the
+      # same credential on that cadence for as long as the connection
+      # stays open, closing it the moment verify comes back nil (gap 4,
+      # docs/chat-gap-analysis.md) -- authenticate: true only checks the
+      # credential once, at the handshake, so a session revoked or
+      # expired afterward would otherwise leave the socket live
+      # indefinitely. Requires authenticate: true (there's no credential
+      # to reverify without it) and defaults to nil (disabled), same as
+      # ping_interval:.
+      def initialize(
+        port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil, reverify_interval: nil
+      )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
+        end
+
+        if reverify_interval
+          unless reverify_interval.positive?
+            raise ArgumentError, "reverify_interval must be positive, got #{reverify_interval.inspect}"
+          end
+          raise ArgumentError, "reverify_interval requires authenticate: true" unless authenticate
         end
 
         if authenticate
@@ -44,6 +63,7 @@ module Monk
         @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
         @authenticate = authenticate
         @ping_interval = ping_interval
+        @reverify_interval = reverify_interval
       end
 
       def port
@@ -63,12 +83,15 @@ module Monk
 
         loop do
           socket = @tcp_server.accept
-          ractor = Ractor.new(shareable_block, @authenticate, @allowed_origins, @ping_interval) \
-            do |blk, authenticate, origins, ping_interval|
-              Monk::WebSocket::Server.serve(
-                Ractor.receive, blk, authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval
-              )
-            end
+          ractor = Ractor.new(
+            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval|
+            Monk::WebSocket::Server.serve(
+              Ractor.receive, blk,
+              authenticate: authenticate, allowed_origins: origins,
+              ping_interval: ping_interval, reverify_interval: reverify_interval
+            )
+          end
           ractor.send(socket, move: true)
         end
       end
@@ -77,7 +100,9 @@ module Monk
       # (PLAN-WEBSOCKET.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
-      def self.serve(socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil)
+      def self.serve(
+        socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil
+      )
         request = read_handshake_request(socket)
         return socket.close unless request
 
@@ -98,6 +123,10 @@ module Monk
 
         connection = Connection.new(socket, subject: subject)
         connection.start_heartbeat(ping_interval) if ping_interval
+        reverify_thread =
+          if reverify_interval
+            start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval)
+          end
         begin
           block.call(connection)
         rescue StandardError
@@ -110,8 +139,9 @@ module Monk
       ensure
         # Runs on every exit path -- normal completion, the close
         # handshake, and a crashed handler alike -- so a subscribed
-        # connection never leaks a stale registry entry (step 17) or a
-        # heartbeat thread outliving its socket.
+        # connection never leaks a stale registry entry (step 17), a
+        # heartbeat thread, or a reverify thread outliving its socket.
+        reverify_thread&.kill
         connection&.unsubscribe!
         connection&.stop_heartbeat!
         socket.close
@@ -139,6 +169,30 @@ module Monk
         subject
       end
       private_class_method :authenticate!
+
+      # Sleeps in `interval`-sized steps, re-running Monk::Auth.verify
+      # against the same raw credential each time, until it comes back
+      # nil (revoked or expired) -- then closes the connection with the
+      # standard "policy violation" close code, the one bit of RFC 6455's
+      # registered code space that fits "this session is no longer
+      # authorized" without inventing an app-specific one. Runs in its
+      # own Thread rather than blocking the handler's own read loop,
+      # mirroring Connection#start_heartbeat's shape; killed from #serve's
+      # ensure the same way.
+      def self.start_reverify(connection, raw_token, interval)
+        Thread.new do
+          loop do
+            sleep interval
+            break unless Monk::Auth.verify(raw_token)
+          end
+          connection.close(code: 1008, reason: "session no longer valid")
+        rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+          # The connection already closed via some other path (normal
+          # disconnect, the close handshake, a dead ping) -- nothing left
+          # to close.
+        end
+      end
+      private_class_method :start_reverify
 
       def self.read_handshake_request(socket)
         request = +""
