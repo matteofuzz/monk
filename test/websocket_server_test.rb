@@ -3,7 +3,7 @@ require "monk/websocket"
 require "socket"
 
 class WebSocketServerTest < Minitest::Test
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+  include WebSocketTestHelpers
 
   # Defined at class-body scope, not inline in a test method: self here is
   # WebSocketServerTest (a Class, always Ractor.shareable?), which is what
@@ -28,44 +28,6 @@ class WebSocketServerTest < Minitest::Test
     raise "simulated handler crash" if role == "crash"
 
     connection.write("ok")
-  end
-
-  def teardown
-    @server_thread&.kill
-    @server_thread&.join
-  end
-
-  def start_server(&block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
-    @server_thread = Thread.new { server.run(&block) }
-    server
-  end
-
-  def handshake!(socket)
-    socket.write(
-      "GET / HTTP/1.1\r\n" \
-      "Host: 127.0.0.1\r\n" \
-      "Upgrade: websocket\r\n" \
-      "Connection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\n" \
-      "Sec-WebSocket-Version: 13\r\n" \
-      "\r\n",
-    )
-    response = +""
-    until response.end_with?("\r\n\r\n")
-      byte = socket.read(1)
-      return nil if byte.nil?
-
-      response << byte
-    end
-    response
-  end
-
-  # Frame.decode doesn't require the masked bit at all -- it just unmasks
-  # conditionally -- so the test client can reuse Connection#read directly
-  # as its own frame parser instead of duplicating frame-parsing logic.
-  def read_frame(socket)
-    Monk::WebSocket::Connection.new(socket).read
   end
 
   def test_run_raises_a_precise_error_for_an_unshareable_block
