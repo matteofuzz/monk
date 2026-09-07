@@ -51,6 +51,71 @@ class PersistenceModelTest < Minitest::Test
     assert_nil Widget.find(999_999)
   end
 
+  def test_find_all_returns_rows_in_the_same_order_as_the_given_ids
+    a = Widget.create(name: "bolt", quantity: 1)
+    b = Widget.create(name: "nut", quantity: 5)
+
+    assert_equal [b, a], Widget.find_all([b[:id], a[:id]])
+  end
+
+  def test_find_all_returns_nil_in_place_of_a_missing_id
+    a = Widget.create(name: "bolt", quantity: 1)
+
+    assert_equal [a, nil], Widget.find_all([a[:id], 999_999])
+  end
+
+  def test_find_all_repeats_a_row_for_a_duplicated_id
+    a = Widget.create(name: "bolt", quantity: 1)
+
+    assert_equal [a, a], Widget.find_all([a[:id], a[:id]])
+  end
+
+  def test_find_all_with_an_empty_array_returns_an_empty_array_without_querying
+    assert_equal [], Widget.find_all([])
+  end
+
+  def test_create_all_inserts_every_row_in_one_call_and_returns_them
+    rows = Widget.create_all([
+      { name: "bolt", quantity: 1 },
+      { name: "nut", quantity: 5 },
+    ])
+
+    assert_equal ["bolt", "nut"], rows.map { |r| r[:name] }
+    assert_equal [1, 5], rows.map { |r| r[:quantity] }
+    assert rows.all? { |r| r[:id].is_a?(Integer) }
+    assert_equal rows.map { |r| r[:id] }.uniq.size, rows.size
+  end
+
+  def test_create_all_with_an_empty_array_returns_an_empty_array_without_querying
+    assert_equal [], Widget.create_all([])
+  end
+
+  def test_create_all_raises_when_rows_have_different_columns
+    error = assert_raises(ArgumentError) do
+      Widget.create_all([{ name: "bolt", quantity: 1 }, { name: "nut" }])
+    end
+
+    assert_match(/same columns/, error.message)
+  end
+
+  def test_create_all_accepts_rows_with_the_same_columns_in_a_different_order
+    rows = Widget.create_all([
+      { name: "bolt", quantity: 1 },
+      { quantity: 5, name: "nut" },
+    ])
+
+    assert_equal ["bolt", "nut"], rows.map { |r| r[:name] }
+    assert_equal [1, 5], rows.map { |r| r[:quantity] }
+  end
+
+  def test_create_all_rejects_a_malicious_column_name_rather_than_interpolating_it
+    error = assert_raises(PG::Error) { Widget.create_all([{ %{name; DROP TABLE widgets;--} => "x" }]) }
+
+    refute_nil error
+    row = Widget.create(name: "still here", quantity: 1)
+    assert_equal "still here", row[:name]
+  end
+
   def test_create_rejects_a_malicious_column_name_rather_than_interpolating_it
     error = assert_raises(PG::Error) { Widget.create(%{name; DROP TABLE widgets;--} => "x") }
 

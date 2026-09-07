@@ -308,10 +308,13 @@ end
 
 Widget.create(name: "bolt", quantity: 10)     # => { id: 1, name: "bolt", quantity: 10 }
 Widget.find(1)                                # => { id: 1, name: "bolt", quantity: 10 } or nil
+Widget.find_all([1, 2, 99])                   # => [row1, row2, nil] -- one round trip, nil for a miss
 Widget.where(name: "bolt")                    # => [{ id: 1, ... }, ...] -- AND only, still no OR
 Widget.where(quantity: { gt: 5 })             # => comparison operators: gt/gte/lt/lte/ne
 Widget.where(quantity: [5, 10])               # => IN -- matches any value in the Array
 Widget.where({}, order: :id, limit: 20)       # => ORDER BY / LIMIT via a trailing options Hash
+Widget.create_all([{ name: "bolt", quantity: 1 }, { name: "nut", quantity: 5 }])
+                                               # => both rows, one INSERT -- every Hash needs the same columns
 Widget.update(1, quantity: 20)                # => updated row, or nil if the id doesn't exist
 Widget.delete(1)                              # => true/false, whether a row was actually deleted
 ```

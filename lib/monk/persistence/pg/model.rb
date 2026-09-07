@@ -30,11 +30,61 @@ module Monk
             end
           end
 
+          # One INSERT, one round trip, one implicit transaction (a single
+          # SQL statement is atomic on its own -- all rows land or none
+          # do). Every Hash must have the same set of keys; order within
+          # each Hash doesn't matter, but a differing key set would mean
+          # a differing column list per row, which a single VALUES clause
+          # can't express -- raises rather than silently NULL-filling the
+          # gap, which would mask a caller bug. Row order in the result
+          # matches `rows`' order in every version of Postgres this has
+          # been checked against, but that isn't a documented SQL-standard
+          # guarantee for multi-row RETURNING -- don't rely on it holding
+          # across an exotic BEFORE INSERT trigger.
+          def create_all(rows)
+            return [] if rows.empty?
+
+            columns = rows.first.keys
+            unless rows.all? { |row| row.keys.map(&:to_s).sort == columns.map(&:to_s).sort }
+              raise ArgumentError, "create_all requires every row to have the same columns"
+            end
+
+            Monk::Persistence::Pg.checkout(db_name) do |conn|
+              quoted_columns = columns.map { |c| conn.quote_ident(c.to_s) }
+              values = []
+              row_placeholders = rows.map do |row|
+                placeholders = columns.map do |column|
+                  values << row.fetch(column)
+                  "$#{values.size}"
+                end
+                "(#{placeholders.join(", ")})"
+              end
+
+              sql = "INSERT INTO #{conn.quote_ident(table_name)} (#{quoted_columns.join(", ")}) " \
+                "VALUES #{row_placeholders.join(", ")} RETURNING *"
+              to_rows(conn.exec_params(sql, values))
+            end
+          end
+
           def find(id)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
               sql = "SELECT * FROM #{conn.quote_ident(table_name)} WHERE id = $1"
               to_row(conn.exec_params(sql, [id]))
             end
+          end
+
+          # One round trip, positionally matched to `ids` -- same length,
+          # same order, a `nil` in place of any id that doesn't exist
+          # (mirrors `find`'s single-row "nil means missing" rather than
+          # silently dropping the position, which would desync a caller
+          # zipping the result back against `ids`). A duplicate id in the
+          # input appears at every one of its positions in the output.
+          def find_all(ids)
+            return [] if ids.empty?
+
+            rows = where(id: ids)
+            by_id = rows.each_with_object({}) { |row, h| h[row[:id]] = row }
+            ids.map { |id| by_id[id] }
           end
 
           # AND-only -- still no OR, no arbitrary boolean trees. A condition
