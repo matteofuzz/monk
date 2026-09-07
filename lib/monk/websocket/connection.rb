@@ -85,6 +85,38 @@ module Monk
         @port.close
       end
 
+      # Sends an unsolicited ping frame every `interval` seconds for as
+      # long as the connection stays open (gap 3,
+      # docs/chat-gap-analysis.md): answering a client's own ping keeps a
+      # connection alive only if the client ever sends one, and browser
+      # JavaScript has no API to send WS ping frames at all -- so a truly
+      # idle browser connection still gets dropped by a reverse proxy's
+      # idle timeout without this. A spec-compliant client (including
+      # every browser's own WebSocket implementation, transparently, with
+      # no app-level JS involved) answers a server-sent ping with a pong
+      # automatically; #read already discards an incoming pong silently
+      # either way, so nothing app-visible changes.
+      def start_heartbeat(interval)
+        @heartbeat_thread = Thread.new do
+          loop do
+            sleep interval
+            write("", opcode: 0x9)
+          end
+        rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+          # The socket closed out from under this loop -- #close or a
+          # real disconnect racing the next scheduled ping. #stop_heartbeat!
+          # still runs from Server.serve's ensure regardless; this just
+          # keeps the thread from surfacing the expected teardown race as
+          # a Thread.report_on_exception warning.
+        end
+      end
+
+      # Called unconditionally from Server.serve's ensure, alongside
+      # #unsubscribe! -- a no-op if #start_heartbeat was never called.
+      def stop_heartbeat!
+        @heartbeat_thread&.kill
+      end
+
       private
 
       def relay_broadcasts
