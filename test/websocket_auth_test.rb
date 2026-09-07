@@ -152,6 +152,50 @@ class WebSocketAuthTest < Minitest::Test
 
   end
 
+  def test_reverify_interval_requires_authenticate_true
+    error = assert_raises(ArgumentError) { Monk::WebSocket::Server.new(port: 0, reverify_interval: 5) }
+    assert_match(/authenticate: true/, error.message)
+  end
+
+  def test_reverify_interval_must_be_positive
+    error = assert_raises(ArgumentError) do
+      Monk::WebSocket::Server.new(port: 0, authenticate: true, reverify_interval: 0)
+    end
+    assert_match(/reverify_interval/, error.message)
+  end
+
+  def test_reverify_interval_closes_the_connection_once_the_session_is_revoked
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: true, reverify_interval: 0.05, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+
+    Monk::Auth.revoke(session[:token])
+
+    frame = read_raw_frame(socket)
+    assert_equal 0x8, frame[:opcode]
+  ensure
+    socket&.close
+  end
+
+  def test_reverify_interval_leaves_a_still_valid_session_connected
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: true, reverify_interval: 0.05, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+
+    sleep 0.15 # a few reverify cadences, session never revoked
+    socket.write(Monk::WebSocket::Frame.encode("still here", opcode: 0x1))
+
+    assert_equal "still here", read_frame(socket)
+  ensure
+    socket&.close
+  end
+
   def test_authenticate_false_skips_the_whole_identity_flow
     server = start_server(&ECHO_ONE_MESSAGE) # authenticate defaults to false, no Monk::Auth setup at all
 

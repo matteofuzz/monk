@@ -134,9 +134,13 @@ Concrete, ordered by how likely a chat workload is to hit them.
    automatically, which is what actually resets a reverse proxy's idle
    timer. Off by default (`ping_interval: nil`), so an existing server
    behaves exactly as before until it opts in.
-4. **Auth is verified once, at the handshake.** A revoked or expired
-   session keeps a live socket indefinitely. Needs periodic re-verify in
-   the read loop, or a maximum connection lifetime.
+4. ~~**Auth is verified once, at the handshake.**~~ **Fixed 2026-09-07,**
+   as a periodic re-verify thread rather than a maximum connection
+   lifetime: `Server.new(..., authenticate: true, reverify_interval: 60)`
+   re-runs `Monk::Auth.verify` against the same credential on that cadence
+   and closes the socket (RFC 6455 code `1008`, "policy violation") the
+   moment it comes back nil. Off by default and requires
+   `authenticate: true` — there's no credential to reverify otherwise.
 5. **No fragmentation reassembly, no payload cap.** `fin` is decoded but
    ignored, so a continuation frame (opcode `0x0`) falls through and
    reaches app code as if it were a message; and a claimed 64-bit length

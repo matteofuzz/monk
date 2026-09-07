@@ -448,7 +448,7 @@ end
 
 server = Monk::WebSocket::Server.new(
   port: 9293, authenticate: true, allowed_origins: ["https://example.com"],
-  ping_interval: 30,
+  ping_interval: 30, reverify_interval: 60,
 )
 server.run(&Chat::HANDLER)
 ```
@@ -464,10 +464,15 @@ client answers it with a pong automatically, no app code involved either
 side, which is what actually defeats an idle reverse-proxy timeout: a
 connection that only ever answers a client's own pings stays vulnerable
 whenever the client is a browser, since browser JavaScript has no API to
-send WS pings at all. A reverse proxy in front routes `/ws` to
-this process and everything else to Kino, on the **same host** — see
-`docs/deploying.md` for a worked Caddy/nginx example. Full design and
-phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
+send WS pings at all. `reverify_interval:` (seconds, off by default,
+requires `authenticate: true`) re-runs `Monk::Auth.verify` against the
+same credential on that cadence and closes the socket the moment it comes
+back nil — without it, a session revoked or expired after the handshake
+leaves the connection live indefinitely, since `authenticate: true` only
+checks the credential once, at connect time. A reverse proxy in front
+routes `/ws` to this process and everything else to Kino, on the **same
+host** — see `docs/deploying.md` for a worked Caddy/nginx example. Full
+design and phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
 
 ## Scaffolding a new project — `monk new`
 
