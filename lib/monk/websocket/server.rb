@@ -28,8 +28,16 @@ module Monk
       # indefinitely. Requires authenticate: true (there's no credential
       # to reverify without it) and defaults to nil (disabled), same as
       # ping_interval:.
+      #
+      # max_payload_size: (bytes) -- see Connection::DEFAULT_MAX_PAYLOAD_SIZE
+      # for what it guards against (gap 5). Unlike ping_interval:/
+      # reverify_interval:, always on: this is insurance against a
+      # hostile client on a public endpoint, not an opt-in behavior
+      # change, so a server that doesn't mention it still gets the
+      # default cap rather than no cap at all.
       def initialize(
-        port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil, reverify_interval: nil
+        port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
+        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -40,6 +48,10 @@ module Monk
             raise ArgumentError, "reverify_interval must be positive, got #{reverify_interval.inspect}"
           end
           raise ArgumentError, "reverify_interval requires authenticate: true" unless authenticate
+        end
+
+        unless max_payload_size.positive?
+          raise ArgumentError, "max_payload_size must be positive, got #{max_payload_size.inspect}"
         end
 
         if authenticate
@@ -64,6 +76,7 @@ module Monk
         @authenticate = authenticate
         @ping_interval = ping_interval
         @reverify_interval = reverify_interval
+        @max_payload_size = max_payload_size
       end
 
       def port
@@ -84,12 +97,12 @@ module Monk
         loop do
           socket = @tcp_server.accept
           ractor = Ractor.new(
-            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval|
+            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
               authenticate: authenticate, allowed_origins: origins,
-              ping_interval: ping_interval, reverify_interval: reverify_interval
+              ping_interval: ping_interval, reverify_interval: reverify_interval, max_payload_size: max_payload_size
             )
           end
           ractor.send(socket, move: true)
@@ -101,7 +114,8 @@ module Monk
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
       def self.serve(
-        socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil
+        socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
+        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
       )
         request = read_handshake_request(socket)
         return socket.close unless request
@@ -121,7 +135,7 @@ module Monk
 
         socket.write(Handshake.response_for(request))
 
-        connection = Connection.new(socket, subject: subject)
+        connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
         connection.start_heartbeat(ping_interval) if ping_interval
         reverify_thread =
           if reverify_interval

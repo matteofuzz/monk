@@ -141,12 +141,17 @@ Concrete, ordered by how likely a chat workload is to hit them.
    and closes the socket (RFC 6455 code `1008`, "policy violation") the
    moment it comes back nil. Off by default and requires
    `authenticate: true` — there's no credential to reverify otherwise.
-5. **No fragmentation reassembly, no payload cap.** `fin` is decoded but
-   ignored, so a continuation frame (opcode `0x0`) falls through and
-   reaches app code as if it were a message; and a claimed 64-bit length
-   is read with no ceiling (`lib/monk/websocket/frame.rb`,
-   `Connection#read_frame`). Fine for well-behaved browsers sending short
-   text; a cap is cheap insurance on a public endpoint.
+5. ~~**No fragmentation reassembly, no payload cap.**~~ **Fixed
+   2026-09-07.** `Connection#read` now reassembles a fragmented message
+   (`fin: false` frames plus opcode `0x0` continuations) instead of
+   returning the first fragment as if it were the whole message, and
+   closes with `1002` on an out-of-sequence fragment. `read_frame` rejects
+   any single frame whose declared length exceeds
+   `max_payload_size:` (1 MiB by default, on by default, checked before
+   the payload is read off the wire) with `1009`, and the same cap applies
+   to a fragmented message's reassembled total — otherwise chunking a
+   message into many small frames would have silently bypassed the
+   per-frame check.
 6. **One WebSocket process, structurally.** Horizontal scaling, or any
    HTTP→WS push, needs the deferred `LISTEN`/`NOTIFY` layer
    (`PLAN-WEBSOCKET.md` Phase 6). Acceptable for a long time — but the

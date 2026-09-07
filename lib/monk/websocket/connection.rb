@@ -5,18 +5,40 @@ module Monk
     # code. Lives entirely inside its own connection Ractor -- never itself
     # crosses a Ractor boundary, so it needs no shareability of its own.
     class Connection
+      # 1 MiB -- generous for chat-sized text, cheap insurance against a
+      # hostile length claim on a public endpoint (gap 5,
+      # docs/chat-gap-analysis.md). Enforced twice: against a single
+      # frame's declared length (#read_frame, before the payload is ever
+      # read off the wire) and against a fragmented message's reassembled
+      # total (#read) -- otherwise chunking a message into many frames
+      # each just under the per-frame cap would silently bypass it.
+      DEFAULT_MAX_PAYLOAD_SIZE = 1 * 1024 * 1024
+
       # subject is whatever Monk::Auth.verify returned when
       # Server.new(authenticate: true) verified this handshake
       # (PLAN-WEBSOCKET.md Phase 5) -- nil for an unauthenticated server.
       attr_reader :subject
 
-      def initialize(socket, subject: nil)
+      def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE)
         @socket = socket
         @subject = subject
         @write_mutex = Mutex.new
+        @max_payload_size = max_payload_size
       end
 
+      # Reassembles a fragmented message per RFC 6455 5.4: a frame with
+      # fin: false starts one, opcode 0x0 continues it, and the frame
+      # carrying fin: true ends it. Previously `fin` was decoded and then
+      # ignored entirely, so a continuation frame fell straight through
+      # the `else` branch below and reached app code as if it were its
+      # own complete message (gap 5). A continuation frame with nothing
+      # to continue, or a new fragmented message started before the
+      # current one finished, are both protocol violations -- closed with
+      # 1002 rather than silently misinterpreted.
       def read
+        fragments = nil
+        fragments_size = 0
+
         loop do
           frame = read_frame
           return nil unless frame
@@ -39,8 +61,20 @@ module Monk
           when 0xA
             # An unsolicited pong -- nothing to do yet (no pending-ping
             # tracking exists), but still not a message for app code.
+          when 0x0
+            return close_with(1002, "unexpected continuation frame") unless fragments
+
+            fragments << frame[:payload]
+            fragments_size += frame[:payload].bytesize
+            return close_with(1009, "message too large") if fragments_size > @max_payload_size
+
+            return fragments.join if frame[:fin]
           else
-            return frame[:payload]
+            return close_with(1002, "expected a continuation frame") if fragments
+            return frame[:payload] if frame[:fin]
+
+            fragments = [frame[:payload]]
+            fragments_size = frame[:payload].bytesize
           end
         end
       end
@@ -129,6 +163,17 @@ module Monk
         @write_mutex.synchronize { @socket.write(Monk::WebSocket::Frame.encode(payload, opcode: opcode)) }
       end
 
+      # Sends a close frame carrying `code`/`reason`, closes the socket,
+      # and returns nil -- the shared exit path for both gap-5 violations
+      # (an oversized declared length, an out-of-sequence fragment),
+      # always returned via `return close_with(...)` so the nil correctly
+      # propagates out of #read the same way any other disconnect does.
+      def close_with(code, reason)
+        write_frame([code].pack("n") + reason, 0x8)
+        @socket.close
+        nil
+      end
+
       def read_frame
         header = read_exactly(2)
         return nil unless header
@@ -149,6 +194,11 @@ module Monk
         return nil if mask_key.nil?
 
         length = extended_length(length_indicator, extended)
+        # Checked before the payload is read off the wire, not after --
+        # the whole point is to never attempt to buffer a hostile
+        # multi-gigabyte claim in the first place (gap 5).
+        return close_with(1009, "payload too large") if length > @max_payload_size
+
         payload = read_exactly(length)
         return nil unless payload
 

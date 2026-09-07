@@ -469,10 +469,15 @@ requires `authenticate: true`) re-runs `Monk::Auth.verify` against the
 same credential on that cadence and closes the socket the moment it comes
 back nil — without it, a session revoked or expired after the handshake
 leaves the connection live indefinitely, since `authenticate: true` only
-checks the credential once, at connect time. A reverse proxy in front
-routes `/ws` to this process and everything else to Kino, on the **same
-host** — see `docs/deploying.md` for a worked Caddy/nginx example. Full
-design and phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
+checks the credential once, at connect time. `max_payload_size:` (bytes,
+1 MiB by default, **on** by default unlike the other two) rejects a frame
+whose declared length exceeds it before ever reading that many bytes off
+the wire, and applies the same cap to a fragmented message's reassembled
+total — a public endpoint shouldn't trust a claimed length, or let many
+small frames add up past it. A reverse proxy in front routes `/ws` to
+this process and everything else to Kino, on the **same host** — see
+`docs/deploying.md` for a worked Caddy/nginx example. Full design and
+phase-by-phase build: `docs/websocket.md` / `PLAN-WEBSOCKET.md`.
 
 ## Scaffolding a new project — `monk new`
 
