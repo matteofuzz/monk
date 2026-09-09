@@ -130,6 +130,77 @@ seam, then the minimum code to pass it.
     this one verification, same as `PLAN-MIGRATIONS.md` Phase 5's
     `monk-consumer-test` route) round-trips correctly.
 
+## Phase 5 — Always-on WebSocket base skeleton + `--redis` opt-in (Seam K, part 3) — done
+
+`--auth` (above) shipped as a single commit + `CHANGELOG.md` entry with no
+plan phase at all — small enough, per this doc's own opening precedent.
+This one is bigger (a `RedisFanout` correctness fix, a new base-skeleton
+file, a new flag, new tests), so it gets a real phase.
+
+Unlike Postgres and Redis, plain WebSocket (`Monk::WebSocket::Server`
+Phases 1–5 of `PLAN-WEBSOCKET.md`) needs no external service — it's just
+another Ruby process on another port — so there's no infra reason to gate
+it behind a flag the way `--postgres`/`--redis` are. `bin/websocket_server`
+instead joins the base skeleton unconditionally and adapts at boot:
+
+12. `bin/websocket_server` ships in `BASE_FILES`, always, executable. Its
+    demo `:chat` channel is the same shape Phase 8 of `PLAN-WEBSOCKET.md`
+    already hand-verified in `monk-consumer-test` (commit `555989d`), minus
+    the hardcoded `authenticate: true` — this is that same file made
+    boot-adaptive instead of hand-authored per app.
+13. Auth: `begin; require_relative "../config/auth"; rescue LoadError; end`
+    then `authenticate = defined?(Monk::Auth) && !!Monk::Auth.config` —
+    the exact same truthiness check `Server#initialize`'s own `authenticate:`
+    guard already uses, so this can't disagree with it. Reuses the base
+    `config/settings.rb` template's own existing
+    `begin; require "dotenv/load"; rescue LoadError; end` idiom for "this
+    file might not exist, and that's fine" — not a new pattern.
+14. Redis: `registry = Monk::WebSocket::Registry.new; if (url = ENV["REDIS_URL"]); require "monk/websocket/redis_fanout"; registry = Monk::WebSocket::RedisFanout.new(registry, redis_url: url); end`.
+    `--redis` is a new, fully independent `Scaffold`/`exe/monk` flag —
+    doesn't imply, and isn't implied by, `--postgres` or `--auth`. Its
+    entire scaffold contribution is one `Gemfile` line
+    (`Scaffold#append_postgres_gems` generalized to
+    `#append_gemfile_extra(template_path)`, reused for both `postgres/` and
+    the new `redis/Gemfile.extra`) — no `config/redis.rb`, since there's
+    nothing to register a name against; `REDIS_URL` is read directly, the
+    same way `WS_PORT`/`WS_ALLOWED_ORIGINS` already are in the hand-written
+    file (plain `ENV.fetch`, not `Monk::Settings`).
+15. Prerequisite, landed first: `Monk::WebSocket::RedisFanout` (added the
+    session before this phase, not yet wired into any scaffold) wasn't
+    actually usable the way `bin/websocket_server` needs it — held behind a
+    module constant (`ChatServer::REGISTRY`, mirroring how the plain
+    `Registry` demo already worked), read from every connection's own
+    Ractor. Three real bugs, found by actually running it against a real
+    Redis rather than trusting the design: (a) the instance never called
+    `freeze`, and held a live `Redis` client directly on an ivar, so it
+    wasn't Ractor-shareable at all (`Ractor::IsolationError` the moment a
+    connection Ractor read the constant) — fixed by making the publisher
+    lazy and per-Ractor (`Ractor.current[...]`, mirroring
+    `Monk::Persistence::Registry#ractor_local`/`#entry`) and calling
+    `freeze` at the end of `#initialize`, same as `Registry`; (b)
+    `CHANNEL_PREFIX` was an unfrozen String constant, which the subscriber
+    Ractor reads — same `Ractor::IsolationError` class, fixed by
+    `.freeze`; (c) the subscriber recovered the channel name as a String
+    (`channel.delete_prefix(...)`) and called `registry.broadcast` with
+    it directly, but every real caller (`Registry`'s own tests, the
+    `:chat` demo) registers under a Symbol — a silent Hash-key mismatch
+    that made `#broadcast` return `true` while delivering to nobody, fixed
+    with `.to_sym`. None of these three showed up from reading the code;
+    all three only surfaced by running two real `RedisFanout` instances
+    against a real `redis:7` container and watching a broadcast actually
+    fail to arrive.
+16. End-to-end, manual (mirrors Phase 4's own posture): `monk new` into a
+    scratch directory, `Gemfile` patched to `path: "../monk"`, real
+    `bundle install`, `bin/websocket_server` run three ways — no auth/no
+    Redis (`authenticate: false`, confirmed via a real two-connection
+    handshake and broadcast); `--redis` with `REDIS_URL` set against a
+    disposable `redis:7` container, **two separate** `bin/websocket_server`
+    processes on different ports, a connection on one receiving a broadcast
+    sent on the other; `--auth`'s `config/auth.rb` present, no `REDIS_URL`
+    (relies on `Server`'s already-tested `authenticate: true` path — not
+    re-verified live here, since the detection expression is identical to
+    what `WebSocketAuthTest`/`WebSocketAuthBootTest` already cover).
+
 ## Explicitly out of scope for this plan
 
 No code generators inside an existing project (`monk generate
@@ -141,4 +212,6 @@ interactive prompts (`monk new` takes flags, not a wizard), no custom/
 user-supplied template directories (`--template=...`), no "eject" or
 upgrade tooling for updating an existing scaffolded app's boilerplate
 after the fact, no publishing `monk` to RubyGems (a separate, unrelated
-decision — see `NOTES-V2.md`).
+decision — see `NOTES-V2.md`). `redis_url:`/`authenticate:`
+auto-detection inside `Monk::WebSocket::Server` itself (Phase 5 decision —
+deliberately left to the generated script, not the library).

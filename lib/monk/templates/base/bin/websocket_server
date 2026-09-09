@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require_relative "../config/settings"
+
+# config/auth.rb only exists if this app was scaffolded with --auth -- a
+# missing file is a harmless no-op, the same way config/settings.rb treats
+# a missing dotenv gem. Present or not, it's what decides whether this
+# process authenticates connections below.
+begin
+  require_relative "../config/auth"
+rescue LoadError
+end
+
+require "monk/websocket"
+
+# A single broadcast chat channel: every connection subscribes to :chat,
+# and whatever one connection sends is broadcast to everyone on it
+# (including itself), prefixed with the authenticated subject when there
+# is one.
+#
+# Defined inside a module, not at this script's own top level -- self at a
+# script's top level is the main object, which is *not* Ractor-shareable,
+# so a proc built there fails Server#run's Ractor.make_shareable check.
+# Module bodies are always shareable, same as StateRactor#update's block
+# requirement.
+module ChatServer
+  # REDIS_URL set (by an app scaffolded with --redis, or by hand) wraps the
+  # registry so :chat also fans out to every other Monk::WebSocket::Server
+  # process sharing that Redis -- unset, it's in-process only. Either way
+  # the app code above never has to know which: RedisFanout has the exact
+  # same #register/#unregister/#count/#broadcast interface as Registry.
+  REGISTRY =
+    if (redis_url = ENV["REDIS_URL"])
+      require "monk/websocket/redis_fanout"
+      Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_url)
+    else
+      Monk::WebSocket::Registry.new
+    end
+
+  HANDLER = proc do |connection|
+    connection.subscribe(REGISTRY, :chat)
+    loop do
+      message = connection.read
+      break unless message
+
+      REGISTRY.broadcast(:chat, "#{connection.subject || "guest"}: #{message}")
+    end
+  end
+end
+
+authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
+port = ENV.fetch("WS_PORT", "9293").to_i
+allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", "http://localhost:9292").split(",")
+
+server = Monk::WebSocket::Server.new(port: port, authenticate: authenticate, allowed_origins: allowed_origins)
+puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
+  "(authenticate: #{authenticate}, redis fan-out: #{ENV["REDIS_URL"] ? "on" : "off"})"
+server.run(&ChatServer::HANDLER)

@@ -30,6 +30,12 @@ Gem::Specification.new do |spec|
   # Gemfile. Still needed here to run monk's own test suite.
   spec.add_development_dependency "pg", "~> 1.5"
 
+  # Same posture as pg above: Monk::WebSocket::RedisFanout is opt-in
+  # (require "monk/websocket/redis_fanout" explicitly), so redis isn't a
+  # runtime dependency of monk itself -- an app that wants cross-process
+  # WebSocket fan-out declares "redis" in its own Gemfile.
+  spec.add_development_dependency "redis", "~> 5.0"
+
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "kino"

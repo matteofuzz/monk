@@ -83,11 +83,14 @@ plan assumption. Reversing one invalidates the phases that rest on it.
    only the browser's `WebSocket` JS API is header-restricted. No
    `?token=` query parameter and no first-message auth handshake — both
    considered and superseded by this resolution.
-6. **Cross-process fan-out (Postgres `LISTEN`/`NOTIFY`) is deferred**,
-   Phase 6, built only once a real fan-out requirement exists — mirrors
-   how `PLAN-AUTH.md` deferred cookies to its own Phase 9. Phases 1–5 ship
-   a fully working single-process WebSocket server with in-process
-   broadcast.
+6. **Cross-process fan-out is Redis pub/sub, behind a basic opt-in, and is
+   deferred to Phase 6**, built only once a real fan-out requirement
+   exists — mirrors how `PLAN-AUTH.md` deferred cookies to its own
+   Phase 9. Phases 1–5 ship a fully working single-process WebSocket
+   server with in-process broadcast. Chosen over Postgres `LISTEN`/`NOTIFY`
+   (`docs/websocket.md` Open Question 3): no payload cap, higher
+   throughput, and the `redis` gem's pub/sub client is verified
+   Ractor-ready.
 7. **`Monk::WebSocket` is opt-in**, like persistence backends and
    `Monk::Auth`: `require "monk/websocket"` explicitly. `require "monk"`
    alone must not load it.
@@ -279,26 +282,55 @@ plan assumption. Reversing one invalidates the phases that rest on it.
     `pong` without reaching the caller-supplied block, keeping a long-lived
     authenticated connection alive through idle reverse-proxy timeouts.
 
-## Phase 6 — Cross-process fan-out (Seam T extended) — deferred, build only when a real requirement exists
+## Phase 6 — Cross-process fan-out via Redis pub/sub (Seam T extended) — done
 
-Not built until Decision 4 is revisited (a second `Monk::WebSocket::Server`
-process, or an HTTP-triggered WS push, actually shows up as a requirement).
-Sketched here so Phase 4's registry API doesn't have to change shape later.
+Not adopted by every app — `--redis` is opt-in (`PLAN-INIT.md` Phase 5) —
+but the mechanism itself is built, fixed, tested against a real Redis, and
+wired into the base scaffold's `bin/websocket_server`, not just sketched.
+Redis over Postgres `LISTEN`/`NOTIFY` per `docs/websocket.md` Open
+Question 3 — the `redis` gem's pub/sub client is verified Ractor-ready.
 
-25. A dedicated "listener" Ractor per WS process holds one `PG::Connection`
-    in `LISTEN` mode; a `NOTIFY` payload is translated into a local
-    `Registry.broadcast` call — the registry's public API (step 16) is
-    unchanged, this just feeds it from a second source.
-26. `Monk::Persistence::Pg`'s existing per-Ractor connection lifecycle
-    (`PLAN-PERSISTENCE.md` Phase 1) is reused for the listener connection —
-    no new connection-management code.
-27. `NOTIFY` payload size (8000 bytes) and delivery guarantees (dropped if
-    nothing is listening, no queue/replay) are documented as constraints
-    on what `broadcast` payloads may safely carry — not silently assumed.
+25. `Monk::WebSocket::RedisFanout` (`lib/monk/websocket/redis_fanout.rb`),
+    opt-in via `require "monk/websocket/redis_fanout"` (`monk/websocket`
+    alone does not load it, `redis` is a dev-only gemspec dependency —
+    same posture as `Monk::Persistence::Pg` and `pg`). Wraps a `Registry`
+    with the identical public interface (step 16's `#register`,
+    `#unregister`, `#count`, `#broadcast`), so an app swaps which object
+    it hands to its connections and nothing else in Phases 1–5 changes.
+    Unwrapped, a plain `Registry` still behaves exactly as before —
+    fan-out is additive, not a `Registry` change.
+26. `#broadcast` delivers to the local `Registry` directly (same latency
+    and reliability as a plain `Registry`, even if Redis is briefly down)
+    and publishes the payload to Redis so sibling WS processes' own
+    `RedisFanout` instances relay it to their local connections.
+27. A dedicated subscriber Ractor per `RedisFanout` instance holds one
+    Redis connection, `psubscribe`d to `monk:ws:*`; each message is
+    tagged with the publishing instance's origin id (a `SecureRandom.uuid`
+    generated once per instance) so the subscriber skips a process's own
+    broadcast echoed back to it over Redis — without the tag, one
+    `#broadcast` call would reach that process's local connections twice.
+28. No payload cap and no delivery guarantee beyond Redis pub/sub's own
+    "no durability, no queue/replay for offline subscribers" property —
+    documented as a constraint on what `broadcast` payloads may safely
+    carry, not silently assumed.
+29. `test/websocket_redis_fanout_test.rb`: two real `RedisFanout`-wrapped
+    `Registry` instances against a real Redis exchange a broadcast, each
+    instance's own echo is dropped, and a `RedisFanout` instance is
+    frozen/Ractor-shareable and readable as a module constant from a
+    worker Ractor (the shape `bin/websocket_server` actually uses it in).
+    Skipped, not failed, without a reachable Redis (`MONK_TEST_REDIS_URL`),
+    mirroring `PersistenceTestHelpers`. Three real bugs surfaced only by
+    running this against a real Redis, not from reading the code — see
+    `PLAN-INIT.md` Phase 5, step 15, for what they were and how each was
+    fixed. `redis_url:` isn't wired into `Server` itself (deliberately —
+    same doc, Phase 5 decision); the adaptation lives in
+    `bin/websocket_server`, which every scaffolded app gets unconditionally
+    and which builds a `RedisFanout` itself when `REDIS_URL` is set, so
+    there's nothing left to hand-assemble.
 
 ## Phase 7 — Real Ractor/concurrency integration (Seam U)
 
-28. Automate Phase 0's manual spike: N real, concurrently-accepted
+30. Automate Phase 0's manual spike: N real, concurrently-accepted
     connections against a real `Monk::WebSocket::Server` — one ordinary,
     one that deliberately blocks inside its handler, one that sends a
     malformed frame. Assert (not just observe) that the ordinary and
@@ -307,16 +339,23 @@ Sketched here so Phase 4's registry API doesn't have to change shape later.
     affecting the other two or the accept loop — the committed version of
     `docs/websocket.md`'s "End-to-end spike," in the same spirit as
     `test/ractor_integration_test.rb`'s hammer test for `StateRactor`.
-29. N real connections registered under the same channel (Phase 4),
+31. N real connections registered under the same channel (Phase 4),
     broadcasting from a real Ractor other than any connection's own, all
     receive the message correctly.
 
 ## Phase 8 — `monk-consumer-test` end-to-end proof (Seam V)
 
-30. The consumer app gains `require "monk/websocket"`, a `bin/websocket_server`
+32. The consumer app gains `require "monk/websocket"`, a `bin/websocket_server`
     script, one channel/handler, and (if Phase 5 landed) the same
     `Monk::Auth`/`Monk::Persistence` config its HTTP side already uses.
-31. Verified manually: run the WS process locally, connect with a real
+    ~~Hand-authored, per app~~ — as of `PLAN-INIT.md` Phase 5,
+    `bin/websocket_server` (this exact demo channel, made boot-adaptive
+    instead of hardcoding `authenticate: true`) ships in every scaffolded
+    app's base skeleton automatically; `monk-consumer-test`'s own copy
+    (commit `555989d`) was the hand-written reference that template was
+    copied from, the same way `--postgres`'s templates were copied from
+    this app's persistence scaffold.
+33. Verified manually: run the WS process locally, connect with a real
     client (a small script, or a generic tool) once with a valid
     `Authorization: Bearer` header and once with a real cookie jar shared
     from the HTTP process's login flow, send/receive a message, broadcast
@@ -324,7 +363,7 @@ Sketched here so Phase 4's registry API doesn't have to change shape later.
     `Origin` is rejected. Documented as a verification step, not an
     automated cycle — mirrors `PLAN.md` step 21 and `PLAN-AUTH.md`
     step 38.
-32. `docs/deploying.md` gains a worked reverse-proxy example (nginx or
+34. `docs/deploying.md` gains a worked reverse-proxy example (nginx or
     Caddy, whichever the existing Render/Fly cases make cheaper to show)
     routing `/ws` to the WebSocket process's port and everything else to
     Kino, on the **same host** as the HTTP process (per Decision 5) —
@@ -338,7 +377,6 @@ certificates); permessage-deflate or any other WebSocket extension;
 Socket.IO-style fallback transports (long-polling, etc.); `monk new`
 generating reverse-proxy config (Decision 8); any client-side/JS helper
 library; per-connection rate limiting beyond what the OS/host provides;
-horizontal scaling of the WebSocket process itself beyond the `LISTEN`/
-`NOTIFY` fan-out sketched in Phase 6; a resolved answer to Phase 6's own
-Postgres-vs-Redis question, since there's no concrete fan-out requirement
-yet to decide it against.
+horizontal scaling of the WebSocket process itself beyond the Redis
+pub/sub fan-out sketched in Phase 6, which stays deferred until a concrete
+fan-out requirement exists to build it against.

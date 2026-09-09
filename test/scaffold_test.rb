@@ -15,6 +15,7 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
       assert_equal template("base/.gitignore"), read(dest, ".gitignore")
       assert_equal template("base/bin/server"), read(dest, "bin/server")
+      assert_equal template("base/bin/websocket_server"), read(dest, "bin/websocket_server")
       assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
       assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
       assert_equal template("base/public/css/app.css"), read(dest, "public/css/app.css")
@@ -30,6 +31,20 @@ class ScaffoldTest < Minitest::Test
 
       mode = File.stat(File.join(dest, "bin/server")).mode
       assert mode & 0o111 == 0o111, "expected bin/server to be executable"
+    end
+  end
+
+  # bin/websocket_server ships in the base skeleton unconditionally --
+  # WebSocket needs no external service, so unlike --postgres/--redis it
+  # isn't gated behind a flag at all.
+  def test_write_bang_writes_bin_websocket_server_executable
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      mode = File.stat(File.join(dest, "bin/websocket_server")).mode
+      assert mode & 0o111 == 0o111, "expected bin/websocket_server to be executable"
     end
   end
 
@@ -167,6 +182,28 @@ class ScaffoldTest < Minitest::Test
       # auth: true implies postgres: true -- Auth is Postgres-only
       assert_equal template("postgres/config/persistence.rb"), read(dest, "config/persistence.rb")
       assert File.exist?(File.join(dest, "bin/migrate"))
+    end
+  end
+
+  # redis: true is fully independent -- doesn't imply, and isn't implied
+  # by, postgres or auth. Its entire scaffold contribution is one Gemfile
+  # line; there's no config/redis.rb, since there's nothing to register a
+  # name against (REGISTRY is a plain module constant in
+  # bin/websocket_server, and it reads REDIS_URL directly).
+  def test_write_bang_with_redis_adds_only_the_redis_gem
+    Dir.mktmpdir do |tmp|
+      base_dest = File.join(tmp, "base_app")
+      redis_dest = File.join(tmp, "redis_app")
+      Monk::Scaffold.new(base_dest).write!
+      Monk::Scaffold.new(redis_dest, redis: true).write!
+
+      base_gemfile = read(base_dest, "Gemfile")
+      redis_gemfile = read(redis_dest, "Gemfile")
+
+      assert redis_gemfile.start_with?(base_gemfile)
+      assert_equal "\n" + template("redis/Gemfile.extra"), redis_gemfile.delete_prefix(base_gemfile)
+      refute File.exist?(File.join(redis_dest, "config/persistence.rb"))
+      refute File.exist?(File.join(redis_dest, "config/auth.rb"))
     end
   end
 

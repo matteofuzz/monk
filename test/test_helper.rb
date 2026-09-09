@@ -132,6 +132,30 @@ module PersistenceTestHelpers
   end
 end
 
+# Shared by tests that need a real Redis connection
+# (websocket_redis_fanout_test.rb). Not included globally -- `include
+# RedisTestHelpers` where needed, mirrors PersistenceTestHelpers above.
+module RedisTestHelpers
+  def redis_test_url
+    ENV.fetch("MONK_TEST_REDIS_URL", "redis://127.0.0.1:6379/0")
+  end
+
+  def redis_available?
+    return @redis_available if defined?(@redis_available)
+
+    require "redis"
+    Redis.new(url: redis_test_url).ping
+    @redis_available = true
+  rescue Redis::BaseConnectionError
+    @redis_available = false
+  end
+
+  def skip_unless_redis_available
+    skip "no local Redis reachable at #{redis_test_url} " \
+      "(set MONK_TEST_REDIS_URL, or start one)" unless redis_available?
+  end
+end
+
 # Shared by the raw-socket websocket tests (websocket_server_test.rb,
 # websocket_close_test.rb, websocket_ping_pong_test.rb,
 # websocket_registry_lifecycle_test.rb, websocket_ractor_integration_test.rb,
