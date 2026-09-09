@@ -40,11 +40,12 @@ In production a reverse proxy routes `/ws` to the WS process and
 everything else to Kino, **on the same host** (`docs/deploying.md` §3).
 
 The decision that keeps the MVP small: **messages are written over the
-WebSocket only, never over HTTP.** The HTTP process cannot push into the
-WS process — `Registry` is an in-memory, per-process structure, and
-cross-process fan-out via `LISTEN`/`NOTIFY` is deliberately deferred
-(`PLAN-WEBSOCKET.md` decision 6). Writing over WS sidesteps that
-entirely, and HTTP keeps only read endpoints.
+WebSocket only, never over HTTP.** This is now a choice, not a forced
+workaround — `RedisFanout` (§6, gap 6) means the HTTP process *could*
+push into the WS process's `Registry` over Redis, but nothing in
+`Monk::WebSocket` makes that a natural fit for a one-shot HTTP-side
+publish. Writing over WS sidesteps that entirely, and HTTP keeps only
+read endpoints — the simpler design either way.
 
 ## 3. Data model
 
@@ -152,10 +153,20 @@ Concrete, ordered by how likely a chat workload is to hit them.
    to a fragmented message's reassembled total — otherwise chunking a
    message into many small frames would have silently bypassed the
    per-frame check.
-6. **One WebSocket process, structurally.** Horizontal scaling, or any
-   HTTP→WS push, needs the deferred `LISTEN`/`NOTIFY` layer
-   (`PLAN-WEBSOCKET.md` Phase 6). Acceptable for a long time — but the
-   ceiling is one process, and §2 is shaped around that.
+6. ~~**One WebSocket process, structurally.**~~ **Fixed 2026-09-09.**
+   `Monk::WebSocket::RedisFanout` (`PLAN-WEBSOCKET.md` Phase 6 — Redis
+   pub/sub, not Postgres `LISTEN`/`NOTIFY`, per that doc's Open Question 3)
+   wraps a `Registry` with the identical `#register`/`#broadcast`
+   interface, tested end-to-end against a real Redis, and every scaffolded
+   app's `bin/websocket_server` builds one automatically when `REDIS_URL`
+   is set (`monk new chat --redis`) — no hand-assembly required. Closes the
+   WS↔WS half of this gap: N `bin/websocket_server` processes behind a
+   reverse proxy now fan a broadcast out to all of them. The HTTP→WS push
+   half is technically unblocked the same way (an HTTP handler can build
+   its own `RedisFanout` against the same Redis and `#broadcast`), but the
+   class is shaped for a WS process — it wraps a local `Registry` and
+   spawns a subscriber Ractor an HTTP-side publish-only caller doesn't
+   need. Workable, not yet a clean fit.
 7. **Spam and abuse.** `Monk::Auth::RateLimiter` (per-process,
    `StateRactor`-backed) is reusable as-is for a per-subject message
    rate limit. Nothing else exists.
