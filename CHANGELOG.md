@@ -4,6 +4,51 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.9.0 - 2026-09-09
+
+### Added
+
+- **WebSocket cross-process fan-out over Redis** (`Monk::WebSocket::RedisFanout`,
+  `lib/monk/websocket/redis_fanout.rb`, #43): wraps a `Registry` with the
+  identical `#register`/`#unregister`/`#count`/`#broadcast` interface, so
+  swapping which object a connection holds is the only change an app
+  makes. `#broadcast` still delivers to this process's own `Registry`
+  directly (same latency and reliability as a plain `Registry`, even if
+  Redis is briefly down) and publishes to Redis so sibling
+  `Monk::WebSocket::Server` processes relay it to their own connections;
+  every publish carries a per-instance origin id so a process's own
+  publish, echoed back to it over Redis, is dropped instead of delivered
+  twice. Chosen over Postgres `LISTEN`/`NOTIFY` — no payload cap, higher
+  throughput, and the `redis` gem's pub/sub client is Ractor-ready.
+- **`monk new` scaffolds `bin/websocket_server` unconditionally, plus a new
+  `--redis` opt-in** (#43): unlike `--postgres`/`--redis`, plain WebSocket
+  needs no external service, so it isn't gated behind a flag — every
+  scaffolded app gets a working `bin/websocket_server` (a single `:chat`
+  broadcast channel) that adapts at boot instead: `authenticate: true`
+  automatically if `--auth`'s `config/auth.rb` is present, `RedisFanout`
+  instead of a plain `Registry` automatically if `REDIS_URL` is set.
+  `--redis` (`monk new my_app --redis`) is fully independent of
+  `--postgres`/`--auth` and adds only a `Gemfile` line — there's no
+  `config/redis.rb`, since `REDIS_URL` is read directly the same way
+  `WS_PORT`/`WS_ALLOWED_ORIGINS` already are.
+
+### Fixed
+
+- **`RedisFanout` wasn't actually usable the way it needed to be** (#43),
+  found by running it against a real Redis rather than trusting the
+  design: it held a live `Redis` client directly on an unfrozen instance
+  and never called `freeze`, so it wasn't `Ractor.shareable?` at all
+  (`Ractor::IsolationError` the moment a connection Ractor read it from a
+  module constant, the same way `Registry` already is); `CHANNEL_PREFIX`
+  was an unfrozen String constant, hit by the same error from inside the
+  subscriber Ractor; and the subscriber recovered a Redis channel name as
+  a String and broadcast with it directly, silently landing on a
+  different `Hash` key than the Symbol every real caller registers under
+  — `#broadcast` returned `true` while delivering to nobody. Fixed with a
+  lazy, per-Ractor publisher (mirrors `Monk::Persistence::Registry`),
+  `freeze` at the end of `#initialize` (mirrors `Registry`), and `.to_sym`
+  on the recovered channel name.
+
 ## 0.8.0 - 2026-09-07
 
 ### Added
