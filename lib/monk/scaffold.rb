@@ -17,6 +17,7 @@ module Monk
       ".ruby-version" => "base/.ruby-version",
       ".gitignore" => "base/.gitignore",
       "bin/server" => "base/bin/server",
+      "bin/websocket_server" => "base/bin/websocket_server",
       "views/layouts/app.erb" => "base/views/layouts/app.erb",
       "views/index.erb" => "base/views/index.erb",
       "public/css/app.css" => "base/public/css/app.css",
@@ -36,15 +37,24 @@ module Monk
       "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
     }.freeze
 
-    EXECUTABLE_FILES = %w[bin/server bin/console bin/setup_db bin/migrate].freeze
+    EXECUTABLE_FILES = %w[bin/server bin/websocket_server bin/console bin/setup_db bin/migrate].freeze
 
     # auth: implies postgres -- Monk::Auth is Postgres-only (lib/monk/auth.rb
     # subclasses Monk::Persistence::Pg::Model), so there's no combination
     # where an app gets Auth without also getting the persistence scaffold.
-    def initialize(dir, postgres: false, auth: false)
+    #
+    # redis: is unrelated to both -- it doesn't imply, and isn't implied by,
+    # postgres or auth. Unlike them it adds no files of its own, just a
+    # Gemfile line: bin/websocket_server (always present, see BASE_FILES
+    # above -- WebSocket needs no external service, so unlike Postgres/Redis
+    # it isn't gated behind a flag at all) checks ENV["REDIS_URL"] at boot
+    # and only then requires "redis", so the gem has to already be in the
+    # bundle for that to work.
+    def initialize(dir, postgres: false, auth: false, redis: false)
       @dir = dir
       @auth = auth
       @postgres = postgres || auth
+      @redis = redis
     end
 
     def write!
@@ -56,8 +66,10 @@ module Monk
       if @postgres
         POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
         FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
-        append_postgres_gems
+        append_gemfile_extra("postgres/Gemfile.extra")
       end
+
+      append_gemfile_extra("redis/Gemfile.extra") if @redis
 
       return unless @auth
 
@@ -66,8 +78,8 @@ module Monk
 
     private
 
-    def append_postgres_gems
-      extra = File.read(File.join(TEMPLATES_DIR, "postgres/Gemfile.extra"))
+    def append_gemfile_extra(template_path)
+      extra = File.read(File.join(TEMPLATES_DIR, template_path))
       File.write(File.join(@dir, "Gemfile"), "\n#{extra}", mode: "a")
     end
 

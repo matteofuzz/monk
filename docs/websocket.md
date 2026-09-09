@@ -261,7 +261,7 @@ multi-message session.
 | HTTP `Upgrade` handshake + frame parsing | Own code — both spiked off-the-shelf gems fail under a real Ractor (see "Phase 0 result"); a third candidate would need the same live audit before being trusted |
 | Connection-per-Ractor lifecycle | Monk owns this — mirrors `StateRactor` |
 | In-process registry / broadcast | Monk owns this |
-| Cross-process fan-out transport | Monk owns the API surface; Postgres or Redis does the transport work underneath |
+| Cross-process fan-out transport | Monk owns the API surface; Redis pub/sub does the transport work underneath, behind an opt-in flag |
 | Reverse-proxy / deploy wiring | Documented, not generated — same posture as `docs/deploying.md` today |
 
 ## Open questions
@@ -285,13 +285,20 @@ multi-message session.
    connections on the same machine. Recommendation: start with one
    process; it's the simpler design and the one that defers the
    cross-process fan-out question the longest.
-3. **`LISTEN`/`NOTIFY` or Redis for cross-process fan-out?** Postgres avoids
-   new infrastructure, since persistence already lands `pg`. But
-   `NOTIFY` payloads cap at 8000 bytes and delivery isn't guaranteed —
-   a notification fires only for currently-listening connections, with no
+3. ~~`LISTEN`/`NOTIFY` or Redis for cross-process fan-out?~~ **Resolved:
+   Redis pub/sub, behind a basic opt-in.** Postgres avoids new
+   infrastructure, since persistence already lands `pg`, but `NOTIFY`
+   payloads cap at 8000 bytes and delivery isn't guaranteed — a
+   notification fires only for currently-listening connections, with no
    queue or replay. Redis pub/sub has the same "no durability" property but
-   higher throughput and no payload cap. Not decided; there's no concrete
-   fan-out requirement yet to decide it against.
+   higher throughput and no payload cap, and the `redis` gem itself,
+   including its pub/sub client, has been verified Ractor-ready. Cross-
+   process fan-out stays off by default (Question 2's single-process
+   recommendation); when an app opts in (config flag, e.g. a `redis_url`),
+   the registry's `broadcast` also publishes to Redis, and a dedicated
+   subscriber Ractor per WS process re-broadcasts locally — same shape as
+   the deferred Postgres sketch, Redis instead of `pg`. See Phase 6 of
+   `PLAN-WEBSOCKET.md`.
 4. **Does Monk generate reverse-proxy config** (an `nginx.conf` /
    `Caddyfile` snippet from `monk new`), or only document it by hand the
    way `docs/deploying.md` does for Render/Fly today? Leaning: document,

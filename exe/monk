@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require_relative "../lib/monk/scaffold"
 
-USAGE = "Usage: monk new APP_NAME [--postgres] [--auth]".freeze
+USAGE = "Usage: monk new APP_NAME [--postgres] [--auth] [--redis]".freeze
 
 HELP = <<~TEXT.freeze
   #{USAGE}
@@ -9,7 +9,12 @@ HELP = <<~TEXT.freeze
   Creates a new Monk project at APP_NAME from a static skeleton -- refuses
   to run if APP_NAME already exists.
 
-  Base skeleton: Gemfile, config.ru, .ruby-version
+  Base skeleton: Gemfile, config.ru, .ruby-version, bin/server,
+  bin/websocket_server -- WebSocket support needs no external service, so
+  unlike Postgres/Redis below it isn't gated behind a flag: bin/websocket_server
+  auto-authenticates if --auth's config/auth.rb is present, and fans out
+  across processes over Redis if --redis's REDIS_URL is set, adapting at
+  boot either way.
 
   Options:
       --postgres      Also scaffold Postgres persistence/migrations support:
@@ -20,6 +25,10 @@ HELP = <<~TEXT.freeze
                        always brings the persistence scaffold with it. Adds
                        config/auth.rb and a migration creating the
                        login_tokens/sessions tables it needs.
+      --redis         Add the redis gem to the Gemfile, for
+                       bin/websocket_server's cross-process fan-out. Fully
+                       independent -- doesn't imply, and isn't implied by,
+                       --postgres or --auth.
 
   Commands:
       new APP_NAME    Create a new project (see Options above)
@@ -38,6 +47,10 @@ HELP = <<~TEXT.freeze
 
   With --auth, also set AUTH_SECRET (e.g. in .env) before booting the app --
   config/auth.rb reads it via ENV.fetch and raises if it's missing.
+
+  With --redis, set REDIS_URL (e.g. in .env) before starting
+  bin/websocket_server to turn cross-process fan-out on; unset, it runs
+  in-process only, same as without --redis.
 TEXT
 
 def usage_error!
@@ -55,7 +68,8 @@ when "new"
   usage_error! if app_name.nil?
 
   auth = rest.include?("--auth")
-  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres"), auth: auth).write!
+  redis = rest.include?("--redis")
+  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres"), auth: auth, redis: redis).write!
 
   puts "Created #{app_name}. Next steps:"
   puts "  cd #{app_name}"
