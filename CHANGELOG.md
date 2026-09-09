@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.10.0 - 2026-09-09
+
+### Added
+
+- **`Monk::Log` level methods** (`lib/monk/log.rb`, #46): `.debug`/`.info`/
+  `.warn`/`.error` for app-level logging, each writing one `LEVEL message`
+  line to the existing `log/<env>.log` when at or above the configured
+  threshold, a no-op otherwise. Distinct from `#write`, `Log`'s existing
+  unconditional per-request access-log line, which no threshold gates.
+- **`LOG_LEVEL` setting** (`lib/monk/settings.rb`, #46): a new
+  `Settings`-backed key, implicit like `MONK_ENV` (no app `configure`
+  call needed), one of `debug`/`info`/`warn`/`error` (`info` default),
+  validated at `Boot` and resolved once into `Log`'s threshold rather
+  than read per call.
+
 ## 0.9.0 - 2026-09-09
 
 ### Added
