@@ -13,7 +13,15 @@ module Monk
     # this set at Boot (#freeze_registry!), not before.
     MONK_ENV_VALUES = %w[development test staging production].freeze
 
-    DEFAULT_DECLARATIONS = { monk_env: { required: false, default: "development" } }.freeze
+    # Monk::Log's fixed set of allowed levels, ordered least to most severe.
+    # Like :monk_env, :log_level is implicitly declared below and validated
+    # against this set at Boot rather than before.
+    LOG_LEVEL_VALUES = %w[debug info warn error].freeze
+
+    DEFAULT_DECLARATIONS = {
+      monk_env: { required: false, default: "development" },
+      log_level: { required: false, default: "info" },
+    }.freeze
 
     # The DSL #configure's block runs against. Kept as its own object,
     # rather than instance_eval'd straight against Settings' singleton
@@ -88,6 +96,7 @@ module Monk
         end
 
         validate_monk_env!(values[:monk_env])
+        validate_log_level!(values[:log_level])
 
         @frozen_values = Ractor.make_shareable(values)
         @booted = true
@@ -106,6 +115,12 @@ module Monk
         return if MONK_ENV_VALUES.include?(value)
 
         raise InvalidMonkEnvError, "MONK_ENV must be one of #{MONK_ENV_VALUES.join(", ")}, got #{value.inspect}"
+      end
+
+      def validate_log_level!(value)
+        return if LOG_LEVEL_VALUES.include?(value)
+
+        raise InvalidLogLevelError, "LOG_LEVEL must be one of #{LOG_LEVEL_VALUES.join(", ")}, got #{value.inspect}"
       end
 
       def declarations

@@ -35,3 +35,7 @@ _Avoid_: Config, configuration, options
 **MONK_ENV**:
 The tier an app is running under: one of four values — `development` (the default when unset), `test`, `staging`, `production` — read via `Monk.env` and its predicates (`.development?`, `.test?`, `.staging?`, `.production?`). Internally it's just the `:monk_env` key inside `Settings`, given its own reader because it's checked on nearly every request. `development` is the only tier with verbose request logging and disk-read (rather than manifest) asset serving; `test`, `staging`, and `production` all behave alike for those two checks.
 _Avoid_: RACK_ENV, environment, mode
+
+**LOG_LEVEL**:
+The minimum severity `Monk::Log`'s `.debug`/`.info`/`.warn`/`.error` methods actually write, one of four values — `debug`, `info` (the default when unset), `warn`, `error`, least to most severe. Internally it's just the `:log_level` key inside `Settings`, resolved once at `Boot` into `Monk::Log`'s own threshold rather than read per call. A call below the threshold is a no-op, not buffered or dropped after formatting — cheap enough to leave debug logging in place across environments rather than stripping it. Distinct from `#write`, `Monk::Log`'s unconditional per-request access-log line, which `LOG_LEVEL` never gates.
+_Avoid_: verbosity, log verbosity, debug mode

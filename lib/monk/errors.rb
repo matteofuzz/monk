@@ -2,6 +2,9 @@ module Monk
   class InvalidMonkEnvError < StandardError
   end
 
+  class InvalidLogLevelError < StandardError
+  end
+
   class DuplicateSettingError < StandardError
   end
 

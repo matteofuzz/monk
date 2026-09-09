@@ -75,7 +75,55 @@ class LoggingTest < Minitest::Test
     assert_equal 2, contents.lines.size
   end
 
+  def test_level_methods_default_to_info_and_above
+    contents = with_log do |dir|
+      boot_app!
+      Monk::Log.debug("dropped")
+      Monk::Log.info("kept")
+      Monk::Log.warn("kept too")
+      Monk::Log.error("kept as well")
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_equal ["INFO kept\n", "WARN kept too\n", "ERROR kept as well\n"], contents.lines
+  end
+
+  def test_log_level_setting_raises_the_threshold
+    contents = with_log do |dir|
+      with_settings { with_env("LOG_LEVEL", "error") { boot_app! } }
+      Monk::Log.warn("dropped")
+      Monk::Log.error("kept")
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_equal ["ERROR kept\n"], contents.lines
+  end
+
+  def test_log_level_setting_can_lower_the_threshold_to_debug
+    contents = with_log do |dir|
+      with_settings { with_env("LOG_LEVEL", "debug") { boot_app! } }
+      Monk::Log.debug("kept")
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_equal ["DEBUG kept\n"], contents.lines
+  end
+
+  def test_invalid_log_level_raises_at_boot
+    with_settings do
+      with_env("LOG_LEVEL", "verbose") do
+        error = assert_raises(Monk::InvalidLogLevelError) { boot_app! }
+
+        assert_match(/verbose/, error.message)
+      end
+    end
+  end
+
   private
+
+  def boot_app!
+    Class.new(Monk::Base) { get("/x") { "hi" } }.freeze!
+  end
 
   def with_monk_env(value)
     original = ENV["MONK_ENV"]
