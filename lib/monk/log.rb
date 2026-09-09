@@ -2,6 +2,7 @@ require "fileutils"
 
 require_relative "freeze_hooks"
 require_relative "environment"
+require_relative "settings"
 
 module Monk
   # One line per request, appended to log/<env>.log -- log/development.log,
@@ -24,6 +25,11 @@ module Monk
   # already relies on for several worker Ractors sharing $stdout.
   module Log
     DEFAULT_ROOT = "log".freeze
+    DEFAULT_LEVEL = "info".freeze
+
+    # Least to most severe -- the same list Settings validates LOG_LEVEL
+    # against, so a level Settings would reject can never reach #enabled?.
+    LEVELS = Settings::LOG_LEVEL_VALUES
 
     class << self
       attr_reader :root
@@ -34,9 +40,14 @@ module Monk
       # freezes the path a worker will later append to -- unfrozen, a
       # worker reading it back would raise Ractor::IsolationError before
       # ever opening a handle.
+      #
+      # Runs after Settings' own freeze_registry! (registered first, in
+      # monk.rb's require order), so Settings[:log_level] is already the
+      # frozen, boot-validated value by the time this reads it.
       def freeze_registry!
         FileUtils.mkdir_p(root)
         @path = File.join(root, "#{Monk.env}.log").freeze
+        @threshold = Settings[:log_level]
       end
 
       # Test-only. Also drops *this* Ractor's memoized handle -- tests
@@ -46,6 +57,7 @@ module Monk
       def reset!
         @root = DEFAULT_ROOT
         @path = nil
+        @threshold = DEFAULT_LEVEL
         if (handle = Ractor.current[:monk_log_handle])
           handle.close
           Ractor.current[:monk_log_handle] = nil
@@ -57,7 +69,29 @@ module Monk
         handle.flush
       end
 
+      # App-level logging, one line per call, gated by :log_level (default
+      # "info" -- see Settings::DEFAULT_DECLARATIONS). Below the configured
+      # threshold, a call is a no-op: cheap enough to leave debug logging
+      # in place rather than stripping it per environment. Unlike #write,
+      # never echoed to $stdout -- that's Base#log_request's own concern,
+      # gated on Monk.env instead.
+      LEVELS.each do |level|
+        define_method(level) do |message|
+          log(level, message)
+        end
+      end
+
       private
+
+      def log(level, message)
+        return unless enabled?(level)
+
+        write("#{level.upcase} #{message}\n")
+      end
+
+      def enabled?(level)
+        LEVELS.index(level) >= LEVELS.index(@threshold)
+      end
 
       def handle
         Ractor.current[:monk_log_handle] ||= File.open(@path, "a")
@@ -65,6 +99,7 @@ module Monk
     end
 
     @root = DEFAULT_ROOT
+    @threshold = DEFAULT_LEVEL
 
     Monk.freeze_hooks << self
   end

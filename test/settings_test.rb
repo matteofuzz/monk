@@ -59,4 +59,12 @@ class SettingsTest < Minitest::Test
       assert_raises(Monk::UnknownSettingError) { Monk::Settings[:monk_test_api_key] }
     end
   end
+
+  def test_log_level_defaults_to_info
+    with_settings { with_env("LOG_LEVEL", nil) { assert_equal "info", Monk::Settings[:log_level] } }
+  end
+
+  def test_log_level_reads_from_env
+    with_settings { with_env("LOG_LEVEL", "debug") { assert_equal "debug", Monk::Settings[:log_level] } }
+  end
 end
