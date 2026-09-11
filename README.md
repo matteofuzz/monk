@@ -310,6 +310,24 @@ Monk::Persistence::Pg.register(:main, host: "127.0.0.1", port: 5432, user: "post
 Do this once at app boot (e.g. in `config.ru`, before `Monk.boot(App)`),
 not inside a route.
 
+**Per-environment database names.** `MONK_ENV` (see "Settings" above) and
+the database name are two separate, unlinked knobs — setting `MONK_ENV=test`
+does not change which database you connect to. The `--postgres` scaffold's
+`config/persistence.rb` reads a single `DB_NAME` env var with a static
+fallback (`app_development`), so naming a database per environment is
+entirely by convention/operator action, not framework magic:
+
+- **Locally**: export `DB_NAME` yourself before running tests, e.g. in a
+  `.env.test` your test runner loads, or inline: `DB_NAME=myapp_test bin/...`.
+- **Deploys** (see `docs/deploying.md`): Render/Fly secrets set `DB_NAME`
+  explicitly per service/environment — there's a real, separate Postgres
+  instance per environment, and its name is whatever you typed into
+  `fly secrets set` / Render's env var UI.
+- **Monk's own test suite** (testing the `monk` gem itself, not a generated
+  app) uses a different variable, `MONK_TEST_PG_DATABASE` (default
+  `monk_test`), read in `test/test_helper.rb`. That's internal to this repo
+  and isn't inherited by apps `monk new` generates.
+
 ### Models
 
 A `Monk::Persistence::Pg::Model` subclass points at a registered `db_name`
