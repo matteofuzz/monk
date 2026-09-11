@@ -7,6 +7,7 @@ class App < Monk::Base
 
   get("/") { @title = "App"; render "index" }
   get("/hello") { "hello from monk" }
+  get("/api/hello") { json(message: "hello from monk") }
 end
 
 run Monk.boot(App)

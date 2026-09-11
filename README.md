@@ -15,7 +15,7 @@ bin/server           # -> http://localhost:9292/hello
 bundle exec rake test
 ```
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, views/, public/) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does.
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, views/, public/) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does.
 
 ## Routing
 
@@ -552,9 +552,11 @@ scaffolded with `--auth`, or you wired it up by hand), and wraps its
 set. `--redis` only adds the `redis` gem to the `Gemfile` — it's fully
 independent, and doesn't imply or get implied by `--postgres`/`--auth`.
 
-The base skeleton is a working HTML page, not a bare JSON route: a layout
-and an index template under `views/`, and a stylesheet and an ES-module
-entry point under `public/` (see "Views" and "Static assets" above).
+The base skeleton's home page is a working HTML page, not a bare JSON
+route: a layout and an index template under `views/`, and a stylesheet and
+an ES-module entry point under `public/` (see "Views" and "Static assets"
+above). Alongside it, `/hello` and `/api/hello` are two one-line routes
+showing the plain-string and `json` response styles side by side.
 
 ### Adding Postgres or Auth to an existing app
 
