@@ -75,10 +75,26 @@ module Monk
       # in place rather than stripping it per environment. Unlike #write,
       # never echoed to $stdout -- that's Base#log_request's own concern,
       # gated on Monk.env instead.
-      LEVELS.each do |level|
-        define_method(level) do |message|
-          log(level, message)
-        end
+      #
+      # Four plain, hand-written methods, not one define_method(&block) per
+      # LEVELS entry -- a method backed by a Proc closure raises "defined
+      # with an un-shareable Proc in a different Ractor" the first time a
+      # worker Ractor other than the one that defined it calls it, same as
+      # Environment (see its comment) ran into for MONK_ENV_VALUES.
+      def debug(message)
+        log("debug", message)
+      end
+
+      def info(message)
+        log("info", message)
+      end
+
+      def warn(message)
+        log("warn", message)
+      end
+
+      def error(message)
+        log("error", message)
       end
 
       private
