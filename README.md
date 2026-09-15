@@ -114,7 +114,7 @@ Each declared key reads from the uppercased env var of the same name, falling ba
 
 `Monk.boot(App)` — the same step that freezes routes — checks every required key is present and freezes the resolved values into a `Ractor.shareable?` snapshot, so a worker Ractor can read `Settings[:key]` without `Ractor::IsolationError`. A missing required key raises `MissingSettingError` at boot rather than on the first request that needs it; `configure` after boot raises `SettingsFrozenError`; reading a key nobody declared raises `UnknownSettingError` either way.
 
-`monk new` scaffolds ship a `config/settings.rb`, required at the top of `config.ru` before the app class body, that loads `dotenv` if the app's `Gemfile` has it uncommented — a missing `.env` file, or the gem not being bundled at all, is a harmless no-op; production deploys get their env vars from the hosting platform, not this file.
+`monk new` scaffolds ship a `config/settings.rb`, required at the top of `config.ru` before the app class body, that loads `dotenv` if the app's `Gemfile` has it uncommented — the base skeleton ships it commented out, but `--postgres` uncomments it automatically, since that's also what writes a real `.env`/`.env.test` for it to load (see "Scaffolding a new project" below). A missing `.env` file, or the gem not being bundled at all, is a harmless no-op either way; production deploys get their env vars from the hosting platform, not this file.
 
 ## Shared state — `Monk::StateRactor`
 
@@ -577,6 +577,11 @@ after the settings require, before `class App` — and writes `.env`,
 files (change it before relying on it); `--redis` adds a placeholder
 `REDIS_URL` to `.env`/`.env.example` only — deliberately not `.env.test`,
 since only a test that actually exercises `RedisFanout` needs it.
+`--postgres` also uncomments `gem "dotenv"` in the `Gemfile` — without it,
+`config/settings.rb`'s `require "dotenv/load"` never runs, so the `.env`
+just written would silently never actually load, and `bin/setup_db` (and
+anything else reading `DB_NAME`/`DB_HOST`/etc.) would fall back to
+`config/persistence.rb`'s own hardcoded defaults instead.
 
 `--auth` always implies `--postgres` — `Monk::Auth` has no path that avoids
 Postgres (see "Auth & sessions" above), so there's no flag combination that

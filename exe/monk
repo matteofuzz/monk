@@ -24,10 +24,13 @@ HELP = <<~TEXT.freeze
       --postgres      Also scaffold Postgres persistence/migrations support:
                        config/persistence.rb, bin/console, bin/setup_db,
                        bin/migrate, db/migrate/. Also wires config.ru to
-                       require it, and writes .env/.env.test/.env.example
+                       require it, writes .env/.env.test/.env.example
                        (DB_NAME defaulting to APP_NAME_development/_test,
                        not the generic app_development fallback baked into
-                       config/persistence.rb itself). SETUP.md's dev/test
+                       config/persistence.rb itself), and uncomments
+                       gem "dotenv" in the Gemfile so .env actually loads
+                       (config/settings.rb's require "dotenv/load" is a
+                       no-op with it left commented). SETUP.md's dev/test
                        steps grow to cover Postgres containers, database
                        creation, and migrations.
       --auth          Also scaffold Monk::Auth (passwordless token auth).

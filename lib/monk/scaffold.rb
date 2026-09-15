@@ -69,6 +69,7 @@ module Monk
         append_gemfile_extra("postgres/Gemfile.extra")
         wire_config_ru!
         write_env_files!
+        uncomment_dotenv!
       end
 
       append_gemfile_extra("redis/Gemfile.extra") if @redis
@@ -86,6 +87,23 @@ module Monk
     def append_gemfile_extra(template_path)
       extra = File.read(File.join(TEMPLATES_DIR, template_path))
       File.write(File.join(@dir, "Gemfile"), "\n#{extra}", mode: "a")
+    end
+
+    # --postgres writes a real .env/.env.test (see write_env_files!) -- if
+    # the dotenv gem stays commented out, as it does in the base skeleton,
+    # config/settings.rb's `require "dotenv/load"` never runs, so nothing
+    # ever actually loads them: bin/setup_db and friends silently fall
+    # back to config/persistence.rb's own ENV.fetch defaults instead of
+    # the app-specific values .env was written to provide.
+    DOTENV_COMMENTED_LINE = %(# gem "dotenv" # uncomment to load a local .env file (config/settings.rb)\n).freeze
+    DOTENV_LINE = %(gem "dotenv" # loads .env/.env.test -- see config/settings.rb\n).freeze
+
+    def uncomment_dotenv!
+      path = File.join(@dir, "Gemfile")
+      content = File.read(path)
+      raise "Gemfile wiring failed: #{DOTENV_COMMENTED_LINE.inspect} not found" unless content.include?(DOTENV_COMMENTED_LINE)
+
+      File.write(path, content.sub(DOTENV_COMMENTED_LINE, DOTENV_LINE))
     end
 
     # config.ru ships in BASE_FILES unconditionally (it has to -- it's the

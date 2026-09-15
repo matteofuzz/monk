@@ -291,16 +291,38 @@ class ScaffoldTest < Minitest::Test
 
   def test_write_bang_with_postgres_adds_pg_and_irb_on_top_of_the_base_gemfile
     Dir.mktmpdir do |tmp|
-      base_dest = File.join(tmp, "base_app")
-      postgres_dest = File.join(tmp, "postgres_app")
-      Monk::Scaffold.new(base_dest).write!
-      Monk::Scaffold.new(postgres_dest, postgres: true).write!
+      dest = File.join(tmp, "postgres_app")
+      Monk::Scaffold.new(dest, postgres: true).write!
 
-      base_gemfile = read(base_dest, "Gemfile")
-      postgres_gemfile = read(postgres_dest, "Gemfile")
+      gemfile = read(dest, "Gemfile")
+      assert_includes gemfile, template("postgres/Gemfile.extra")
+    end
+  end
 
-      assert postgres_gemfile.start_with?(base_gemfile)
-      assert_equal "\n" + template("postgres/Gemfile.extra"), postgres_gemfile.delete_prefix(base_gemfile)
+  # --postgres writes a real .env/.env.test (see write_env_files!) -- if
+  # dotenv stayed commented out, as it does in the base skeleton,
+  # config/settings.rb's `require "dotenv/load"` would never run, and
+  # bin/setup_db would silently fall back to config/persistence.rb's own
+  # ENV.fetch defaults instead of the app-specific values .env provides.
+  def test_write_bang_with_postgres_uncomments_dotenv_in_the_gemfile
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      gemfile = read(dest, "Gemfile")
+      assert_match(/^gem "dotenv"/, gemfile)
+      refute_match(/^# gem "dotenv"/, gemfile)
+    end
+  end
+
+  def test_write_bang_without_postgres_leaves_dotenv_commented_out
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      assert_equal template("base/Gemfile"), read(dest, "Gemfile")
     end
   end
 
