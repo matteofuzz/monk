@@ -136,6 +136,128 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
+  # config.ru ships unconditionally (base skeleton), so --postgres can only
+  # edit what's already there, not add/remove the file itself -- this is
+  # what actually makes a scaffolded app boot with persistence registered,
+  # instead of silently never loading config/persistence.rb at all.
+  def test_write_bang_with_postgres_wires_config_ru_to_require_persistence
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      config_ru = read(dest, "config.ru")
+      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/persistence"\n)
+      assert_includes config_ru, "class App < Monk::Base"
+    end
+  end
+
+  # auth: true implies postgres: true, and config/auth.rb itself
+  # require_relative "persistence" -- so config.ru only needs to reach
+  # config/auth to pull in both.
+  def test_write_bang_with_auth_wires_config_ru_to_require_auth_instead_of_persistence
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      config_ru = read(dest, "config.ru")
+      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/auth"\n)
+      refute_includes config_ru, %(require_relative "config/persistence")
+    end
+  end
+
+  def test_write_bang_without_postgres_leaves_config_ru_untouched
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      assert_equal template("base/config.ru"), read(dest, "config.ru")
+    end
+  end
+
+  # .env/.env.test carry this project's own database name -- the one thing
+  # in the whole scaffold that's genuinely per-app, unlike every other
+  # template file (see the Scaffold class comment).
+  def test_write_bang_with_postgres_writes_env_files_with_a_db_name_derived_from_the_directory
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      assert_includes read(dest, ".env"), "DB_NAME=demo_app_development"
+      assert_includes read(dest, ".env.test"), "DB_NAME=demo_app_test"
+      assert_includes read(dest, ".env.example"), "DB_NAME=demo_app_development"
+      refute_includes read(dest, ".env"), "AUTH_SECRET"
+      refute_includes read(dest, ".env"), "REDIS_URL"
+    end
+  end
+
+  def test_write_bang_with_auth_adds_auth_secret_to_env_files_but_not_env_test_redis
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_includes read(dest, ".env"), "AUTH_SECRET="
+      assert_includes read(dest, ".env.test"), "AUTH_SECRET="
+      assert_includes read(dest, ".env.example"), "AUTH_SECRET="
+    end
+  end
+
+  # REDIS_URL only matters to a test that actually exercises RedisFanout --
+  # deliberately left out of .env.test, unlike DB_NAME/AUTH_SECRET which
+  # every persistence/auth test needs.
+  def test_write_bang_with_redis_adds_redis_url_to_env_but_not_env_test
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true, redis: true).write!
+
+      assert_includes read(dest, ".env"), "REDIS_URL="
+      assert_includes read(dest, ".env.example"), "REDIS_URL="
+      refute_includes read(dest, ".env.test"), "REDIS_URL"
+    end
+  end
+
+  def test_write_bang_without_postgres_writes_no_env_files
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      refute File.exist?(File.join(dest, ".env"))
+      refute File.exist?(File.join(dest, ".env.test"))
+      refute File.exist?(File.join(dest, ".env.example"))
+    end
+  end
+
+  def test_write_bang_with_postgres_writes_a_setup_md_naming_the_app_and_its_flags
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true, redis: true).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "# Setting up demo_app"
+      assert_includes setup_md, "bundle exec rake test" # the Minitest instructions the SETUP.md walks through
+      assert_includes setup_md, "authenticate: true, redis fan-out: on"
+      assert_includes setup_md, "demo_app_development"
+      assert_includes setup_md, "demo_app_test"
+    end
+  end
+
+  def test_write_bang_without_postgres_writes_no_setup_md
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      refute File.exist?(File.join(dest, "SETUP.md"))
+    end
+  end
+
   def test_write_bang_with_postgres_writes_the_generated_scripts_executable
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
