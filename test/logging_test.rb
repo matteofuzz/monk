@@ -119,6 +119,18 @@ class LoggingTest < Minitest::Test
     end
   end
 
+  def test_level_methods_are_callable_from_a_real_worker_ractor
+    contents = with_log do |dir|
+      boot_app!
+
+      Ractor.new { Monk::Log.info("kept") }.value
+
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_equal ["INFO kept\n"], contents.lines
+  end
+
   private
 
   def boot_app!

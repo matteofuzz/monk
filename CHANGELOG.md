@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.11.3 - 2026-09-15
+
+### Fixed
+
+- **`Monk::Log.info`/`debug`/`warn`/`error` raised `Ractor::IsolationError`
+  from a worker Ractor** (`lib/monk/log.rb`): the level methods were
+  defined via `define_method(&block)`, and a method backed by a Proc
+  closure can't be called from a Ractor other than the one that defined
+  it — `Environment`'s own comment already warns against exactly this
+  pattern (found there first, for `MONK_ENV_VALUES`), but `Log`'s level
+  methods didn't follow it. Kino runs each request in a worker Ractor, so
+  every call from request-handling code hit this. Replaced with four
+  plain `def` methods, same fix as `Environment`. Fixing that surfaced a
+  second bug behind it: `Settings::LOG_LEVEL_VALUES` (aliased as
+  `Log::LEVELS`, read on every `#enabled?` call) was only shallow-frozen
+  via `Array#freeze`, which doesn't freeze the strings inside and so
+  isn't Ractor-shareable either — switched to `Ractor.make_shareable`.
+  Found via `monk_talk`'s real usage, not by inspection.
+
 ## 0.11.2 - 2026-09-15
 
 ### Fixed

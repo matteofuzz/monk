@@ -15,8 +15,13 @@ module Monk
 
     # Monk::Log's fixed set of allowed levels, ordered least to most severe.
     # Like :monk_env, :log_level is implicitly declared below and validated
-    # against this set at Boot rather than before.
-    LOG_LEVEL_VALUES = %w[debug info warn error].freeze
+    # against this set at Boot rather than before. Log::LEVELS aliases this
+    # constant and reads it from worker Ractors on every #enabled? call, so
+    # unlike MONK_ENV_VALUES this needs Ractor.make_shareable, not just
+    # #freeze -- an Array#freeze only freezes the array itself, not the
+    # strings inside, and a worker reading a non-shareable constant raises
+    # Ractor::IsolationError.
+    LOG_LEVEL_VALUES = Ractor.make_shareable(%w[debug info warn error])
 
     DEFAULT_DECLARATIONS = {
       monk_env: { required: false, default: "development" },
