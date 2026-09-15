@@ -10,25 +10,46 @@ HELP = <<~TEXT.freeze
   to run if APP_NAME already exists.
 
   Base skeleton: Gemfile, config.ru, .ruby-version, bin/server,
-  bin/websocket_server -- WebSocket support needs no external service, so
-  unlike Postgres/Redis below it isn't gated behind a flag: bin/websocket_server
-  auto-authenticates if --auth's config/auth.rb is present, and fans out
-  across processes over Redis if --redis's REDIS_URL is set, adapting at
-  boot either way.
+  bin/websocket_server, SETUP.md -- WebSocket support needs no external
+  service, so unlike Postgres/Redis below it isn't gated behind a flag:
+  bin/websocket_server auto-authenticates if --auth's config/auth.rb is
+  present, and fans out across processes over Redis if --redis's
+  REDIS_URL is set, adapting at boot either way. SETUP.md is generated
+  for every flag combination, walking through dev-then-test setup for
+  this exact project -- including, since monk new scaffolds no test
+  framework itself, the minimum Minitest wiring to get a working
+  `bundle exec rake test`.
 
   Options:
       --postgres      Also scaffold Postgres persistence/migrations support:
                        config/persistence.rb, bin/console, bin/setup_db,
-                       bin/migrate, db/migrate/
+                       bin/migrate, db/migrate/. Also wires config.ru to
+                       require it, writes .env/.env.test/.env.example
+                       (DB_NAME defaulting to APP_NAME_development/_test,
+                       not the generic app_development fallback baked into
+                       config/persistence.rb itself), and uncomments
+                       gem "dotenv" in the Gemfile so .env actually loads
+                       (config/settings.rb's require "dotenv/load" is a
+                       no-op with it left commented). SETUP.md's dev/test
+                       steps grow to cover Postgres containers, database
+                       creation, and migrations.
       --auth          Also scaffold Monk::Auth (passwordless token auth).
                        Implies --postgres -- Auth is Postgres-only, so this
                        always brings the persistence scaffold with it. Adds
                        config/auth.rb and a migration creating the
-                       login_tokens/sessions tables it needs.
+                       login_tokens/sessions tables it needs. config.ru
+                       requires config/auth instead of config/persistence
+                       (config/auth.rb itself requires persistence), and
+                       .env/.env.test/.env.example get an AUTH_SECRET line.
       --redis         Add the redis gem to the Gemfile, for
                        bin/websocket_server's cross-process fan-out. Fully
                        independent -- doesn't imply, and isn't implied by,
-                       --postgres or --auth.
+                       --postgres or --auth. Writes/extends .env and
+                       .env.example with a REDIS_URL line (deliberately
+                       never .env.test -- only a test that exercises
+                       RedisFanout needs it) and uncomments gem "dotenv"
+                       if it isn't already (same reasoning as --postgres
+                       above), same whether or not --postgres is also set.
 
   Commands:
       new APP_NAME    Create a new project (see Options above)
@@ -38,19 +59,21 @@ HELP = <<~TEXT.freeze
       cd APP_NAME
       bundle install
 
-  With --postgres (or --auth, which implies it), a reachable Postgres is
-  expected (env vars documented in the generated config/persistence.rb),
-  then:
+  See the generated SETUP.md for a full dev-then-test walkthrough, tailored
+  to whichever flags were passed. With --postgres (or --auth, which implies
+  it), short version, once a reachable Postgres exists (.env/.env.test have
+  the connection details):
       bin/setup_db    Apply pending migrations
       bin/migrate     migrate | rollback [N] | status
       bin/console     IRB with persistence loaded
 
-  With --auth, also set AUTH_SECRET (e.g. in .env) before booting the app --
-  config/auth.rb reads it via ENV.fetch and raises if it's missing.
+  With --auth, .env/.env.test ship a placeholder AUTH_SECRET -- change it
+  before relying on it; config/auth.rb reads it via ENV.fetch and raises
+  if it's missing entirely.
 
-  With --redis, set REDIS_URL (e.g. in .env) before starting
-  bin/websocket_server to turn cross-process fan-out on; unset, it runs
-  in-process only, same as without --redis.
+  With --redis, .env ships a placeholder REDIS_URL to turn
+  bin/websocket_server's cross-process fan-out on; unset (as in .env.test),
+  it runs in-process only, same as without --redis.
 TEXT
 
 def usage_error!
@@ -74,7 +97,8 @@ when "new"
   puts "Created #{app_name}. Next steps:"
   puts "  cd #{app_name}"
   puts "  bundle install"
-  puts "  export AUTH_SECRET=... (or add it to .env) -- config/auth.rb requires it" if auth
+  puts "  see SETUP.md for the full dev-then-test walkthrough"
+  puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
 else
   usage_error!
 end

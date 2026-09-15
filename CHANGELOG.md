@@ -4,6 +4,88 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.11.2 - 2026-09-15
+
+### Fixed
+
+- **`monk new --postgres`'s generated `.env` was silently never loaded**
+  (`lib/monk/scaffold.rb`): `.env`/`.env.test` have shipped with real
+  values since 0.11.0, but `dotenv` stayed commented out in the `Gemfile`,
+  so `config/settings.rb`'s `require "dotenv/load"` never actually ran —
+  `bin/setup_db` and friends fell straight back to
+  `config/persistence.rb`'s own `ENV.fetch` defaults instead of the
+  app-specific values `.env` was written to provide. `--postgres` now
+  uncomments `gem "dotenv"` in the `Gemfile` too. Found the same way as
+  0.11.0/0.11.1 — generating a real app and following its own `SETUP.md`,
+  not by inspection.
+- **`--redis` alone (no `--postgres`) had none of the above** — no `.env`
+  at all, so `REDIS_URL` had to be exported by hand for
+  `bin/websocket_server`'s fan-out to turn on. `write_env_files!` and the
+  `dotenv` fix above now both run whenever `@postgres || @redis`, not just
+  `@postgres`; `write_env_files!` only adds the Postgres lines when
+  `@postgres` is actually set, and skips writing `.env.test` entirely when
+  it would end up empty (true for `--redis` alone, since `REDIS_URL` is
+  deliberately never written there anyway — only a test that actually
+  exercises `RedisFanout` needs it). `SETUP.md`'s base-skeleton content
+  (also covers `--redis`-only apps) now describes the real `.env`/`dotenv`/
+  Redis-container setup instead of telling you to export `REDIS_URL`
+  inline. Verified end-to-end: a fresh `--redis`-only app's
+  `bin/websocket_server` printed `redis fan-out: on` against a real Redis
+  with zero manual exports, purely from the generated `.env` + `dotenv`.
+
+## 0.11.1 - 2026-09-15
+
+### Fixed
+
+- **`monk new` now generates `SETUP.md` for every flag combination, not
+  just `--postgres`** (`lib/monk/scaffold.rb`, `exe/monk`): 0.11.0's
+  `SETUP.md` generation was gated behind `@postgres`, so the base skeleton
+  and `--redis`-only apps got no setup instructions at all, despite both
+  still having a real first dev step (`bin/server`) and an unscaffolded
+  test framework to wire up. `setup_md_content` now branches on
+  `@postgres` between the existing Postgres-oriented walkthrough and a new
+  lightweight one for base/`--redis`-only apps — no database/container/
+  migration steps, and a Minitest smoke test against `Monk::Settings`
+  instead of `Persistence::Pg`, since `config.ru`'s `class App` lives
+  inline in a rackup file with nothing else standalone-requirable to test
+  yet.
+- **README Quick Start's `bundle exec rake test` line**: a plain
+  `monk new my_app` (no flags) has never scaffolded a `Rakefile` or
+  `test/` directory, so that command has been broken since it was first
+  written (#36) — unrelated to the `SETUP.md` fix above, but caught and
+  fixed alongside it.
+
+## 0.11.0 - 2026-09-15
+
+### Added
+
+- **`monk new --postgres` now wires the generated app together instead of
+  just dropping files next to each other** (`lib/monk/scaffold.rb`,
+  `exe/monk`): previously `config.ru` never required `config/persistence.rb`
+  or `config/auth.rb` at all, so a freshly scaffolded HTTP process never
+  actually registered a database connection unless you edited `config.ru`
+  by hand.
+  - `config.ru` now gets `require_relative "config/persistence"` (or
+    `"config/auth"` under `--auth` — `config/auth.rb` itself
+    `require_relative`s `persistence`) appended right after the settings
+    require, before `class App`.
+  - `.env`, `.env.test`, and a tracked `.env.example` are generated with
+    `DB_NAME` derived from the target directory name
+    (`APP_NAME_development`/`APP_NAME_test`), instead of relying on the
+    generic `app_development` fallback baked into `config/persistence.rb`'s
+    own `ENV.fetch` — every scaffolded app used to default to that same
+    literal name, risking collisions between separate local apps sharing
+    one Postgres instance. `--auth` adds a placeholder `AUTH_SECRET` to all
+    three files; `--redis` adds a placeholder `REDIS_URL` to `.env`/
+    `.env.example` only, deliberately not `.env.test` — only a test that
+    actually exercises `RedisFanout` needs it.
+  - A generated `SETUP.md`, tailored to the exact flags passed, walks
+    through dev setup (reusing or starting Postgres/Redis containers,
+    creating the database, running migrations, booting `bin/server`/
+    `bin/websocket_server`) and then test setup, including the minimum
+    Minitest wiring (`test/test_helper.rb`, a `Rakefile`, one real smoke
+    test) since `monk new` still scaffolds no test framework itself.
+
 ## 0.10.0 - 2026-09-09
 
 ### Added

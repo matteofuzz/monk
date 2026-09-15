@@ -12,10 +12,9 @@ Requires **Ruby 4.0+**.
 monk new my_app && cd my_app
 bundle install
 bin/server           # -> http://localhost:9292/hello
-bundle exec rake test
 ```
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, views/, public/) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does.
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, views/, public/, a `SETUP.md`) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does. `SETUP.md` walks through dev-then-test setup for that project's exact flag combination, including — since `monk new` scaffolds no test framework itself — the minimum Minitest wiring to get a working `bundle exec rake test`.
 
 ## Routing
 
@@ -115,7 +114,7 @@ Each declared key reads from the uppercased env var of the same name, falling ba
 
 `Monk.boot(App)` — the same step that freezes routes — checks every required key is present and freezes the resolved values into a `Ractor.shareable?` snapshot, so a worker Ractor can read `Settings[:key]` without `Ractor::IsolationError`. A missing required key raises `MissingSettingError` at boot rather than on the first request that needs it; `configure` after boot raises `SettingsFrozenError`; reading a key nobody declared raises `UnknownSettingError` either way.
 
-`monk new` scaffolds ship a `config/settings.rb`, required at the top of `config.ru` before the app class body, that loads `dotenv` if the app's `Gemfile` has it uncommented — a missing `.env` file, or the gem not being bundled at all, is a harmless no-op; production deploys get their env vars from the hosting platform, not this file.
+`monk new` scaffolds ship a `config/settings.rb`, required at the top of `config.ru` before the app class body, that loads `dotenv` if the app's `Gemfile` has it uncommented — the base skeleton ships it commented out, but `--postgres` uncomments it automatically, since that's also what writes a real `.env`/`.env.test` for it to load (see "Scaffolding a new project" below). A missing `.env` file, or the gem not being bundled at all, is a harmless no-op either way; production deploys get their env vars from the hosting platform, not this file.
 
 ## Shared state — `Monk::StateRactor`
 
@@ -539,12 +538,15 @@ needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
 
 ```
 monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server,
-                              #   bin/websocket_server, views/, public/
-monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/
+                              #   bin/websocket_server, views/, public/, SETUP.md
+monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/,
+                              #   config.ru wired to require it, .env/.env.test/.env.example
 monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a migration for
-                              #   login_tokens/sessions (needs AUTH_SECRET set before boot)
+                              #   login_tokens/sessions (config.ru requires config/auth instead of
+                              #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET)
 monk new my_app --redis      # + the redis gem, for bin/websocket_server's cross-process
-                              #   fan-out (needs REDIS_URL set to actually turn it on)
+                              #   fan-out; writes/extends .env/.env.example with a placeholder
+                              #   REDIS_URL either way, whether or not --postgres is also set
 ```
 
 Writes a fresh project directory from static templates (never overwrites
@@ -553,6 +555,40 @@ prints the next manual step (`bundle install`); it never runs `bundle
 install`, `git init`, or anything else on your behalf. `--postgres` adds
 exactly the persistence/migrations wiring documented above, ready for you
 to add your own `db/migrate/*.sql` files and `Model` subclasses.
+
+Every flag combination — including the plain base skeleton — gets a
+`SETUP.md`, tailored to exactly what was scaffolded: dev setup (nothing
+external for the base skeleton; a reachable Redis under `--redis`;
+starting/reusing Postgres/Redis containers, creating the database,
+running migrations under `--postgres`) and then test setup, including the
+minimum Minitest wiring (`test/test_helper.rb`, a `Rakefile`, one real
+smoke test — hitting `Monk::Settings` for the base/`--redis`-only
+skeleton, since `config.ru`'s `class App` lives inline in a rackup file
+with nothing else standalone-requirable to test yet; a real Postgres
+connection under `--postgres`) since `monk new` doesn't scaffold a test
+framework itself.
+
+`--postgres` also wires `config.ru` itself — appending
+`require_relative "config/persistence"` (or `"config/auth"`, when `--auth`
+is set — `config/auth.rb` itself `require_relative`s `persistence`) right
+after the settings require, before `class App`.
+
+`--postgres` and/or `--redis` write `.env` and a tracked `.env.example`
+(`.env.test` too, but only under `--postgres` — `--redis` alone has
+nothing worth putting there, see below), with `DB_NAME` defaulting to
+`APP_NAME_development`/`APP_NAME_test` rather than the generic
+`app_development` fallback baked into `config/persistence.rb`'s own
+`ENV.fetch`. `--auth` adds a placeholder `AUTH_SECRET` to all three env
+files (change it before relying on it); `--redis` adds a placeholder
+`REDIS_URL` to `.env`/`.env.example` only — deliberately not `.env.test`,
+since only a test that actually exercises `RedisFanout` needs it — the
+same whether or not `--postgres` is also set. Either flag also uncomments
+`gem "dotenv"` in the `Gemfile` — without it, `config/settings.rb`'s
+`require "dotenv/load"` never runs, so the `.env` just written would
+silently never actually load: `bin/setup_db` would fall back to
+`config/persistence.rb`'s own hardcoded `DB_*` defaults, and
+`bin/websocket_server` would see no `REDIS_URL` at all and run
+in-process only, exactly as if `--redis` had never been passed.
 
 `--auth` always implies `--postgres` — `Monk::Auth` has no path that avoids
 Postgres (see "Auth & sessions" above), so there's no flag combination that
@@ -567,8 +603,9 @@ reason to gate it behind a flag. The generated script adapts at boot: it
 authenticates connections if `config/auth.rb` is present (i.e. the app was
 scaffolded with `--auth`, or you wired it up by hand), and wraps its
 `Registry` in a `Monk::WebSocket::RedisFanout` instead if `REDIS_URL` is
-set. `--redis` only adds the `redis` gem to the `Gemfile` — it's fully
-independent, and doesn't imply or get implied by `--postgres`/`--auth`.
+set — which `--redis` provides via a placeholder in the generated `.env`
+(see "Scaffolding a new project" below). `--redis` is fully independent,
+and doesn't imply or get implied by `--postgres`/`--auth`.
 
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and

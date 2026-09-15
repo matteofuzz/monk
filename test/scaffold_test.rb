@@ -136,6 +136,157 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
+  # config.ru ships unconditionally (base skeleton), so --postgres can only
+  # edit what's already there, not add/remove the file itself -- this is
+  # what actually makes a scaffolded app boot with persistence registered,
+  # instead of silently never loading config/persistence.rb at all.
+  def test_write_bang_with_postgres_wires_config_ru_to_require_persistence
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      config_ru = read(dest, "config.ru")
+      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/persistence"\n)
+      assert_includes config_ru, "class App < Monk::Base"
+    end
+  end
+
+  # auth: true implies postgres: true, and config/auth.rb itself
+  # require_relative "persistence" -- so config.ru only needs to reach
+  # config/auth to pull in both.
+  def test_write_bang_with_auth_wires_config_ru_to_require_auth_instead_of_persistence
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      config_ru = read(dest, "config.ru")
+      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/auth"\n)
+      refute_includes config_ru, %(require_relative "config/persistence")
+    end
+  end
+
+  def test_write_bang_without_postgres_leaves_config_ru_untouched
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      assert_equal template("base/config.ru"), read(dest, "config.ru")
+    end
+  end
+
+  # .env/.env.test carry this project's own database name -- the one thing
+  # in the whole scaffold that's genuinely per-app, unlike every other
+  # template file (see the Scaffold class comment).
+  def test_write_bang_with_postgres_writes_env_files_with_a_db_name_derived_from_the_directory
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      assert_includes read(dest, ".env"), "DB_NAME=demo_app_development"
+      assert_includes read(dest, ".env.test"), "DB_NAME=demo_app_test"
+      assert_includes read(dest, ".env.example"), "DB_NAME=demo_app_development"
+      refute_includes read(dest, ".env"), "AUTH_SECRET"
+      refute_includes read(dest, ".env"), "REDIS_URL"
+    end
+  end
+
+  def test_write_bang_with_auth_adds_auth_secret_to_env_files_but_not_env_test_redis
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_includes read(dest, ".env"), "AUTH_SECRET="
+      assert_includes read(dest, ".env.test"), "AUTH_SECRET="
+      assert_includes read(dest, ".env.example"), "AUTH_SECRET="
+    end
+  end
+
+  # REDIS_URL only matters to a test that actually exercises RedisFanout --
+  # deliberately left out of .env.test, unlike DB_NAME/AUTH_SECRET which
+  # every persistence/auth test needs.
+  def test_write_bang_with_redis_adds_redis_url_to_env_but_not_env_test
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true, redis: true).write!
+
+      assert_includes read(dest, ".env"), "REDIS_URL="
+      assert_includes read(dest, ".env.example"), "REDIS_URL="
+      refute_includes read(dest, ".env.test"), "REDIS_URL"
+    end
+  end
+
+  def test_write_bang_with_neither_postgres_nor_redis_writes_no_env_files
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      refute File.exist?(File.join(dest, ".env"))
+      refute File.exist?(File.join(dest, ".env.test"))
+      refute File.exist?(File.join(dest, ".env.example"))
+    end
+  end
+
+  def test_write_bang_with_postgres_writes_a_setup_md_naming_the_app_and_its_flags
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true, redis: true).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "# Setting up demo_app"
+      assert_includes setup_md, "bundle exec rake test" # the Minitest instructions the SETUP.md walks through
+      assert_includes setup_md, "authenticate: true, redis fan-out: on"
+      assert_includes setup_md, "demo_app_development"
+      assert_includes setup_md, "demo_app_test"
+    end
+  end
+
+  # Every flag combination gets a SETUP.md, not just --postgres -- even the
+  # base skeleton has a dev step (bin/server) and an unscaffolded test
+  # framework to set up.
+  def test_write_bang_without_postgres_still_writes_a_setup_md
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "# Setting up demo_app"
+      assert_includes setup_md, "bundle exec rake test"
+      refute_includes setup_md, "createdb" # nothing Postgres-specific without --postgres
+    end
+  end
+
+  # --redis alone (no --postgres) still gets a real .env with REDIS_URL,
+  # and dotenv uncommented to actually load it -- otherwise
+  # bin/websocket_server's REDIS_URL check silently never sees it, same
+  # class of bug --postgres's own .env had before dotenv was wired up.
+  def test_write_bang_with_redis_only_writes_env_files_and_uncomments_dotenv
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, redis: true).write!
+
+      assert_includes read(dest, ".env"), "REDIS_URL="
+      assert_includes read(dest, ".env.example"), "REDIS_URL="
+      refute File.exist?(File.join(dest, ".env.test")) # nothing to put in it without --postgres
+      refute_includes read(dest, ".env"), "DB_"
+
+      gemfile = read(dest, "Gemfile")
+      assert_match(/^gem "dotenv"/, gemfile)
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "REDIS_URL"
+    end
+  end
+
   def test_write_bang_with_postgres_writes_the_generated_scripts_executable
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -151,16 +302,38 @@ class ScaffoldTest < Minitest::Test
 
   def test_write_bang_with_postgres_adds_pg_and_irb_on_top_of_the_base_gemfile
     Dir.mktmpdir do |tmp|
-      base_dest = File.join(tmp, "base_app")
-      postgres_dest = File.join(tmp, "postgres_app")
-      Monk::Scaffold.new(base_dest).write!
-      Monk::Scaffold.new(postgres_dest, postgres: true).write!
+      dest = File.join(tmp, "postgres_app")
+      Monk::Scaffold.new(dest, postgres: true).write!
 
-      base_gemfile = read(base_dest, "Gemfile")
-      postgres_gemfile = read(postgres_dest, "Gemfile")
+      gemfile = read(dest, "Gemfile")
+      assert_includes gemfile, template("postgres/Gemfile.extra")
+    end
+  end
 
-      assert postgres_gemfile.start_with?(base_gemfile)
-      assert_equal "\n" + template("postgres/Gemfile.extra"), postgres_gemfile.delete_prefix(base_gemfile)
+  # --postgres writes a real .env/.env.test (see write_env_files!) -- if
+  # dotenv stayed commented out, as it does in the base skeleton,
+  # config/settings.rb's `require "dotenv/load"` would never run, and
+  # bin/setup_db would silently fall back to config/persistence.rb's own
+  # ENV.fetch defaults instead of the app-specific values .env provides.
+  def test_write_bang_with_postgres_uncomments_dotenv_in_the_gemfile
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      gemfile = read(dest, "Gemfile")
+      assert_match(/^gem "dotenv"/, gemfile)
+      refute_match(/^# gem "dotenv"/, gemfile)
+    end
+  end
+
+  def test_write_bang_without_postgres_leaves_dotenv_commented_out
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      assert_equal template("base/Gemfile"), read(dest, "Gemfile")
     end
   end
 
@@ -186,22 +359,15 @@ class ScaffoldTest < Minitest::Test
   end
 
   # redis: true is fully independent -- doesn't imply, and isn't implied
-  # by, postgres or auth. Its entire scaffold contribution is one Gemfile
-  # line; there's no config/redis.rb, since there's nothing to register a
-  # name against (REGISTRY is a plain module constant in
-  # bin/websocket_server, and it reads REDIS_URL directly).
-  def test_write_bang_with_redis_adds_only_the_redis_gem
+  # by, postgres or auth. There's no config/redis.rb, since there's
+  # nothing to register a name against (REGISTRY is a plain module
+  # constant in bin/websocket_server, and it reads REDIS_URL directly).
+  def test_write_bang_with_redis_adds_the_redis_gem_and_no_persistence_files
     Dir.mktmpdir do |tmp|
-      base_dest = File.join(tmp, "base_app")
       redis_dest = File.join(tmp, "redis_app")
-      Monk::Scaffold.new(base_dest).write!
       Monk::Scaffold.new(redis_dest, redis: true).write!
 
-      base_gemfile = read(base_dest, "Gemfile")
-      redis_gemfile = read(redis_dest, "Gemfile")
-
-      assert redis_gemfile.start_with?(base_gemfile)
-      assert_equal "\n" + template("redis/Gemfile.extra"), redis_gemfile.delete_prefix(base_gemfile)
+      assert_includes read(redis_dest, "Gemfile"), template("redis/Gemfile.extra")
       refute File.exist?(File.join(redis_dest, "config/persistence.rb"))
       refute File.exist?(File.join(redis_dest, "config/auth.rb"))
     end
