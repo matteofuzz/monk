@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.11.1 - 2026-09-15
+
+### Fixed
+
+- **`monk new` now generates `SETUP.md` for every flag combination, not
+  just `--postgres`** (`lib/monk/scaffold.rb`, `exe/monk`): 0.11.0's
+  `SETUP.md` generation was gated behind `@postgres`, so the base skeleton
+  and `--redis`-only apps got no setup instructions at all, despite both
+  still having a real first dev step (`bin/server`) and an unscaffolded
+  test framework to wire up. `setup_md_content` now branches on
+  `@postgres` between the existing Postgres-oriented walkthrough and a new
+  lightweight one for base/`--redis`-only apps — no database/container/
+  migration steps, and a Minitest smoke test against `Monk::Settings`
+  instead of `Persistence::Pg`, since `config.ru`'s `class App` lives
+  inline in a rackup file with nothing else standalone-requirable to test
+  yet.
+- **README Quick Start's `bundle exec rake test` line**: a plain
+  `monk new my_app` (no flags) has never scaffolded a `Rakefile` or
+  `test/` directory, so that command has been broken since it was first
+  written (#36) — unrelated to the `SETUP.md` fix above, but caught and
+  fixed alongside it.
+
 ## 0.11.0 - 2026-09-15
 
 ### Added
