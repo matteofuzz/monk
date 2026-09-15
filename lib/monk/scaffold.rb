@@ -69,14 +69,16 @@ module Monk
         append_gemfile_extra("postgres/Gemfile.extra")
         wire_config_ru!
         write_env_files!
-        write_setup_md!
       end
 
       append_gemfile_extra("redis/Gemfile.extra") if @redis
 
-      return unless @auth
+      AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
 
-      AUTH_FILES.each { |relative, template| write_file(relative, template) }
+      # Every combination of flags gets a SETUP.md, not just --postgres --
+      # even the base skeleton has a dev step (bin/server) and an
+      # unscaffolded test framework to set up.
+      write_setup_md!
     end
 
     private
@@ -155,6 +157,105 @@ module Monk
     end
 
     def setup_md_content
+      @postgres ? postgres_setup_md_content : base_setup_md_content
+    end
+
+    # No Postgres, so no database/containers/migrations -- but still a
+    # real dev-then-test walkthrough: bin/server needs nothing external,
+    # and "no test framework scaffolded" is just as true here as it is
+    # with --postgres.
+    def base_setup_md_content
+      app_name = File.basename(@dir)
+
+      <<~MARKDOWN
+        # Setting up #{app_name} (dev, then test)
+
+        No database is scaffolded here (`monk new #{app_name}`, no
+        `--postgres`/`--auth`) -- `bin/server`/`bin/websocket_server` need
+        nothing external to run.
+
+        ## Dev environment, first run
+
+        ```bash
+        bundle install
+        bin/server              # HTTP app on :9292 -> http://localhost:9292/hello
+        bin/websocket_server    # WS chat process on :9293, in another terminal
+        ```
+        #{redis_only_note}
+        ## Test environment
+
+        `monk new` scaffolds no test framework at all -- this is the minimum to
+        get `bundle exec rake test` working, using Minitest (matches `monk`'s
+        own suite):
+
+        **Gemfile** -- add:
+
+        ```ruby
+        group :test do
+          gem "minitest"
+          gem "rake"
+        end
+        ```
+
+        **test/test_helper.rb**:
+
+        ```ruby
+        $LOAD_PATH.unshift(File.expand_path("..", __dir__))
+
+        ENV["MONK_ENV"] ||= "test"
+
+        require "minitest/autorun"
+        require_relative "../config/settings"
+        ```
+
+        **Rakefile**:
+
+        ```ruby
+        require "rake/testtask"
+
+        Rake::TestTask.new do |t|
+          t.libs << "test"
+          t.pattern = "test/**/*_test.rb"
+        end
+
+        task default: :test
+        ```
+
+        **test/settings_test.rb** -- `config.ru`'s `class App` lives inline in a
+        rackup file, not a plain `.rb` a test could `require_relative`, so this
+        starts with what's actually requirable standalone. Extract `App` into
+        its own file (`require_relative`d from both `config.ru` and
+        `test/test_helper.rb`) once there's real app behavior worth testing
+        against requests:
+
+        ```ruby
+        require_relative "test_helper"
+
+        class SettingsTest < Minitest::Test
+          def test_monk_env_reads_as_test
+            assert_equal "test", Monk::Settings[:monk_env]
+          end
+        end
+        ```
+
+        Then:
+
+        ```bash
+        bundle install
+        bundle exec rake test
+        ```
+      MARKDOWN
+    end
+
+    def redis_only_note
+      return "" unless @redis
+
+      "\n`REDIS_URL` (e.g. `REDIS_URL=redis://localhost:6379/0 bin/websocket_server`) turns " \
+        "on `bin/websocket_server`'s cross-process fan-out -- unset, it runs in-process only. " \
+        "No `.env` is scaffolded without `--postgres`, so export it inline or add one yourself.\n"
+    end
+
+    def postgres_setup_md_content
       app_name = File.basename(@dir)
 
       <<~MARKDOWN

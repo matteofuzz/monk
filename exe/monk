@@ -10,11 +10,15 @@ HELP = <<~TEXT.freeze
   to run if APP_NAME already exists.
 
   Base skeleton: Gemfile, config.ru, .ruby-version, bin/server,
-  bin/websocket_server -- WebSocket support needs no external service, so
-  unlike Postgres/Redis below it isn't gated behind a flag: bin/websocket_server
-  auto-authenticates if --auth's config/auth.rb is present, and fans out
-  across processes over Redis if --redis's REDIS_URL is set, adapting at
-  boot either way.
+  bin/websocket_server, SETUP.md -- WebSocket support needs no external
+  service, so unlike Postgres/Redis below it isn't gated behind a flag:
+  bin/websocket_server auto-authenticates if --auth's config/auth.rb is
+  present, and fans out across processes over Redis if --redis's
+  REDIS_URL is set, adapting at boot either way. SETUP.md is generated
+  for every flag combination, walking through dev-then-test setup for
+  this exact project -- including, since monk new scaffolds no test
+  framework itself, the minimum Minitest wiring to get a working
+  `bundle exec rake test`.
 
   Options:
       --postgres      Also scaffold Postgres persistence/migrations support:
@@ -23,8 +27,9 @@ HELP = <<~TEXT.freeze
                        require it, and writes .env/.env.test/.env.example
                        (DB_NAME defaulting to APP_NAME_development/_test,
                        not the generic app_development fallback baked into
-                       config/persistence.rb itself) and a SETUP.md walking
-                       through dev-then-test setup for this exact project.
+                       config/persistence.rb itself). SETUP.md's dev/test
+                       steps grow to cover Postgres containers, database
+                       creation, and migrations.
       --auth          Also scaffold Monk::Auth (passwordless token auth).
                        Implies --postgres -- Auth is Postgres-only, so this
                        always brings the persistence scaffold with it. Adds
@@ -49,9 +54,10 @@ HELP = <<~TEXT.freeze
       cd APP_NAME
       bundle install
 
-  With --postgres (or --auth, which implies it), see the generated
-  SETUP.md for a full dev-then-test walkthrough. Short version, once a
-  reachable Postgres exists (.env/.env.test have the connection details):
+  See the generated SETUP.md for a full dev-then-test walkthrough, tailored
+  to whichever flags were passed. With --postgres (or --auth, which implies
+  it), short version, once a reachable Postgres exists (.env/.env.test have
+  the connection details):
       bin/setup_db    Apply pending migrations
       bin/migrate     migrate | rollback [N] | status
       bin/console     IRB with persistence loaded
@@ -86,10 +92,8 @@ when "new"
   puts "Created #{app_name}. Next steps:"
   puts "  cd #{app_name}"
   puts "  bundle install"
-  if rest.include?("--postgres") || auth
-    puts "  see SETUP.md for the full dev-then-test walkthrough"
-    puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
-  end
+  puts "  see SETUP.md for the full dev-then-test walkthrough"
+  puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
 else
   usage_error!
 end

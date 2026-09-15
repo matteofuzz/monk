@@ -12,10 +12,9 @@ Requires **Ruby 4.0+**.
 monk new my_app && cd my_app
 bundle install
 bin/server           # -> http://localhost:9292/hello
-bundle exec rake test
 ```
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, views/, public/) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does.
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, views/, public/, a `SETUP.md`) — see "Scaffolding a new project" below for what's in it, `--postgres`, and everything else `monk` on the command line does. `SETUP.md` walks through dev-then-test setup for that project's exact flag combination, including — since `monk new` scaffolds no test framework itself — the minimum Minitest wiring to get a working `bundle exec rake test`.
 
 ## Routing
 
@@ -539,9 +538,9 @@ needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
 
 ```
 monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server,
-                              #   bin/websocket_server, views/, public/
+                              #   bin/websocket_server, views/, public/, SETUP.md
 monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/,
-                              #   config.ru wired to require it, .env/.env.test/.env.example, SETUP.md
+                              #   config.ru wired to require it, .env/.env.test/.env.example
 monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a migration for
                               #   login_tokens/sessions (config.ru requires config/auth instead of
                               #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET)
@@ -556,6 +555,17 @@ install`, `git init`, or anything else on your behalf. `--postgres` adds
 exactly the persistence/migrations wiring documented above, ready for you
 to add your own `db/migrate/*.sql` files and `Model` subclasses.
 
+Every flag combination — including the plain base skeleton — gets a
+`SETUP.md`, tailored to exactly what was scaffolded: dev setup (nothing
+external for the base skeleton; starting/reusing Postgres/Redis
+containers, creating the database, running migrations under `--postgres`)
+and then test setup, including the minimum Minitest wiring (`test/test_helper.rb`,
+a `Rakefile`, one real smoke test — hitting `Monk::Settings` for the base
+skeleton, since `config.ru`'s `class App` lives inline in a rackup file
+with nothing else standalone-requirable to test yet; a real Postgres
+connection under `--postgres`) since `monk new` doesn't scaffold a test
+framework itself.
+
 `--postgres` also wires `config.ru` itself — appending
 `require_relative "config/persistence"` (or `"config/auth"`, when `--auth`
 is set — `config/auth.rb` itself `require_relative`s `persistence`) right
@@ -566,13 +576,7 @@ after the settings require, before `class App` — and writes `.env`,
 `ENV.fetch`. `--auth` adds a placeholder `AUTH_SECRET` to all three env
 files (change it before relying on it); `--redis` adds a placeholder
 `REDIS_URL` to `.env`/`.env.example` only — deliberately not `.env.test`,
-since only a test that actually exercises `RedisFanout` needs it. A
-generated `SETUP.md` walks through dev setup (starting/reusing Postgres
-and Redis containers, creating the database, running migrations, booting
-`bin/server`/`bin/websocket_server`) and then test setup for that exact
-flag combination, including the minimum Minitest wiring (`test/test_helper.rb`,
-a `Rakefile`, one real smoke test) since `monk new` doesn't scaffold a test
-framework itself.
+since only a test that actually exercises `RedisFanout` needs it.
 
 `--auth` always implies `--postgres` — `Monk::Auth` has no path that avoids
 Postgres (see "Auth & sessions" above), so there's no flag combination that

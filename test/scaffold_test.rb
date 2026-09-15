@@ -248,13 +248,31 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  def test_write_bang_without_postgres_writes_no_setup_md
+  # Every flag combination gets a SETUP.md, not just --postgres -- even the
+  # base skeleton has a dev step (bin/server) and an unscaffolded test
+  # framework to set up.
+  def test_write_bang_without_postgres_still_writes_a_setup_md
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest).write!
 
-      refute File.exist?(File.join(dest, "SETUP.md"))
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "# Setting up demo_app"
+      assert_includes setup_md, "bundle exec rake test"
+      refute_includes setup_md, "createdb" # nothing Postgres-specific without --postgres
+    end
+  end
+
+  def test_write_bang_with_redis_only_mentions_redis_url_in_setup_md_but_no_env_file
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, redis: true).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "REDIS_URL"
+      refute File.exist?(File.join(dest, ".env")) # .env is still --postgres-only
     end
   end
 
