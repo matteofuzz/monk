@@ -4,6 +4,37 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.11.0 - 2026-09-15
+
+### Added
+
+- **`monk new --postgres` now wires the generated app together instead of
+  just dropping files next to each other** (`lib/monk/scaffold.rb`,
+  `exe/monk`): previously `config.ru` never required `config/persistence.rb`
+  or `config/auth.rb` at all, so a freshly scaffolded HTTP process never
+  actually registered a database connection unless you edited `config.ru`
+  by hand.
+  - `config.ru` now gets `require_relative "config/persistence"` (or
+    `"config/auth"` under `--auth` — `config/auth.rb` itself
+    `require_relative`s `persistence`) appended right after the settings
+    require, before `class App`.
+  - `.env`, `.env.test`, and a tracked `.env.example` are generated with
+    `DB_NAME` derived from the target directory name
+    (`APP_NAME_development`/`APP_NAME_test`), instead of relying on the
+    generic `app_development` fallback baked into `config/persistence.rb`'s
+    own `ENV.fetch` — every scaffolded app used to default to that same
+    literal name, risking collisions between separate local apps sharing
+    one Postgres instance. `--auth` adds a placeholder `AUTH_SECRET` to all
+    three files; `--redis` adds a placeholder `REDIS_URL` to `.env`/
+    `.env.example` only, deliberately not `.env.test` — only a test that
+    actually exercises `RedisFanout` needs it.
+  - A generated `SETUP.md`, tailored to the exact flags passed, walks
+    through dev setup (reusing or starting Postgres/Redis containers,
+    creating the database, running migrations, booting `bin/server`/
+    `bin/websocket_server`) and then test setup, including the minimum
+    Minitest wiring (`test/test_helper.rb`, a `Rakefile`, one real smoke
+    test) since `monk new` still scaffolds no test framework itself.
+
 ## 0.10.0 - 2026-09-09
 
 ### Added
