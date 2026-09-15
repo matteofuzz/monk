@@ -4,6 +4,35 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.11.2 - 2026-09-15
+
+### Fixed
+
+- **`monk new --postgres`'s generated `.env` was silently never loaded**
+  (`lib/monk/scaffold.rb`): `.env`/`.env.test` have shipped with real
+  values since 0.11.0, but `dotenv` stayed commented out in the `Gemfile`,
+  so `config/settings.rb`'s `require "dotenv/load"` never actually ran —
+  `bin/setup_db` and friends fell straight back to
+  `config/persistence.rb`'s own `ENV.fetch` defaults instead of the
+  app-specific values `.env` was written to provide. `--postgres` now
+  uncomments `gem "dotenv"` in the `Gemfile` too. Found the same way as
+  0.11.0/0.11.1 — generating a real app and following its own `SETUP.md`,
+  not by inspection.
+- **`--redis` alone (no `--postgres`) had none of the above** — no `.env`
+  at all, so `REDIS_URL` had to be exported by hand for
+  `bin/websocket_server`'s fan-out to turn on. `write_env_files!` and the
+  `dotenv` fix above now both run whenever `@postgres || @redis`, not just
+  `@postgres`; `write_env_files!` only adds the Postgres lines when
+  `@postgres` is actually set, and skips writing `.env.test` entirely when
+  it would end up empty (true for `--redis` alone, since `REDIS_URL` is
+  deliberately never written there anyway — only a test that actually
+  exercises `RedisFanout` needs it). `SETUP.md`'s base-skeleton content
+  (also covers `--redis`-only apps) now describes the real `.env`/`dotenv`/
+  Redis-container setup instead of telling you to export `REDIS_URL`
+  inline. Verified end-to-end: a fresh `--redis`-only app's
+  `bin/websocket_server` printed `redis fan-out: on` against a real Redis
+  with zero manual exports, purely from the generated `.env` + `dotenv`.
+
 ## 0.11.1 - 2026-09-15
 
 ### Fixed
