@@ -221,7 +221,7 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  def test_write_bang_without_postgres_writes_no_env_files
+  def test_write_bang_with_neither_postgres_nor_redis_writes_no_env_files
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
@@ -264,15 +264,26 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  def test_write_bang_with_redis_only_mentions_redis_url_in_setup_md_but_no_env_file
+  # --redis alone (no --postgres) still gets a real .env with REDIS_URL,
+  # and dotenv uncommented to actually load it -- otherwise
+  # bin/websocket_server's REDIS_URL check silently never sees it, same
+  # class of bug --postgres's own .env had before dotenv was wired up.
+  def test_write_bang_with_redis_only_writes_env_files_and_uncomments_dotenv
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest, redis: true).write!
 
+      assert_includes read(dest, ".env"), "REDIS_URL="
+      assert_includes read(dest, ".env.example"), "REDIS_URL="
+      refute File.exist?(File.join(dest, ".env.test")) # nothing to put in it without --postgres
+      refute_includes read(dest, ".env"), "DB_"
+
+      gemfile = read(dest, "Gemfile")
+      assert_match(/^gem "dotenv"/, gemfile)
+
       setup_md = read(dest, "SETUP.md")
       assert_includes setup_md, "REDIS_URL"
-      refute File.exist?(File.join(dest, ".env")) # .env is still --postgres-only
     end
   end
 
@@ -348,22 +359,15 @@ class ScaffoldTest < Minitest::Test
   end
 
   # redis: true is fully independent -- doesn't imply, and isn't implied
-  # by, postgres or auth. Its entire scaffold contribution is one Gemfile
-  # line; there's no config/redis.rb, since there's nothing to register a
-  # name against (REGISTRY is a plain module constant in
-  # bin/websocket_server, and it reads REDIS_URL directly).
-  def test_write_bang_with_redis_adds_only_the_redis_gem
+  # by, postgres or auth. There's no config/redis.rb, since there's
+  # nothing to register a name against (REGISTRY is a plain module
+  # constant in bin/websocket_server, and it reads REDIS_URL directly).
+  def test_write_bang_with_redis_adds_the_redis_gem_and_no_persistence_files
     Dir.mktmpdir do |tmp|
-      base_dest = File.join(tmp, "base_app")
       redis_dest = File.join(tmp, "redis_app")
-      Monk::Scaffold.new(base_dest).write!
       Monk::Scaffold.new(redis_dest, redis: true).write!
 
-      base_gemfile = read(base_dest, "Gemfile")
-      redis_gemfile = read(redis_dest, "Gemfile")
-
-      assert redis_gemfile.start_with?(base_gemfile)
-      assert_equal "\n" + template("redis/Gemfile.extra"), redis_gemfile.delete_prefix(base_gemfile)
+      assert_includes read(redis_dest, "Gemfile"), template("redis/Gemfile.extra")
       refute File.exist?(File.join(redis_dest, "config/persistence.rb"))
       refute File.exist?(File.join(redis_dest, "config/auth.rb"))
     end

@@ -68,11 +68,17 @@ module Monk
         FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
         append_gemfile_extra("postgres/Gemfile.extra")
         wire_config_ru!
-        write_env_files!
-        uncomment_dotenv!
       end
 
       append_gemfile_extra("redis/Gemfile.extra") if @redis
+
+      # --postgres and --redis are the two flags with anything worth
+      # putting in an env file (a database, a REDIS_URL) -- the base
+      # skeleton alone has nothing to configure this way.
+      if @postgres || @redis
+        write_env_files!
+        uncomment_dotenv!
+      end
 
       AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
 
@@ -89,12 +95,13 @@ module Monk
       File.write(File.join(@dir, "Gemfile"), "\n#{extra}", mode: "a")
     end
 
-    # --postgres writes a real .env/.env.test (see write_env_files!) -- if
-    # the dotenv gem stays commented out, as it does in the base skeleton,
+    # --postgres/--redis write a real .env (see write_env_files!) -- if the
+    # dotenv gem stays commented out, as it does in the base skeleton,
     # config/settings.rb's `require "dotenv/load"` never runs, so nothing
-    # ever actually loads them: bin/setup_db and friends silently fall
-    # back to config/persistence.rb's own ENV.fetch defaults instead of
-    # the app-specific values .env was written to provide.
+    # ever actually loads them: bin/setup_db (or bin/websocket_server's
+    # REDIS_URL check) silently falls back to config/persistence.rb's own
+    # ENV.fetch defaults, or no REDIS_URL at all, instead of the
+    # app-specific values .env was written to provide.
     DOTENV_COMMENTED_LINE = %(# gem "dotenv" # uncomment to load a local .env file (config/settings.rb)\n).freeze
     DOTENV_LINE = %(gem "dotenv" # loads .env/.env.test -- see config/settings.rb\n).freeze
 
@@ -133,9 +140,9 @@ module Monk
     def write_env_files!
       app_name = File.basename(@dir)
 
-      dev = pg_env_lines("#{app_name}_development")
-      test = pg_env_lines("#{app_name}_test")
-      example = pg_env_lines("#{app_name}_development")
+      dev = @postgres ? pg_env_lines("#{app_name}_development") : []
+      test = @postgres ? pg_env_lines("#{app_name}_test") : []
+      example = @postgres ? pg_env_lines("#{app_name}_development") : []
 
       if @auth
         dev << "AUTH_SECRET=change-me-dev-secret"
@@ -152,8 +159,10 @@ module Monk
       end
 
       write_lines(".env", dev)
-      write_lines(".env.test", test)
       write_lines(".env.example", example)
+      # --redis alone (no --postgres) has nothing to put in .env.test --
+      # skip it rather than write an empty, pointless file.
+      write_lines(".env.test", test) unless test.empty?
     end
 
     def pg_env_lines(dbname)
@@ -188,9 +197,7 @@ module Monk
       <<~MARKDOWN
         # Setting up #{app_name} (dev, then test)
 
-        No database is scaffolded here (`monk new #{app_name}`, no
-        `--postgres`/`--auth`) -- `bin/server`/`bin/websocket_server` need
-        nothing external to run.
+        #{base_setup_md_intro(app_name)}
 
         ## Dev environment, first run
 
@@ -265,12 +272,28 @@ module Monk
       MARKDOWN
     end
 
+    def base_setup_md_intro(app_name)
+      unless @redis
+        return "No external services are scaffolded here (`monk new #{app_name}`, no " \
+          "`--postgres`/`--auth`/`--redis`) -- `bin/server`/`bin/websocket_server` need " \
+          "nothing external to run."
+      end
+
+      "No database is scaffolded here (`monk new #{app_name} --redis`, no `--postgres`/" \
+        "`--auth`) -- `bin/server` needs nothing external, but `bin/websocket_server`'s " \
+        "cross-process fan-out needs a reachable Redis once `REDIS_URL` (already set in " \
+        "the generated `.env`) is visible to it."
+    end
+
     def redis_only_note
       return "" unless @redis
 
-      "\n`REDIS_URL` (e.g. `REDIS_URL=redis://localhost:6379/0 bin/websocket_server`) turns " \
-        "on `bin/websocket_server`'s cross-process fan-out -- unset, it runs in-process only. " \
-        "No `.env` is scaffolded without `--postgres`, so export it inline or add one yourself.\n"
+      app_name = File.basename(@dir)
+      "\n`.env` already sets `REDIS_URL=redis://localhost:6379/0`, turning on " \
+        "`bin/websocket_server`'s cross-process fan-out -- unset (or missing entirely), it " \
+        "runs in-process only. Check `docker ps` first in case a Redis container is already " \
+        "running from another project; otherwise start one: `docker run --rm -d -p 6379:6379 " \
+        "--name #{app_name}_redis redis:7`.\n"
     end
 
     def postgres_setup_md_content

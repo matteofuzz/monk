@@ -44,10 +44,12 @@ HELP = <<~TEXT.freeze
       --redis         Add the redis gem to the Gemfile, for
                        bin/websocket_server's cross-process fan-out. Fully
                        independent -- doesn't imply, and isn't implied by,
-                       --postgres or --auth. With --postgres, .env/
-                       .env.example also get a REDIS_URL line (deliberately
-                       not .env.test -- only a test that exercises
-                       RedisFanout needs it).
+                       --postgres or --auth. Writes/extends .env and
+                       .env.example with a REDIS_URL line (deliberately
+                       never .env.test -- only a test that exercises
+                       RedisFanout needs it) and uncomments gem "dotenv"
+                       if it isn't already (same reasoning as --postgres
+                       above), same whether or not --postgres is also set.
 
   Commands:
       new APP_NAME    Create a new project (see Options above)

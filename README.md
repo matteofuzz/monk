@@ -545,7 +545,8 @@ monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a mi
                               #   login_tokens/sessions (config.ru requires config/auth instead of
                               #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET)
 monk new my_app --redis      # + the redis gem, for bin/websocket_server's cross-process
-                              #   fan-out (with --postgres, .env/.env.example get a placeholder REDIS_URL)
+                              #   fan-out; writes/extends .env/.env.example with a placeholder
+                              #   REDIS_URL either way, whether or not --postgres is also set
 ```
 
 Writes a fresh project directory from static templates (never overwrites
@@ -557,10 +558,11 @@ to add your own `db/migrate/*.sql` files and `Model` subclasses.
 
 Every flag combination — including the plain base skeleton — gets a
 `SETUP.md`, tailored to exactly what was scaffolded: dev setup (nothing
-external for the base skeleton; starting/reusing Postgres/Redis
-containers, creating the database, running migrations under `--postgres`)
-and then test setup, including the minimum Minitest wiring (`test/test_helper.rb`,
-a `Rakefile`, one real smoke test — hitting `Monk::Settings` for the base
+external for the base skeleton; a reachable Redis under `--redis`;
+starting/reusing Postgres/Redis containers, creating the database,
+running migrations under `--postgres`) and then test setup, including the
+minimum Minitest wiring (`test/test_helper.rb`, a `Rakefile`, one real
+smoke test — hitting `Monk::Settings` for the base/`--redis`-only
 skeleton, since `config.ru`'s `class App` lives inline in a rackup file
 with nothing else standalone-requirable to test yet; a real Postgres
 connection under `--postgres`) since `monk new` doesn't scaffold a test
@@ -569,19 +571,24 @@ framework itself.
 `--postgres` also wires `config.ru` itself — appending
 `require_relative "config/persistence"` (or `"config/auth"`, when `--auth`
 is set — `config/auth.rb` itself `require_relative`s `persistence`) right
-after the settings require, before `class App` — and writes `.env`,
-`.env.test`, and a tracked `.env.example`, with `DB_NAME` defaulting to
+after the settings require, before `class App`.
+
+`--postgres` and/or `--redis` write `.env` and a tracked `.env.example`
+(`.env.test` too, but only under `--postgres` — `--redis` alone has
+nothing worth putting there, see below), with `DB_NAME` defaulting to
 `APP_NAME_development`/`APP_NAME_test` rather than the generic
 `app_development` fallback baked into `config/persistence.rb`'s own
 `ENV.fetch`. `--auth` adds a placeholder `AUTH_SECRET` to all three env
 files (change it before relying on it); `--redis` adds a placeholder
 `REDIS_URL` to `.env`/`.env.example` only — deliberately not `.env.test`,
-since only a test that actually exercises `RedisFanout` needs it.
-`--postgres` also uncomments `gem "dotenv"` in the `Gemfile` — without it,
-`config/settings.rb`'s `require "dotenv/load"` never runs, so the `.env`
-just written would silently never actually load, and `bin/setup_db` (and
-anything else reading `DB_NAME`/`DB_HOST`/etc.) would fall back to
-`config/persistence.rb`'s own hardcoded defaults instead.
+since only a test that actually exercises `RedisFanout` needs it — the
+same whether or not `--postgres` is also set. Either flag also uncomments
+`gem "dotenv"` in the `Gemfile` — without it, `config/settings.rb`'s
+`require "dotenv/load"` never runs, so the `.env` just written would
+silently never actually load: `bin/setup_db` would fall back to
+`config/persistence.rb`'s own hardcoded `DB_*` defaults, and
+`bin/websocket_server` would see no `REDIS_URL` at all and run
+in-process only, exactly as if `--redis` had never been passed.
 
 `--auth` always implies `--postgres` — `Monk::Auth` has no path that avoids
 Postgres (see "Auth & sessions" above), so there's no flag combination that
@@ -596,8 +603,9 @@ reason to gate it behind a flag. The generated script adapts at boot: it
 authenticates connections if `config/auth.rb` is present (i.e. the app was
 scaffolded with `--auth`, or you wired it up by hand), and wraps its
 `Registry` in a `Monk::WebSocket::RedisFanout` instead if `REDIS_URL` is
-set. `--redis` only adds the `redis` gem to the `Gemfile` — it's fully
-independent, and doesn't imply or get implied by `--postgres`/`--auth`.
+set — which `--redis` provides via a placeholder in the generated `.env`
+(see "Scaffolding a new project" below). `--redis` is fully independent,
+and doesn't imply or get implied by `--postgres`/`--auth`.
 
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and
