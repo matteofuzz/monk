@@ -277,7 +277,7 @@ class PersistenceMigratorTest < Minitest::Test
   private
 
   def drop_test_tables(conn)
-    %w[schema_migrations widgets gadgets things].each { |t| conn.exec("DROP TABLE IF EXISTS #{t} CASCADE") }
+    %w[schema_migrations widgets gadgets things].each { |t| drop_table_if_exists(conn, t, cascade: true) }
   end
 
   def migrations_dir(migrations)

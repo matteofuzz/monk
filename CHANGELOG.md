@@ -4,6 +4,31 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.12.2 - 2026-09-17
+
+### Fixed
+
+- **Test suite printed a "method redefined" warning per view per test file**
+  (`lib/monk/views.rb`): `Views.method_name_for` deliberately reuses the
+  same compiled method name across repeated boots of the same template
+  path (so a second `.freeze!` in one process redefines in place rather
+  than growing new method names forever), but Ruby warns on every `def`
+  that overwrites an existing method unless the old one was explicitly
+  removed first. `Views.compile` now calls `Compiled.remove_method` ahead
+  of the redefinition it already intends, silencing the warning without
+  changing behavior.
+- **Test suite printed a Postgres NOTICE ("table ... does not exist,
+  skipping") on nearly every test** (`test/test_helper.rb` and the
+  persistence/auth/migrator tests): every test's `teardown` already drops
+  its own tables, so the *next* test's `DROP TABLE IF EXISTS` setup call
+  almost always hits the non-existent case. Added
+  `PersistenceTestHelpers#drop_table_if_exists`, which checks
+  `information_schema.tables` first and only issues `DROP TABLE` when the
+  table is actually there — the same dodge `Migrator#
+  ensure_schema_migrations_table` already uses for `CREATE TABLE IF NOT
+  EXISTS`'s NOTICE, in the other direction. Replaced every raw `DROP TABLE
+  IF EXISTS` in the test suite with it.
+
 ## 0.12.1 - 2026-09-17
 
 ### Fixed

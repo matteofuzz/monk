@@ -16,7 +16,7 @@ class PersistenceModelTest < Minitest::Test
     skip_unless_postgres_available
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-      conn.exec("DROP TABLE IF EXISTS widgets")
+      drop_table_if_exists(conn, "widgets")
       conn.exec(
         "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0, " \
         "claimed_by TEXT)"
@@ -26,7 +26,7 @@ class PersistenceModelTest < Minitest::Test
 
   def teardown
     if postgres_available?
-      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("DROP TABLE IF EXISTS widgets") }
+      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_table_if_exists(conn, "widgets") }
     end
     Monk::Persistence::Pg.reset!
   end

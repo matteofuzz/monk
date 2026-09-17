@@ -130,6 +130,21 @@ module PersistenceTestHelpers
     skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
       "(set MONK_TEST_PG_* env vars, or start one -- see docs/persistence-ractor-connections.md)" unless postgres_available?
   end
+
+  # Checks information_schema first rather than relying on DROP TABLE IF
+  # EXISTS's own "does not exist, skipping" NOTICE -- every test's teardown
+  # already drops its own tables, so the *next* test's setup always hits
+  # the non-existent case, printing that NOTICE on practically every test
+  # run. Same dodge Migrator#ensure_schema_migrations_table already uses
+  # for CREATE TABLE IF NOT EXISTS's NOTICE, the other direction.
+  def drop_table_if_exists(conn, table, cascade: false)
+    exists = conn.exec_params(
+      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table]
+    ).ntuples.positive?
+    return unless exists
+
+    conn.exec("DROP TABLE #{table}#{" CASCADE" if cascade}")
+  end
 end
 
 # Shared by tests that need a real Redis connection
@@ -274,7 +289,7 @@ module AuthTestHelpers
   end
 
   def drop_auth_tables(conn)
-    conn.exec("DROP TABLE IF EXISTS sessions")
-    conn.exec("DROP TABLE IF EXISTS login_tokens")
+    drop_table_if_exists(conn, "sessions")
+    drop_table_if_exists(conn, "login_tokens")
   end
 end

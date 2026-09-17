@@ -61,6 +61,15 @@ module Monk
 
       def compile(name, source, path = "(erb)")
         method_name = method_name_for(name)
+        # method_name_for deliberately reuses the same method name across
+        # repeated boots of the same template path (see its comment), so a
+        # second freeze in one process -- a second app, or the test suite --
+        # redefines this method rather than growing a new one. Ruby warns
+        # ("method redefined; discarding old ...") whenever a `def`
+        # overwrites an existing method, but not when the old one was
+        # explicitly removed first -- so remove it ourselves to keep that
+        # warning from firing on a redefinition this module intends.
+        Compiled.remove_method(method_name) if Compiled.method_defined?(method_name)
         Compiled.module_eval("def #{method_name}(locals = {}); #{compiled_source(source)}; end", path, 0)
         registry[name] = method_name
         name
