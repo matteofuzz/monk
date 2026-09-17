@@ -36,8 +36,8 @@ class PersistenceMigratorTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
       assert_equal ["1", "2"], versions
-      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
-      refute_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
+      assert table_exists?(conn, "widgets")
+      assert table_exists?(conn, "gadgets")
     end
   end
 
@@ -70,8 +70,8 @@ class PersistenceMigratorTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
       assert_equal ["1"], versions
-      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
-      assert_nil conn.exec("SELECT to_regclass('things')").getvalue(0, 0)
+      assert table_exists?(conn, "widgets")
+      refute table_exists?(conn, "things")
     end
   end
 
@@ -91,8 +91,8 @@ class PersistenceMigratorTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
       assert_equal ["1"], versions
-      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
-      assert_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
+      assert table_exists?(conn, "widgets")
+      refute table_exists?(conn, "gadgets")
     end
   end
 
@@ -113,9 +113,9 @@ class PersistenceMigratorTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
       assert_equal ["1"], versions
-      refute_nil conn.exec("SELECT to_regclass('widgets')").getvalue(0, 0)
-      assert_nil conn.exec("SELECT to_regclass('gadgets')").getvalue(0, 0)
-      assert_nil conn.exec("SELECT to_regclass('things')").getvalue(0, 0)
+      assert table_exists?(conn, "widgets")
+      refute table_exists?(conn, "gadgets")
+      refute table_exists?(conn, "things")
     end
   end
 

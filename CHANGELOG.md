@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.12.4 - 2026-09-17
+
+### Fixed
+
+- **Test suite still printed `Warning: no type cast defined for type
+  "regclass"...` on every migrator test** (`test/persistence_migrator_test.rb`):
+  `SELECT to_regclass('widgets')` returns a `regclass`-typed column, and
+  `lib/monk/persistence/pg.rb`'s `PG::BasicTypeMapForResults` has no
+  decoder registered for it, so the `pg` gem warns once per call and falls
+  back to the raw string. Added `PersistenceTestHelpers#table_exists?`
+  (`test/test_helper.rb`) — the same `information_schema.tables` check
+  `Migrator#ensure_schema_migrations_table` and `#drop_table_if_exists`
+  already use, which never touches `regclass` at all — and replaced every
+  `to_regclass` assertion with it.
+
 ## 0.12.3 - 2026-09-17
 
 ### Fixed

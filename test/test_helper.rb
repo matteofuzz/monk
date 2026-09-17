@@ -131,6 +131,17 @@ module PersistenceTestHelpers
       "(set MONK_TEST_PG_* env vars, or start one -- see docs/persistence-ractor-connections.md)" unless postgres_available?
   end
 
+  # Same information_schema check Migrator#ensure_schema_migrations_table
+  # uses internally -- deliberately not `SELECT to_regclass(...)`, which
+  # returns a `regclass`-typed column the pg gem's BasicTypeMapForResults
+  # (lib/monk/persistence/pg.rb) has no decoder for, printing a "no type
+  # cast defined for type regclass" warning on every call.
+  def table_exists?(conn, table)
+    conn.exec_params(
+      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table]
+    ).ntuples.positive?
+  end
+
   # Checks information_schema first rather than relying on DROP TABLE IF
   # EXISTS's own "does not exist, skipping" NOTICE -- every test's teardown
   # already drops its own tables, so the *next* test's setup always hits
@@ -138,9 +149,7 @@ module PersistenceTestHelpers
   # run. Same dodge Migrator#ensure_schema_migrations_table already uses
   # for CREATE TABLE IF NOT EXISTS's NOTICE, the other direction.
   def drop_table_if_exists(conn, table, cascade: false)
-    exists = conn.exec_params(
-      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table]
-    ).ntuples.positive?
+    exists = table_exists?(conn, table)
     return unless exists
 
     conn.exec("DROP TABLE #{table}#{" CASCADE" if cascade}")
