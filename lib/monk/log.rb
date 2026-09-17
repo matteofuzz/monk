@@ -69,6 +69,14 @@ module Monk
         handle.flush
       end
 
+      # UTC, millisecond precision, ISO 8601 -- sortable as plain text and
+      # unambiguous across machines/timezones. Shared by #log below and by
+      # Base#log_request, so the access log and app-level log lines carry
+      # the same stamp format.
+      def timestamp
+        Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%3NZ")
+      end
+
       # App-level logging, one line per call, gated by :log_level (default
       # "info" -- see Settings::DEFAULT_DECLARATIONS). Below the configured
       # threshold, a call is a no-op: cheap enough to leave debug logging
@@ -102,7 +110,7 @@ module Monk
       def log(level, message)
         return unless enabled?(level)
 
-        write("#{level.upcase} #{message}\n")
+        write("#{timestamp} #{level.upcase} #{message}\n")
       end
 
       def enabled?(level)

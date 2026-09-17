@@ -73,6 +73,17 @@ module Monk
         reply_port = Ractor::Port.new
         @ractor.send([op, key, arg, reply_port])
         reply_port.receive
+      rescue Ractor::ClosedError
+        # The registry Ractor itself can be gone by the time this runs --
+        # e.g. process-wide shutdown (Ctrl+C) tearing down Ractors in
+        # whatever order, with a connection's own cleanup (Connection#
+        # unsubscribe!, called from Server.serve's ensure) losing the race
+        # against the registry's. Nothing on the other end to reply to a
+        # dead call anyway; nil is indistinguishable from "the process is
+        # already exiting" to every caller here (register/unregister/
+        # broadcast ignore their return value, and #count is never read
+        # this late).
+        nil
       ensure
         reply_port&.close
       end

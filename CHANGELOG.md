@@ -4,6 +4,40 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.12.1 - 2026-09-17
+
+### Fixed
+
+- **Ctrl+C with live WebSocket connections open printed an unrescued
+  `Ractor::ClosedError` stack trace** (`lib/monk/websocket/registry.rb`):
+  `Registry#ask` (backing `register`/`unregister`/`broadcast`/`count`)
+  sends to the registry's own dedicated Ractor with no guard, unlike
+  `Registry#broadcast`'s inner loop, which already rescues
+  `Ractor::ClosedError` per-port for the same class of shutdown race
+  (with a comment describing exactly this). On SIGINT, Ruby tears down
+  Ractors with no defined order; if the registry's Ractor is gone before
+  a connection's `Server.serve`-ensure cleanup calls `unsubscribe!` ->
+  `unregister` -> `ask`, the send raises unrescued and `report_on_exception`
+  prints it. Harmless — the process is already exiting, no message loss
+  or leaked state — but noisy. `#ask` now rescues `Ractor::ClosedError`
+  and returns `nil`, which every caller here already ignores or only
+  reads while the registry is known to be alive.
+
+## 0.12.0 - 2026-09-17
+
+### Added
+
+- **Timestamps on every log line** (`lib/monk/log.rb`, `lib/monk/base.rb`):
+  both the per-request access line (`Base#log_request`, to `$stdout` and
+  `log/<env>.log`) and the app-level `Monk::Log.debug`/`.info`/`.warn`/
+  `.error` lines now lead with a UTC, millisecond-precision ISO 8601 stamp
+  (`2026-09-17T14:32:01.123Z GET /hello -> 200 (1.2ms)`,
+  `2026-09-17T14:32:01.456Z WARN payment retried`), via a single
+  `Monk::Log.timestamp` used by both call sites so the two log lines stay
+  in the same format. `Time.now` needs no Ractor-shareability handling —
+  it returns a fresh, unshared value on every call — so this added no new
+  boot-time freezing concerns.
+
 ## 0.11.3 - 2026-09-15
 
 ### Fixed

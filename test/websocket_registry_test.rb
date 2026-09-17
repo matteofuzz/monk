@@ -83,6 +83,33 @@ class WebSocketRegistryTest < Minitest::Test
     assert_equal 0, registry.count(:room1)
   end
 
+  # Simulates the shutdown race a bare Ctrl+C with live connections hits:
+  # Server.serve's ensure block calls Connection#unsubscribe! -> #unregister
+  # on every exit path, but the registry's own dedicated Ractor can already
+  # be gone by then (process-wide teardown, no ordering guarantee between
+  # Ractors). @ractor.send onto an already-terminated Ractor raises
+  # Ractor::ClosedError same as it would in that real race -- a terminated
+  # Ractor stands in for "registry Ractor died first" without needing to
+  # actually race a live process shutdown.
+  def test_ask_survives_the_registry_ractor_already_being_gone
+    # Registry.new freezes the instance, so a live one can't have its
+    # @ractor swapped out from a test -- .allocate skips #initialize (and
+    # the freeze at the end of it) to install an already-dead Ractor in
+    # its place instead.
+    registry = Monk::WebSocket::Registry.allocate
+    dead_ractor = Ractor.new {}
+    dead_ractor.value # wait for it to finish and close its own incoming port
+    registry.instance_variable_set(:@ractor, dead_ractor)
+    port = Ractor::Port.new
+
+    assert_nil registry.register(:room1, port)
+    assert_nil registry.unregister(:room1, port)
+    assert_nil registry.broadcast(:room1, "hi")
+    assert_nil registry.count(:room1)
+  ensure
+    port&.close
+  end
+
   def test_count_reflects_registrations_and_unregistrations
     registry = Monk::WebSocket::Registry.new
     port = Ractor::Port.new

@@ -175,7 +175,7 @@ module Monk
 
       def log_request(env, status, start)
         duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000).round(1)
-        line = "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
+        line = "#{Monk::Log.timestamp} #{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} -> #{status} (#{duration_ms}ms)"
 
         if @console_logging
           $stdout.puts line

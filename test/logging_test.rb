@@ -2,6 +2,8 @@ require_relative "test_helper"
 require "stringio"
 
 class LoggingTest < Minitest::Test
+  TIMESTAMP = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /
+
   def test_logs_method_path_status_and_duration_to_stdout
     app = Class.new(Monk::Base) do
       get("/x") { "hi" }
@@ -9,7 +11,7 @@ class LoggingTest < Minitest::Test
 
     output = with_log { with_monk_env("development") { capture_stdout { app.call(env_for("GET", "/x")) } } }
 
-    assert_match(%r{\AGET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, output)
+    assert_match(%r{\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z GET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, output)
   end
 
   def test_does_not_log_to_stdout_when_monk_env_is_production
@@ -32,7 +34,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "production.log"))
     end
 
-    assert_match(%r{\AGET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
+    assert_match(%r{\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z GET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
   end
 
   def test_logs_to_a_file_in_development_alongside_stdout
@@ -45,7 +47,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "development.log"))
     end
 
-    assert_match(%r{\AGET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
+    assert_match(%r{\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z GET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
   end
 
   def test_logs_to_test_log_under_the_default_test_environment
@@ -58,7 +60,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "test.log"))
     end
 
-    assert_match(%r{\AGET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
+    assert_match(%r{\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z GET /x -> 200 \(\d+(\.\d+)?ms\)\n\z}, contents)
   end
 
   def test_appends_across_requests_instead_of_truncating
@@ -85,7 +87,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "test.log"))
     end
 
-    assert_equal ["INFO kept\n", "WARN kept too\n", "ERROR kept as well\n"], contents.lines
+    assert_equal ["INFO kept\n", "WARN kept too\n", "ERROR kept as well\n"], strip_timestamps(contents)
   end
 
   def test_log_level_setting_raises_the_threshold
@@ -96,7 +98,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "test.log"))
     end
 
-    assert_equal ["ERROR kept\n"], contents.lines
+    assert_equal ["ERROR kept\n"], strip_timestamps(contents)
   end
 
   def test_log_level_setting_can_lower_the_threshold_to_debug
@@ -106,7 +108,7 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "test.log"))
     end
 
-    assert_equal ["DEBUG kept\n"], contents.lines
+    assert_equal ["DEBUG kept\n"], strip_timestamps(contents)
   end
 
   def test_invalid_log_level_raises_at_boot
@@ -128,10 +130,14 @@ class LoggingTest < Minitest::Test
       File.read(File.join(dir, "test.log"))
     end
 
-    assert_equal ["INFO kept\n"], contents.lines
+    assert_equal ["INFO kept\n"], strip_timestamps(contents)
   end
 
   private
+
+  def strip_timestamps(contents)
+    contents.lines.map { |line| line.sub(TIMESTAMP, "") }
+  end
 
   def boot_app!
     Class.new(Monk::Base) { get("/x") { "hi" } }.freeze!

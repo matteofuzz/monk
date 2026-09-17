@@ -237,7 +237,7 @@ Every request is appended as one line to `log/<env>.log` —
 Rails-style — unconditionally, in every environment:
 
 ```
-GET /hello -> 200 (1.2ms)
+2026-09-17T14:32:01.123Z GET /hello -> 200 (1.2ms)
 ```
 
 In development that same line is also echoed to `$stdout`, for a human
@@ -250,16 +250,24 @@ worker Ractors sharing `$stdout`. `Monk::Log.root = "log"` is the only
 knob; there's no per-route opt-out.
 
 For app-level logging (not the per-request access line above),
-`Monk::Log.debug`/`.info`/`.warn`/`.error` each write one `LEVEL message`
-line to the same `log/<env>.log`, gated by the `log_level` setting
-(`debug`/`info`/`warn`/`error`, `info` by default) — a call below the
-configured threshold is a no-op, cheap enough to leave `Log.debug` calls in
-place rather than stripping them per environment:
+`Monk::Log.debug`/`.info`/`.warn`/`.error` each write one
+`TIMESTAMP LEVEL message` line to the same `log/<env>.log`, gated by the
+`log_level` setting (`debug`/`info`/`warn`/`error`, `info` by default) — a
+call below the configured threshold is a no-op, cheap enough to leave
+`Log.debug` calls in place rather than stripping them per environment:
 
 ```ruby
 Monk::Log.debug("cache miss for #{key}")  # only written when log_level is "debug"
 Monk::Log.warn("payment retried")
 ```
+
+```
+2026-09-17T14:32:01.456Z WARN payment retried
+```
+
+Both lines share the same timestamp format: UTC, millisecond precision,
+ISO 8601 (`Monk::Log.timestamp`) — sortable as plain text and unambiguous
+across machines/timezones.
 
 `log_level` is implicit like `MONK_ENV` — no `configure` call needed, just
 set `LOG_LEVEL` in the environment. It's validated at `Monk.boot` the same
