@@ -107,6 +107,16 @@ module Monk
           end
           ractor.send(socket, move: true)
         end
+      rescue Interrupt
+        # Ctrl+C's default Ruby behavior: raise Interrupt in the thread
+        # blocked in the syscall, here TCPServer#accept. Unrescued, that's
+        # an unhandled exception -- Ruby prints its backtrace and exits
+        # non-zero, which reads as a crash even though this is the normal,
+        # intended way to stop a long-running server. Registry#ask's
+        # Ractor::ClosedError rescue (registry.rb) guards a different
+        # failure point in this same shutdown -- a live connection's
+        # cleanup racing the registry Ractor's teardown -- not this one.
+        @tcp_server.close
       end
 
       # Runs entirely inside the connection's own dedicated Ractor

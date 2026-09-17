@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.12.3 - 2026-09-17
+
+### Fixed
+
+- **Ctrl+C with no live connections open still printed an unrescued
+  `Interrupt` stack trace** (`lib/monk/websocket/server.rb`): 0.12.1 only
+  rescued `Ractor::ClosedError` in `Registry#ask`, which guards a
+  connection's cleanup racing the registry Ractor's teardown -- a
+  different failure point from this one. `Server#run`'s accept loop
+  itself never rescued Ctrl+C's default `Interrupt`, raised in whatever
+  thread is blocked in `TCPServer#accept` -- unrescued, that's an
+  unhandled exception with a backtrace, even though stopping the server
+  this way is normal and intended. `#run` now rescues `Interrupt` around
+  the loop and closes the `TCPServer`.
+
 ## 0.12.2 - 2026-09-17
 
 ### Fixed
