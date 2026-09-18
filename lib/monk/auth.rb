@@ -102,7 +102,7 @@ module Monk
           return
         end
 
-        $stdout.puts(RQRCode::QRCode.new(link).as_ansi)
+        $stdout.puts(compact_qr(RQRCode::QRCode.new(link, level: :l)))
       end
 
       def redeem(raw)
@@ -174,6 +174,32 @@ module Monk
       end
 
       private
+
+      # as_ansi spends two columns and one line per module, so even a
+      # short link fills the terminal. Half-block characters pack two
+      # module rows into one line and one column per module (roughly a
+      # quarter of the area); the explicit black-on-white colors keep it
+      # scannable on dark terminals too. Quiet zone is 2 modules, below
+      # the spec's 4 but reliable for phone cameras against a white
+      # background.
+      def compact_qr(qr, quiet_zone: 2)
+        width = qr.modules.size + quiet_zone * 2
+        blank = Array.new(quiet_zone) { Array.new(width, false) }
+        grid = blank + qr.modules.map { |row| Array.new(quiet_zone, false) + row + Array.new(quiet_zone, false) } + blank
+        grid << Array.new(width, false) if grid.size.odd?
+
+        grid.each_slice(2).map do |top, bottom|
+          cells = top.zip(bottom).map do |t, b|
+            if t && b then "\u2588"
+            elsif t then "\u2580"
+            elsif b then "\u2584"
+            else " "
+            end
+          end
+          # dark modules are the glyph (black fg) on a white bg
+          "\e[30;47m#{cells.join}\e[0m"
+        end.join("\n")
+      end
 
       def ensure_configured!
         raise Monk::AuthNotConfiguredError,
