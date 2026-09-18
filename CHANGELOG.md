@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.12.5 - 2026-09-18
+
+### Added
+
+- **`Monk::Auth.log_dev_link(link, subject: nil)`** (`lib/monk/auth.rb`):
+  in development only, prints a magic link to stdout and the dev log, plus a
+  scannable QR code beneath it when the app's own Gemfile includes the
+  optional `rqrcode` gem. A no-op outside development.
+
+### Fixed
+
+- **`log_dev_link`'s QR code raised `Ractor::IsolationError` inside a worker
+  Ractor**: `rqrcode` has unfrozen lookup-table constants that can't be read
+  from a non-main Ractor. `Monk::Auth` now walks the `RQRCode` /
+  `RQRCodeCore` constants at boot and makes them shareable.
+- **`log_dev_link`'s QR code was too big for the terminal**: `as_ansi` spends
+  two columns and one line per module. It is now rendered with half-block
+  characters (two module rows per line, one column per module, black on white
+  so it stays scannable on dark terminals) at error-correction level `:l`,
+  roughly a quarter of the previous area.
+
 ## 0.12.4 - 2026-09-17
 
 ### Fixed
