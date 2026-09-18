@@ -69,6 +69,41 @@ module Monk
         raw
       end
 
+      # Convenience for an app's own login-request handler: prints a
+      # magic link to the dev console (and log/development.log via
+      # Monk::Log.info), plus a scannable QR code beneath it if the
+      # optional `rqrcode` gem is in the app's own Gemfile -- makes
+      # testing the login flow from a second device (another browser, a
+      # phone) trivial without a mailer. A no-op outside development,
+      # same posture as every other dev-only escape hatch in this
+      # framework (docs/secure-cookie-dev-http.md).
+      #
+      # subject: is optional context for the printed line only (e.g. the
+      # email being logged in) -- useful once more than one login is in
+      # flight at a time (two test users, two devices), never persisted
+      # or otherwise part of the token itself.
+      #
+      # rqrcode is opt-in, same as pg/redis: not a runtime dependency of
+      # monk itself (see monk.gemspec) -- an app that wants the QR code
+      # declares it in its own Gemfile. Without it, this still logs the
+      # plain link, just no QR beneath it.
+      def log_dev_link(link, subject: nil)
+        return unless Monk.env.development?
+
+        line = subject ? "[dev] magic link for #{subject}: #{link}" : "[dev] magic link: #{link}"
+        $stdout.puts(line)
+        $stdout.flush
+        Monk::Log.info(line)
+
+        begin
+          require "rqrcode"
+        rescue LoadError
+          return
+        end
+
+        $stdout.puts(RQRCode::QRCode.new(link).as_ansi)
+      end
+
       def redeem(raw)
         ensure_configured!
         return nil if raw.nil? || raw.empty?

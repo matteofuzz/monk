@@ -391,6 +391,35 @@ key = Monk::Auth.create_api_key(subject: "service:billing-worker")
 "monk"` alone must not load it, since it depends on a persistence
 backend the app may not use.
 
+### No mailer yet? `Monk::Auth.log_dev_link`
+
+`Mailer.magic_link(...)` above assumes the app already has mail
+delivery wired up. Until it does — every app, early on — call
+`Monk::Auth.log_dev_link(link)` from the same spot instead:
+
+```ruby
+post("/auth/request") do
+  token = Monk::Auth.request_login(params[:email], redirect_to: params[:redirect_to])
+  link = "#{env["rack.url_scheme"]}://#{header("host")}/auth/callback/#{token}"
+  Monk::Auth.log_dev_link(link, subject: params[:email])
+  json(ok: true)
+end
+```
+
+A no-op outside `Monk.env.development?` (never prints/logs in
+staging/production), so it's safe to leave in place once a real mailer
+is added later — the mailer call goes on the `else` side, not a
+replacement. Prints the link to stdout and `log/development.log`, plus a
+scannable QR code beneath it if the app's own Gemfile includes the
+optional `rqrcode` gem — handy for testing the login flow from a second
+device (another browser profile, a phone) without setting up email
+delivery for local dev at all. Behind a TLS-terminating reverse proxy
+(testing from a phone on a different network, say), prefer
+`X-Forwarded-Proto` over `rack.url_scheme` when building `link`, so it
+reflects the scheme the client actually used rather than the (possibly
+different) scheme that reached the app directly:
+`env["HTTP_X_FORWARDED_PROTO"]&.split(",")&.first&.strip || env["rack.url_scheme"]`.
+
 ## The browser case: cookies, redirects, and CSRF
 
 This supersedes the old Phase 9 deferral. A browser-facing app gets the

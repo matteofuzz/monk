@@ -36,6 +36,12 @@ Gem::Specification.new do |spec|
   # WebSocket fan-out declares "redis" in its own Gemfile.
   spec.add_development_dependency "redis", "~> 5.0"
 
+  # Same posture as pg/redis above: Monk::Auth.log_dev_link's QR code is
+  # opt-in (require "rqrcode" happens lazily inside the method, rescuing
+  # LoadError), so it isn't a runtime dependency of monk itself -- an app
+  # that wants the QR code declares it in its own Gemfile.
+  spec.add_development_dependency "rqrcode", "~> 3.2"
+
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "kino"
