@@ -93,4 +93,37 @@ class AuthRactorIntegrationTest < Minitest::Test
 
     assert_equal [200, "a@b.com"], result
   end
+
+  # Regression: rqrcode (used by log_dev_link) has several ordinary,
+  # unfrozen top-level constants of its own -- reading one of those from
+  # a worker Ractor raised Ractor::IsolationError the first time this ran
+  # inside a real request (confirmed live in a real app under Kino, not
+  # just this suite). freeze_rqrcode! (called from Monk::Auth's own
+  # freeze_registry!, alongside @config) is the fix; this exercises it
+  # the same way the tests above exercise Auth's other Ractor-sensitive
+  # paths -- a real app.freeze! followed by a real Ractor.new(app).call,
+  # not a direct method call from the main (test-runner) Ractor, which
+  # would never have caught this.
+  def test_log_dev_link_works_from_inside_a_real_worker_ractor
+    with_log do
+      with_settings do
+        with_monk_env("development") do
+          app = Class.new(Monk::Base) do
+            post("/auth/request/:email") do |ctx|
+              token = Monk::Auth.request_login(ctx.params[:email])
+              Monk::Auth.log_dev_link("http://x/auth/callback/#{token}", subject: ctx.params[:email])
+              ctx.json(ok: true)
+            end
+          end
+          app.freeze!
+
+          status, = Ractor.new(app) do |a|
+            a.call("REQUEST_METHOD" => "POST", "PATH_INFO" => "/auth/request/a@b.com")
+          end.value
+
+          assert_equal 200, status
+        end
+      end
+    end
+  end
 end

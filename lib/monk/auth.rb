@@ -23,6 +23,7 @@ module Monk
       # nothing (docs/persistence-ractor-connections.md "Phase 4/5 finding").
       def freeze_registry!
         @config = Ractor.make_shareable(@config)
+        freeze_rqrcode!
       end
 
       def configure(db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [])
@@ -181,6 +182,43 @@ module Monk
 
       def hash_token(raw)
         Digest::SHA256.hexdigest(raw)
+      end
+
+      # rqrcode (used by log_dev_link) is a third-party gem with no
+      # Ractor awareness of its own: several of its lookup tables
+      # (RQRCodeCore::QRUtil::PATTERN_POSITION_TABLE and siblings) are
+      # ordinary, unfrozen constants. Reading one of those from a worker
+      # Ractor -- which is exactly what happens the first time
+      # log_dev_link runs inside a real request under Kino -- raises
+      # Ractor::IsolationError regardless of which Ractor originally
+      # required the gem; only the object's own shareability matters
+      # (confirmed live: requiring rqrcode in the main Ractor first does
+      # not help). Walking its constants here, at boot in the main
+      # Ractor, and freezing each one is the same fix
+      # docs/persistence-ractor-connections.md documents for this exact
+      # class of problem elsewhere in the stack. A no-op if the app
+      # hasn't added rqrcode to its own Gemfile (see log_dev_link).
+      def freeze_rqrcode!
+        require "rqrcode"
+      rescue LoadError
+        nil
+      else
+        freeze_constants!(RQRCodeCore)
+        freeze_constants!(RQRCode)
+      end
+
+      def freeze_constants!(mod, seen = {}.compare_by_identity)
+        return if seen[mod]
+        seen[mod] = true
+
+        mod.constants(false).each do |name|
+          value = mod.const_get(name)
+          if value.is_a?(Module)
+            freeze_constants!(value, seen) if value.name&.start_with?("RQRCode")
+          else
+            Ractor.make_shareable(value)
+          end
+        end
       end
     end
 
