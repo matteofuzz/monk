@@ -1,0 +1,46 @@
+inherit_from: .rubocop_todo.yml
+
+# Tuned to the style the codebase already has (double quotes, trailing commas
+# in multiline literals, no frozen-string-literal magic comment, prose-heavy
+# comments instead of class docs), so a run flags real problems rather than
+# demanding a mass reformat. Run: bundle exec rubocop
+AllCops:
+  TargetRubyVersion: 4.0
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "log/**/*"
+    - "vendor/**/*"
+    - "lib/monk/templates/**/*"
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+Style/TrailingCommaInArguments:
+  EnforcedStyleForMultiline: consistent_comma
+Style/TrailingCommaInHashLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+Style/TrailingCommaInArrayLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+Style/FrozenStringLiteralComment:
+  Enabled: false
+Style/Documentation:
+  Enabled: false
+Layout/LineLength:
+  Max: 120
+Metrics:
+  Enabled: false
+Gemspec/DevelopmentDependencies:
+  Enabled: false
+Gemspec/RequireMFA:
+  Enabled: false
+# The house style indents continuation lines by two, e.g.
+#   raise Monk::Foo,
+#     "message"
+Layout/ArgumentAlignment:
+  EnforcedStyle: with_fixed_indentation
+Layout/FirstArrayElementIndentation:
+  EnforcedStyle: consistent
+Layout/FirstHashElementIndentation:
+  EnforcedStyle: consistent

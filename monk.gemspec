@@ -44,5 +44,6 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
+  spec.add_development_dependency "rubocop", "~> 1.90"
   spec.add_development_dependency "kino"
 end
