@@ -1,6 +1,9 @@
 # Reactive UI via server-pushed HTML partials over the WebSocket
 
-Status: proposed, no code written, 2026-09-17. Grew out of a monk_talk
+Status: built as `Monk::Live` (2026-09-19), see `docs/live.md` for usage and
+`PLAN-LIVE.md` / ADRs 0007-0011 for what was decided and measured. The text
+below is the original proposal, kept as the record of why. Original status:
+proposed, no code written, 2026-09-17. Grew out of a monk_talk
 exploration session that started as "which vanilla-JS reactive library
 fits a chat contact list" (Alpine, petite-vue, Lit, VanJS,
 `@preact/signals-core`, Attractive.js all considered) and ended somewhere

@@ -570,14 +570,48 @@ child process), Redis restarting under a live fanout, and message ordering
 under concurrent publishers (Redis pub/sub keeps per-channel order; not
 asserted here).
 
-### Phase 8 — Scaffold, docs, first consumer
+### Phase 8 — Scaffold, docs, first consumer — DONE in this repo 2026-09-19; monk_talk integration pending
 
-Extend the `websocket_server` scaffold (`lib/monk/templates`) with a
-Monk::Live example; write `docs/live.md` and ADRs from decisions 1–5;
-integrate in monk_talk for the contact list and statuses as the
-acceptance test (the actual reason this exists). Rate-limiting and
-throttling of high-frequency topics (typing indicators) stay app-level per
-the existing chat scope decision.
+**Scaffold: `monk new APP --live`** (`lib/monk/scaffold.rb`, templates under
+`lib/monk/templates/live/`, `test/scaffold_live_test.rb`, 10 tests; full suite
+458 green, RuboCop clean). A fresh app gets a working demo, a counter whose open
+tabs update together:
+- `config/live.rb` (shared by both processes: Redis fanout, `Monk::Live.configure`,
+  a deny-by-default `authorize` rule in a module so the block is shareable, and a
+  `LIVE_WS_URL` setting), `views/live/_hits.erb`, live versions of `config.ru`
+  (`POST /hit` changes a `StateRactor` counter and calls `Monk::Live.patch`),
+  `views/index.erb` (`live_topic "hits"`) and `bin/websocket_server`
+  (`server.run(&Monk::Live::HANDLER)`, still auto-authenticating with `--auth`).
+- The client runtime is **copied from the gem** (`Monk::Live.client_dir`) into
+  `public/js/monk_live/`, byte for byte (tested), not duplicated under
+  `templates/`. The layout gets a `<meta name="monk-live-url">` and the module
+  `<script>`, inserted before `</head>` (guarded, like the other post-write edits).
+- **`--live` implies `--redis`**: `bin/server` and `bin/websocket_server` are
+  separate processes, so a publish only reaches a socket through Redis.
+  Composes with `--postgres`/`--auth` (the config.ru wiring still finds its anchor).
+- SETUP.md gets a "Live updates" section (three things to run, where each piece
+  lives, `WS_ALLOWED_ORIGINS`, `LIVE_WS_URL`); `monk help` documents the flag.
+
+**Acceptance check on a generated app (manual, not in the suite):** generated
+with `--live`, bundled against this checkout, `bin/websocket_server` and
+`bin/server` booted against the local Redis, and two real Chrome tabs driven
+with Ferrum. A click in tab A moved tab B's counter, and a marker set in tab B's
+page survived (so B was patched, not reloaded), with a `monk-live:patched`
+event fired. It isn't an automated test because it needs `bundle install` of a
+generated app, a network and two servers; the scaffold tests plus the
+cross-process tests from Phase 7 cover its parts.
+
+**Docs:** `docs/live.md` (the usage guide), a README section and status line,
+`CHANGELOG.md` (*Unreleased* / Added), CONTEXT.md glossary terms (Live, Topic,
+Patch, Live partial, Resync), and `docs/reactive-partials.md` now points at what
+was built. ADRs 0007-0011 were written up front.
+
+**Not done: the monk_talk integration** (a contact list with live statuses, the
+original reason for all this). It is a separate repository (`../monk_talk`,
+which depends on this one by path) with its own branch and uncommitted work, and
+the contact list itself doesn't exist there yet, so it is a feature of its own
+rather than a wiring step. Rate limiting and throttling of chatty topics (typing
+indicators) stay app-level, per the chat scope decision.
 
 ## Explicitly out of scope for v0
 
@@ -588,8 +622,8 @@ presence tracking, history/replay beyond snapshot-on-subscribe.
 ## Risks worth watching
 
 - ~~Phase 0's Ractor rendering result could force a redesign of Phase 1~~
-  Resolved by the spike: rendering from a non-main Ractor works as-is.
-  Remaining Phase 0 items (client morph, fan-out cost) are still open.
+  Resolved by the spike: rendering from a non-main Ractor works as-is. The
+  client-morph and fan-out-cost spikes also came out fine (Phase 0).
 - Authorization (Phase 3) leaking patch content is the worst failure mode;
   fragments must never be rendered with data the subscriber can't see.
 - Per-viewer fragments defeat render-once and re-create the cost problem;

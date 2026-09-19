@@ -6,6 +6,21 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Added
+
+- **`Monk::Live`** (`require "monk/live"`, opt-in): push server-rendered HTML
+  to open browser tabs. `Monk::Live.patch/append/prepend/remove/batch`
+  render a `Monk::Views` partial once and broadcast it (through a
+  `Monk::WebSocket::Registry`, or a `RedisFanout` across processes) to a
+  topic's subscribers; `Monk::Live::HANDLER` serves the sockets, with
+  deny-by-default `Monk::Live.authorize` rules; the `live_topic` view helper
+  marks what a page subscribes to; and a browser runtime (shipped in the gem,
+  `Monk::Live.client_dir`, vendoring idiomorph for the DOM morph) applies
+  patches while keeping focus and typed text, reconnects, and re-syncs by
+  refetching the page. See `docs/live.md`.
+- **`monk new APP --live`**: scaffolds a Monk::Live demo (a counter whose
+  open tabs update together). Implies `--redis`.
+
 ### Fixed
 
 - **`Monk::WebSocket::Frame.encode` raised `Encoding::CompatibilityError` for

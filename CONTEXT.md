@@ -39,3 +39,24 @@ _Avoid_: RACK_ENV, environment, mode
 **LOG_LEVEL**:
 The minimum severity `Monk::Log`'s `.debug`/`.info`/`.warn`/`.error` methods actually write, one of four values — `debug`, `info` (the default when unset), `warn`, `error`, least to most severe. Internally it's just the `:log_level` key inside `Settings`, resolved once at `Boot` into `Monk::Log`'s own threshold rather than read per call. A call below the threshold is a no-op, not buffered or dropped after formatting — cheap enough to leave debug logging in place across environments rather than stripping it. Distinct from `#write`, `Monk::Log`'s unconditional per-request access-log line, which `LOG_LEVEL` never gates.
 _Avoid_: verbosity, log verbosity, debug mode
+
+**Live**:
+`Monk::Live`: an opt-in layer (`require "monk/live"`) above `Monk::WebSocket` that pushes server-rendered HTML to open browser tabs. Server-owned state stays on the server: a route changes it and calls `Monk::Live.patch`, and a small client morphs the resulting fragment into the page, so there is no client-side copy to keep in sync. Lives beside `Monk::WebSocket` and `Monk::Auth` in `lib/monk/`, and neither of those depends on it.
+_Avoid_: LiveView, reactive framework, realtime layer
+
+**Topic**:
+An opaque name (`"contacts:7"`) that publishers address and pages subscribe to; it maps onto a `Registry` key. Both per-recipient topics (`contacts:7`) and per-entity ones (`contact:42`) work on the same primitive. Subscribing is denied by default: only a topic matched by a `Monk::Live.authorize` rule is allowed, and an anonymous connection is denied unless the rule says `anonymous: true`.
+_Avoid_: Channel, room, stream
+
+**Patch**:
+One DOM operation pushed to a page: a CSS selector, a mode (`morph`, `replace`, `append`, `prepend`, `remove`) and HTML. A publish is a patch, or a batch of them, rendered once by the publisher and shared by reference (as a frozen String) with every subscriber.
+_Avoid_: Update, diff, delta
+
+**Live partial**:
+A `Monk::Views` template rendered for a patch. It runs with a detached `Context`, not a request, so it sees only its `locals` (`locals[:contact]`), never `params`, the session or per-request helpers, and it is never wrapped in the default layout.
+_Avoid_: Component, widget
+
+**Resync**:
+How the client recovers when it may have missed a patch (a `seq` gap, a reconnect, a failed refetch): it refetches the current page over HTTP and morphs it in, keeping focus and typed text. The page's own view is the only definition of what a region looks like, so patches are an optimization over "the page can always be re-fetched". If the refetch isn't the app page (an error, a non-HTML answer, any redirect) the client stops instead of morphing.
+_Avoid_: Snapshot, refresh, replay
+

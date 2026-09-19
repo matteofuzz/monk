@@ -542,6 +542,26 @@ subscriber Ractors deliver it to their own local connections. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it
 needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
 
+## Live updates — `Monk::Live`
+
+Push server-rendered HTML to every open tab: change some state in a route,
+call `Monk::Live.patch`, and pages showing it update by themselves.
+
+```ruby
+# a route
+Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/_row", contact: contact
+```
+```erb
+<ul <%= live_topic "contacts:7" %>> ... </ul>   <%# a page subscribes to a topic %>
+```
+
+The partial is an ordinary view, rendered once and fanned out over
+`Monk::WebSocket` (and Redis between the HTTP and WebSocket processes); a
+small client (idiomorph, about 9KB, does the DOM morph) keeps focus and typed
+text, reconnects, and re-syncs on its own. Subscriptions are denied unless a rule allows them. Opt-in
+(`require "monk/live"`); `monk new my_app --live` scaffolds a working demo.
+Full guide: [`docs/live.md`](docs/live.md).
+
 ## Scaffolding a new project — `monk new`
 
 ```
@@ -555,6 +575,10 @@ monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a mi
 monk new my_app --redis      # + the redis gem, for bin/websocket_server's cross-process
                               #   fan-out; writes/extends .env/.env.example with a placeholder
                               #   REDIS_URL either way, whether or not --postgres is also set
+monk new my_app --live       # + --redis, above, plus a Monk::Live demo (a counter whose open tabs update
+                              #   together): config/live.rb, views/live/, the browser runtime under
+                              #   public/js/monk_live/, and live versions of config.ru, views/index.erb
+                              #   and bin/websocket_server
 ```
 
 Writes a fresh project directory from static templates (never overwrites
@@ -722,4 +746,6 @@ process, reusing `Monk::Auth` for the handshake, plus cross-process
 fan-out over Redis pub/sub via `Monk::WebSocket::RedisFanout`,
 `docs/websocket.md` / `PLAN-WEBSOCKET.md`), and **log levels** (`Monk::Log`
 `.debug`/`.info`/`.warn`/`.error`, gated by the implicit `LOG_LEVEL`
-setting) — all done as of 2026-09-09.
+setting) — all done as of 2026-09-09 — and **live updates** (`Monk::Live`,
+server-rendered HTML patches pushed over the WebSocket, `docs/live.md` /
+`PLAN-LIVE.md`), done as of 2026-09-19.
