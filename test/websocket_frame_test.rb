@@ -109,4 +109,18 @@ class WebSocketFrameTest < Minitest::Test
       assert_equal opcode, frame[:opcode], "expected #{name} (#{opcode}) to round-trip"
     end
   end
+
+  # A UTF-8 String with non-ASCII characters used to raise
+  # Encoding::CompatibilityError here: the frame header is a BINARY string
+  # containing the non-ASCII byte 0x81, which can't be concatenated with a
+  # UTF-8 payload that also has non-ASCII bytes. Only ASCII text (and BINARY
+  # payloads, which is all a client message ever is) worked.
+  def test_encode_accepts_utf8_text_with_non_ascii_characters_at_every_length_class
+    ["caff\u00e8 \u2603", "\u00e8" * 100, "\u2603" * 30_000].each do |text|
+      bytes = Monk::WebSocket::Frame.encode(text, opcode: 0x1)
+
+      assert_equal Encoding::BINARY, bytes.encoding
+      assert_equal text.b, Monk::WebSocket::Frame.decode(bytes)[:payload].b, "#{text.bytesize} bytes"
+    end
+  end
 end

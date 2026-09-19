@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Fixed
+
+- **`Monk::WebSocket::Frame.encode` raised `Encoding::CompatibilityError` for
+  any UTF-8 text containing non-ASCII characters** (`"caffè"`, `"☃"`, an
+  emoji): the frame header is a BINARY string holding a non-ASCII byte and
+  can't be concatenated with such a payload. Only ASCII text and BINARY
+  payloads (which is all a client message ever is, so echoing chat worked)
+  were sendable. The payload is now sent as bytes. Found by the Monk::Live
+  cross-process tests, where a fragment with an accent silently never
+  arrived.
+
 ## 0.12.5 - 2026-09-18
 
 ### Added

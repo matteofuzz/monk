@@ -56,7 +56,10 @@ module Monk
             [127].pack("C") + [payload.bytesize].pack("Q>")
           end
 
-        [byte0].pack("C") + length_bytes + payload
+        # payload.b: the header is BINARY and holds non-ASCII bytes, so a
+        # UTF-8 payload with non-ASCII characters can't be concatenated to it
+        # (Encoding::CompatibilityError). Frames are bytes on the wire.
+        [byte0].pack("C") + length_bytes + payload.b
       end
 
       def self.unmask(payload, mask_key)
