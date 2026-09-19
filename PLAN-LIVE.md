@@ -1,4 +1,4 @@
-# MonkLive — implementation plan (first draft)
+# Monk::Live — implementation plan (first draft)
 
 Branch: not yet created — nothing in this plan is implemented. Companion
 doc: `docs/reactive-partials.md` (the why, prior art, and the sketch this
@@ -12,23 +12,32 @@ phase that depends on them.
 
 ## Naming and packaging
 
-`MonkLive` (top-level, not `Monk::Live`) — opt-in like `Monk::WebSocket`
-and `Monk::Auth`: `require "monk_live"` explicitly, `require "monk"` alone
-never loads it (mirrors PLAN-WEBSOCKET.md Decision 7). It depends on
-`Monk::WebSocket` and `Monk::Views`; neither depends on it. Open: ship in
-the same gem (`lib/monk_live.rb` + `lib/monk_live/`) or a separate gem
-later. Start in-repo; the one-way dependency keeps extraction cheap.
+`Monk::Live`, in `lib/monk/live.rb` + `lib/monk/live/` like every other Monk
+module. Opt-in like `Monk::WebSocket` and `Monk::Auth`: `require "monk/live"`
+explicitly, `require "monk"` alone never loads it (mirrors
+PLAN-WEBSOCKET.md Decision 7). It depends on `Monk::WebSocket` and
+`Monk::Views`; neither depends on it. Starts in this gem; the one-way
+dependency keeps extraction into a separate gem cheap. (An earlier draft
+had a top-level `MonkLive`; dropped, see ADR 0008.) JS-side names stay
+`monk-live` (`public/monk_live.js`, `monk-live:*` DOM events).
 
-## Decisions to make up front (each gets a short ADR before its phase)
+## Decisions to make up front
+
+Written up front as ADRs (2026-09-19), after the Phase 0 spikes, in `docs/adr/`:
+0007 (own envelope + client, vendored idiomorph), 0008 (layer above
+`Monk::WebSocket`), 0009 (topics are opaque names, deny-by-default
+authorization), 0010 (render once in the publisher's Ractor, frozen
+payload; covers decisions 4 and 5), 0011 (resync by page refetch). The
+list below is the working summary; the ADRs are the record.
 
 1. **Own envelope + own tiny client vs. adopt htmx-ws / Datastar / Turbo.**
    Recommendation: own envelope, own ~100-line client JS, vendored morph
    library (idiomorph). Reason from the doc: everything else brings its
    own connection ownership that competes with `Monk::WebSocket`.
-2. **Layer, not a WebSocket feature.** MonkLive sits on top of
+2. **Layer, not a WebSocket feature.** Monk::Live sits on top of
    `Monk::WebSocket` (uses `Server`, `Connection`, `Registry`) and adds
    nothing to its wire code. The WS layer already carries opaque text
-   frames; MonkLive defines what's *in* them. Resolves the doc's "where
+   frames; Monk::Live defines what's *in* them. Resolves the doc's "where
    does this live" question without waiting on RedisFanout.
 3. **Topic-addressed, not connection-addressed.** App code says
    "topic `contact:42` changed"; it never handles connection handles.
@@ -61,15 +70,15 @@ Server:
   with a helper: `<ul id="contacts" <%= live_topic "contacts:#{current_user.id}" %>>`
   (accepts several topics; expands to `data-live-topic`).
 - Publishing uses **keywords**:
-  `MonkLive.patch "contacts:7", to: "#contact-42", partial: "contacts/row", contact: c`.
+  `Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/row", contact: c`.
   Same for `append`, `prepend`, `remove` (no partial), and
-  `MonkLive.batch topic do |b| ... end` for several ops in one frame.
+  `Monk::Live.batch topic do |b| ... end` for several ops in one frame.
   `topic` is the only positional argument; `to:`, `partial:` and `mode:`
   are reserved keyword names, everything else is passed to the partial as
   locals. Reserved names must be documented (a local called `to` is the
   price of this syntax) and rejected loudly, not shadowed silently.
 - Authorization at boot, deny by default:
-  `MonkLive.authorize("contacts:*") { |subject, topic| ... }`.
+  `Monk::Live.authorize("contacts:*") { |subject, topic| ... }`.
 
 Client:
 
@@ -83,7 +92,7 @@ Client:
   input/textarea/contenteditable (and its value/selection). `data-live-ignore`
   is the manual override for anything else (an open widget, a
   third-party-managed node).
-- Client-local state (panels, modals) stays out of MonkLive entirely
+- Client-local state (panels, modals) stays out of Monk::Live entirely
   (Attractive.js or plain attributes).
 
 ## Wire protocol (server → client), v0
@@ -118,10 +127,10 @@ than silently rendering a stale page. Client → server in v0: `subscribe`
   - **Requires `Monk.freeze!` in the rendering process.** Without it:
     `Ractor::IsolationError ... @registry from Monk::Views`.
     `Monk::WebSocket::Server` only calls it when `authenticate: true`, so
-    MonkLive must call it itself at boot and fail fast with a clear error
+    Monk::Live must call it itself at boot and fail fast with a clear error
     (ADR 0003 posture), not leave it to the app.
   - **The default layout wraps a fragment** (`render` without
-    `layout: false` returned `<html><body>…`). MonkLive's renderer must
+    `layout: false` returned `<html><body>…`). Monk::Live's renderer must
     force `layout: false`; never trust the caller to remember.
   - **Locals are read as `locals[:contact]` in templates, not bare
     `contact`.** This is existing Monk behavior (README/`docs/views.md`),
@@ -146,7 +155,7 @@ than silently rendering a stale page. Client → server in v0: `subscribe`
   - **Consequence for the design:** publishing can render in the
     publisher's own Ractor (a request worker) with no extra Ractor and
     no new machinery; a dedicated renderer Ractor is an option, not a
-    need. Phase 1 shrinks to "a `MonkLive` renderer that builds a
+    need. Phase 1 shrinks to "a `Monk::Live` renderer that builds a
     detached Context, forces `layout: false`, and ensures freeze".
 - **Client spike — DONE 2026-09-19, morph approach confirmed with one
   gap.** ~60-line client + idiomorph 0.7.3 (9KB minified) against a real
@@ -241,8 +250,8 @@ existing views with `layout: nil` — decide from the spike.
 
 ### Phase 2 — Envelope + publisher
 
-`MonkLive::Envelope` (build/serialize, shareable, frozen) and
-`MonkLive::Publisher`, exposed as `MonkLive.patch/append/prepend/remove/batch`
+`Monk::Live::Envelope` (build/serialize, shareable, frozen) and
+`Monk::Live::Publisher`, exposed as `Monk::Live.patch/append/prepend/remove/batch`
 with the keyword syntax from "Ergonomics": render once →
 `Registry#broadcast(topic, envelope_json)`. Tests include: reserved keyword
 names rejected, remaining keywords reach the partial as locals. Tests against
@@ -287,7 +296,7 @@ page over the app.
 
 **Possible future evolution (not v0): explicit snapshots.** If a full
 refetch proves too heavy (large pages, frequent reconnects on flaky
-mobile links) or too coarse, add `MonkLive.snapshot("contacts:*") { |subject, topic| ... }`
+mobile links) or too coarse, add `Monk::Live.snapshot("contacts:*") { |subject, topic| ... }`
 returning per-target partials, so a reconnect re-renders only the regions
 subscribed to instead of the whole page. Costs to weigh then: a second
 definition of the region's markup that can drift from the page's initial
@@ -300,7 +309,7 @@ server may answer either way).
 ### Phase 6 — Optimistic UI rule
 
 Resolve the `pendingByClientId` question. Recommendation for v0: **no
-optimistic rendering in MonkLive**; client-local sprinkles may show a
+optimistic rendering in Monk::Live**; client-local sprinkles may show a
 pending state, and the server round-trip is the only thing that writes
 server-owned DOM. Revisit only if latency demands it; if so, patches carry
 an optional `client_id` so the client can replace, not duplicate.
@@ -317,7 +326,7 @@ the Redis hop, and confirm `seq` is assigned per-connection at the edge
 ### Phase 8 — Scaffold, docs, first consumer
 
 Extend the `websocket_server` scaffold (`lib/monk/templates`) with a
-MonkLive example; write `docs/live.md` and ADRs from decisions 1–5;
+Monk::Live example; write `docs/live.md` and ADRs from decisions 1–5;
 integrate in monk_talk for the contact list and statuses as the
 acceptance test (the actual reason this exists). Rate-limiting and
 throttling of high-frequency topics (typing indicators) stay app-level per
