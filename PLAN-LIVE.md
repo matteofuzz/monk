@@ -375,16 +375,76 @@ Usage in a WS process:
   - The client runtime doesn't exist yet, so `subscribe` is only exercised
     from tests (Phase 4 sends it from `data-live-topic`).
 
-### Phase 4 — Client runtime
+### Phase 4 — Client runtime — DONE 2026-09-19
 
-`public/monk_live.js`, served via `Monk::Assets`, plus vendored morph
-lib. Owns: applying envelopes, `seq` gap detection → resync (page
-refetch, Phase 5), reconnect with backoff (absorbs the logic hand-written
-in monk_talk's `chat.js`), re-subscribe of the topic set after reconnect,
-automatic focus protection + `data-live-ignore`, and the `monk-live:*` DOM
-events (no JS API). Tested with a headless
-DOM (decide: jsdom via node, or browser-driven; check what the repo
-already uses for JS, if anything).
+Files (all under `lib/monk/live/client/`, so they ship in the gem; the
+directory is `Monk::Live.client_dir`, and an app serves or copies it as a
+unit because the files import each other by relative path):
+`monk_live.js` (browser glue), `protocol.js` (pure logic),
+`idiomorph.js` (vendored 0.7.3, see below). Ruby side:
+`Monk::Live::Helpers#live_topic` (mixed into `Monk::Context` on
+`require "monk/live"`).
+
+Page wiring:
+
+    <meta name="monk-live-url" content="ws://localhost:9293">
+    <ul id="contacts" <%= live_topic "contacts:#{current_user.id}" %>> ... </ul>
+    <script type="module" src="/js/monk_live.js"></script>
+
+**Testing, the hybrid (decided 2026-09-19):**
+- **Node layer:** `test/js/protocol.test.js` (11 tests) runs under Node's
+  built-in `node --test`, no npm or `package.json`; `test/live_client_js_test.rb`
+  runs it inside `rake test` and skips without Node >= 22.7.
+- **Browser layer:** `test/live_client_browser_test.rb` (10 tests) drives real
+  headless Chrome through Ferrum against a real `Monk::WebSocket::Server`
+  running `Monk::Live::HANDLER`, with a small HTTP server for the page and a
+  TCP proxy that can cut the connection or drop one server frame
+  (`test/live_browser_helpers.rb`). Skips without Ferrum/Chrome. Ferrum is a
+  gemspec development dependency, so it is excluded from the Docker image.
+- **Mutation-checked:** breaking the client's focus, `data-live-ignore` and
+  `<details>` protections made the corresponding tests fail; restored, all
+  green. Browser tests run 3x with no flakes. Full suite 431 green.
+
+What the client does (each covered by a browser test unless noted):
+- Subscribes to every `data-live-topic` on the page (space-separated, several
+  elements merged); a page with none never opens a connection.
+- Applies `patch` and `batch` envelopes: modes `morph` (idiomorph), `replace`,
+  `append`, `prepend`, `remove`; selectors match with `querySelectorAll` (one
+  op can patch many nodes); an invalid selector warns and is skipped.
+- **Focus, typed value and selection survive a morph**, both in a sibling and
+  inside the patched node (idiomorph `ignoreActiveValue`).
+- **`data-live-ignore`:** the subtree is never morphed or targeted.
+- **`<details open>` is preserved by default** (decision for the Phase 0
+  gap): a patch does not close what the user opened. Consequence: the server
+  cannot force a `<details>` closed with a patch; use `replace` mode (which
+  swaps the node outright) for that.
+- **`seq` gap detection** → resync. A lost frame (proxy drops one) fires
+  `monk-live:gap` and refetches the page.
+- **Reconnect** with backoff (500ms doubling, 30s cap, the `chat.js` numbers),
+  resubscribes, and **resyncs after the server acks the subscription** (not
+  before, or a patch published between fetch and subscribe would be lost).
+- **Resync** = refetch the page URL and morph `<body>` (ADR 0011); a resync
+  that brings new `data-live-topic` regions subscribes to them (and
+  unsubscribes from dropped ones). A non-OK status, a non-HTML response or
+  any redirect **stops the runtime** (`monk-live:stopped`, reason
+  `redirected`/`status_N`) leaving the page untouched, with no further
+  reconnects.
+- **Events, all on `document`, no JS API:** `monk-live:connected`,
+  `disconnected`, `subscribed` (`{topics, denied}`; denials also `console.warn`),
+  `patched` (`{target, mode, matched}`), `gap`, `resynced`, `resync-failed`,
+  `stopped`. Envelopes carry no topic, so `patched` has none either (the
+  earlier sketch listed one; adding it would mean a topic field on the wire).
+- **Vendoring:** `idiomorph.js` is `dist/idiomorph.min.js` (9.3KB) plus one
+  `export { Idiomorph };` line so it loads as an ES module, license text
+  alongside. Its license is **Zero-Clause BSD**, not BSD-2 as ADR 0007 said
+  (corrected there).
+- **Not covered:** Firefox/Safari (Chrome only, as ever), IME composition,
+  `monk-live:resync-failed` retry behavior (the flag retries on the next
+  connect/gap only), and interplay with Attractive.js state.
+- **Not done, deliberately:** serving the files. How an app gets
+  `client_dir` into its assets (scaffold copy vs. an assets mount) is
+  Phase 8's scaffold work; today an app copies the directory into its
+  public root.
 
 ### Phase 5 — Resync and initial state
 
