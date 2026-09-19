@@ -239,14 +239,38 @@ than silently rendering a stale page. Client → server in v0: `subscribe`
     Ractor at 1k+, and batching many small patches (the `batch` op) vs
     many broadcasts. Carry into Phase 2 and 7 tests.
 
-### Phase 1 — Fragment rendering
+### Phase 1 — Fragment rendering — DONE 2026-09-19
 
-`Monk::Views` gets a way to render a template *without a layout and
-without an HTTP response*, from a context built for it. Tests: partial
-renders to a String; HTML-escaping (ADR 0005) still applies; unknown
-partial raises the same boot/render errors as pages; works from a
-non-main Ractor. Partial naming convention: `views/_name.erb`, or reuse
-existing views with `layout: nil` — decide from the spike.
+Built as `Monk::Live::Renderer.render(partial, **locals)` in
+`lib/monk/live/renderer.rb` (+ `errors.rb`, and `lib/monk/live.rb` as the
+opt-in entry point), tests in `test/live_renderer_test.rb` (11 tests, full
+suite 358 green). `Monk::Views` itself needed **no change**, as the
+Phase 0 spike predicted: the renderer builds a detached
+`Monk::Context.new({})` and calls its `render(..., layout: false)`.
+
+- Returns a **frozen plain String** (not `Views::Raw`), so it is
+  Ractor-shareable and a broadcast passes a reference (ADR 0010).
+- Never wraps in the default layout; a `layout:` local is rejected with
+  `ArgumentError` instead of being swallowed by `Context#render`'s own
+  keyword.
+- HTML-escaping (ADR 0005), nested partials and `TemplateNotFoundError` for
+  an unknown partial behave exactly as for pages.
+- Unfrozen views raise `Monk::Live::NotFrozenError` ("call Monk.freeze! or
+  Monk.boot(app) in the main Ractor first"), in the main Ractor *and*
+  from a non-main Ractor (where the raw failure would be an opaque
+  `Ractor::IsolationError`).
+- Works from a non-main Ractor.
+- **Persistence open question closed:** `Monk::Persistence::Pg::Model`
+  returns plain Hash rows, not model instances, and an unfrozen Hash row
+  copied into a Ractor renders fine. (Postgres wasn't needed to test it.)
+- **Partial naming convention: none enforced.** Any compiled template
+  renders; `_name.erb` is a convention only, since Monk has no partial
+  concept beyond "a template called from another".
+- **Deferred to Phase 2, deliberately:** the *boot* half of "freeze at
+  boot, fail fast". Phase 1 only guards the render; the code that
+  actually calls `Monk.freeze!` belongs where a publisher is constructed
+  (as `Monk::WebSocket::Server.new` does for `authenticate: true`), which
+  is Phase 2.
 
 ### Phase 2 — Envelope + publisher
 
