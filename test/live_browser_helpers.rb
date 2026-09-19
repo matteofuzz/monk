@@ -8,7 +8,63 @@ require "monk/live"
 # Monk::Live::HANDLER, and a tiny HTTP server for the page and the client
 # files. They skip when Ferrum or Chrome aren't available, the same way the
 # Postgres and Redis tests skip.
+module LiveBrowserPage
+  EVENTS = %w[connected disconnected subscribed patched gap resynced resync-failed stopped].freeze
+
+  # Serves `body_html` as the app page (with the client wired in and every
+  # monk-live event recorded on window.__events) and opens it.
+  def open_page(body_html, topics_ready: nil)
+    @pages.serve_page(page_html(body_html))
+    @page.go_to("http://127.0.0.1:#{@pages.port}/page")
+    return unless topics_ready != false
+
+    wait_for("client subscribed") do
+      evaluate("window.__events.some(e => e.name === 'subscribed')")
+    end
+  end
+
+  def page_html(body_html)
+    <<~HTML
+      <!doctype html><meta charset="utf-8">
+      <meta name="monk-live-url" content="ws://127.0.0.1:#{@proxy.port}">
+      <script>
+        window.__events = [];
+        #{EVENTS.to_json}.forEach(n => document.addEventListener("monk-live:" + n,
+          e => window.__events.push({ name: n, detail: e.detail, at: performance.now() })));
+      </script>
+      <body>#{body_html}<script type="module" src="/js/monk_live.js"></script></body>
+    HTML
+  end
+
+  # Ferrum wraps this in `return <js>`, so anything after a first `;`
+  # never runs: wrap multi-statement scripts in an IIFE.
+  def evaluate(script)
+    @page.evaluate(script)
+  end
+
+  # Runs a multi-statement body (use `return` for a result) as an IIFE.
+  def run_js(body)
+    evaluate("(() => { #{body} })()")
+  end
+
+  def events(name)
+    evaluate("window.__events.filter(e => e.name === #{name.to_json}).map(e => e.detail)")
+  end
+
+  def wait_for(what, timeout: 6)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    until (result = yield)
+      raise "timed out waiting for #{what}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.05
+    end
+    result
+  end
+end
+
 module LiveBrowserHelpers
+  include LiveBrowserPage
+
   CLIENT_DIR = File.expand_path("../lib/monk/live/client", __dir__)
 
   # One Chrome for the whole run: starting it costs about a second.
@@ -134,6 +190,8 @@ module LiveBrowserHelpers
       loop { to.write(from.readpartial(16_384)) }
     rescue IOError, SystemCallError
       nil
+    ensure
+      close_pair(from, to)
     end
 
     # Server -> client: forward the HTTP 101, then walk the (unmasked)
@@ -156,10 +214,16 @@ module LiveBrowserHelpers
       end
     rescue IOError, SystemCallError
       nil
+    ensure
+      close_pair(from, to)
+    end
+
+    # Either side going away ends the whole connection, as a real network
+    # (or a killed server) would.
+    def close_pair(*sockets)
+      sockets.each { |socket| socket.close unless socket.closed? }
     end
   end
-
-  EVENTS = %w[connected disconnected subscribed patched gap resynced resync-failed stopped].freeze
 
   def setup
     skip "Ferrum/Chrome not available" unless LiveBrowserHelpers.browser
@@ -181,55 +245,5 @@ module LiveBrowserHelpers
     @proxy&.close
     @ws_thread&.kill
     Monk::Live.reset!
-  end
-
-  # Serves `body_html` as the app page (with the client wired in and every
-  # monk-live event recorded on window.__events) and opens it.
-  def open_page(body_html, topics_ready: nil)
-    @pages.serve_page(page_html(body_html))
-    @page.go_to("http://127.0.0.1:#{@pages.port}/page")
-    return unless topics_ready != false
-
-    wait_for("client subscribed") do
-      evaluate("window.__events.some(e => e.name === 'subscribed')")
-    end
-  end
-
-  def page_html(body_html)
-    <<~HTML
-      <!doctype html><meta charset="utf-8">
-      <meta name="monk-live-url" content="ws://127.0.0.1:#{@proxy.port}">
-      <script>
-        window.__events = [];
-        #{EVENTS.to_json}.forEach(n => document.addEventListener("monk-live:" + n,
-          e => window.__events.push({ name: n, detail: e.detail, at: performance.now() })));
-      </script>
-      <body>#{body_html}<script type="module" src="/js/monk_live.js"></script></body>
-    HTML
-  end
-
-  # Ferrum wraps this in `return <js>`, so anything after a first `;`
-  # never runs: wrap multi-statement scripts in an IIFE.
-  def evaluate(script)
-    @page.evaluate(script)
-  end
-
-  # Runs a multi-statement body (use `return` for a result) as an IIFE.
-  def run_js(body)
-    evaluate("(() => { #{body} })()")
-  end
-
-  def events(name)
-    evaluate("window.__events.filter(e => e.name === #{name.to_json}).map(e => e.detail)")
-  end
-
-  def wait_for(what, timeout: 6)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until (result = yield)
-      raise "timed out waiting for #{what}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-
-      sleep 0.05
-    end
-    result
   end
 end

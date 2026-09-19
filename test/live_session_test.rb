@@ -14,7 +14,7 @@ class LiveSessionTest < Minitest::Test
 
   # A connection stand-in: Session only needs #read, #write and #subject.
   class FakeConnection
-    attr_reader :subject, :outbox
+    attr_reader :subject, :outbox, :closed_with
 
     def initialize(subject)
       @subject = subject
@@ -23,7 +23,20 @@ class LiveSessionTest < Minitest::Test
     end
 
     def read = @inbox.pop
-    def write(payload, **) = @outbox << payload
+
+    def write(payload, **)
+      raise EncodingError, "simulated write failure" if @fail_writes && payload.include?('"seq"')
+
+      @outbox << payload
+    end
+
+    def fail_relayed_writes! = @fail_writes = true
+
+    def close(code:, reason:)
+      @closed_with = [code, reason]
+      @inbox << nil # what a real Connection#read reports after a close
+    end
+
     def send_message(message) = @inbox << (message.is_a?(String) ? message : JSON.generate(message))
     def hang_up = @inbox << nil
   end
@@ -207,6 +220,36 @@ class LiveSessionTest < Minitest::Test
     assert_equal ["t:1"], next_json(connection)["topics"]
   end
 
+  def test_a_failing_relay_closes_the_connection_instead_of_leaving_it_silently_stale
+    Monk::Live.authorize("t:*", &ALLOW)
+    connection, thread = start_session("7", with_thread: true)
+    connection.send_message(op: "subscribe", topics: ["t:1"])
+    next_json(connection)
+    connection.fail_relayed_writes!
+
+    silence_stderr { @publisher.remove("t:1", to: "#a") }
+    thread.join(3)
+
+    assert_equal [1011, "relay failed"], connection.closed_with
+    assert_equal 0, @registry.count(:"t:1"), "the session did not clean up after closing"
+  end
+
+  def test_the_real_handler_relays_non_ascii_fragments_over_a_socket
+    Monk::Live.configure(registry: @registry)
+    Monk::Live.authorize("public:*", anonymous: true, &ALLOW)
+    server = start_server(&Monk::Live::HANDLER)
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket)
+    socket.write(Monk::WebSocket::Frame.encode(JSON.generate(op: "subscribe", topics: ["public:news"]), opcode: 0x1))
+    Timeout.timeout(3) { read_frame(socket) }
+
+    @publisher.remove("public:news", to: "#caff\u00e8-\u2603")
+
+    assert_equal "#caff\u00e8-\u2603", JSON.parse(Timeout.timeout(3) { read_frame(socket) })["target"]
+  ensure
+    socket&.close
+  end
+
   def test_hanging_up_removes_every_registration
     Monk::Live.authorize("t:*", &ALLOW)
     connection, thread = start_session("7", with_thread: true)
@@ -270,6 +313,16 @@ class LiveSessionTest < Minitest::Test
     end
     @sessions << [connection, thread]
     with_thread ? [connection, thread] : connection
+  end
+
+  # The relay thread reports the failure it is about to close over on stderr.
+  def silence_stderr
+    original = $stderr
+    $stderr = StringIO.new
+    yield
+    sleep 0.3 # let the relay thread run
+  ensure
+    $stderr = original
   end
 
   def next_json(connection)

@@ -100,6 +100,12 @@ module Monk
         end
       rescue Ractor::ClosedError, IOError, SystemCallError
         # cleanup closed the port, or the socket went away first.
+      rescue StandardError => e
+        # Anything else would leave a connected client silently receiving
+        # nothing: a stale page nobody knows is stale. Closing makes the
+        # client reconnect and resync (ADR 0011), which is the recovery.
+        warn "monk-live: relay failed, closing connection: #{e.class}: #{e.message}"
+        @connection.close(code: 1011, reason: "relay failed")
       end
 
       # On every exit path -- clean hang-up, close handshake, a crashed

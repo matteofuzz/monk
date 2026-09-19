@@ -1,4 +1,7 @@
 require_relative "../monk"
+# Live sits on top of the WebSocket layer (ADR 0008): loading one loads the
+# other, so a WS process or a publisher-only one needn't remember both.
+require_relative "websocket"
 require_relative "live/errors"
 require_relative "live/renderer"
 require_relative "live/envelope"

@@ -512,14 +512,63 @@ resync-by-refetch model safe: there is no locally invented state to conflict
 with. monk_talk's `chat.js` keeps its own `pendingByClientId` handling for
 its message list until/unless that moves onto Monk::Live.
 
-### Phase 7 — Multi-process
+### Phase 7 — Multi-process — DONE 2026-09-19
 
-Nothing new should be needed if the Publisher only goes through the
-`Registry`-shaped interface: `RedisFanout` wraps it transparently. This
-phase is a verification slice — run the Phase 2/5 tests through
-`RedisFanout`, confirm the render-once fragment (a plain String) survives
-the Redis hop, and confirm `seq` is assigned per-connection at the edge
-(not by the publisher, or it breaks across processes).
+Verified for real, not with two fanouts in one process: the publisher is the
+test process (a `RedisFanout` around its own `Registry`, rendering the
+partial), and the WebSocket server is a **separate OS process**
+(`test/support/live_ws_process.rb`: `Monk::Live::HANDLER` on a `RedisFanout`),
+sharing only Redis. Tests: `test/live_redis_test.rb` (6, raw-socket clients)
+and `test/live_multiprocess_browser_test.rb` (2, Chrome through the whole
+stack); helpers in `test/live_multiprocess_helpers.rb`. Skips without Redis.
+Full suite 448 green, RuboCop clean.
+
+Proven:
+- A fragment rendered in one process reaches a WS client connected to another,
+  through Redis, with the envelope intact.
+- **`seq` is per connection, stamped at the edge:** a connection that joins
+  late starts at 1 while an older one carries on at 3, with the publisher
+  stamping nothing. (This is why the publisher's string can be shared and
+  frozen; see Phase 3.)
+- Topics stay separate across the hop; a subscriber in the publishing process
+  gets each message once (the fanout's origin tag), the remote one too.
+- A 150KB multi-line fragment with quotes, backslashes, tabs and unicode
+  arrives byte-for-byte.
+- Publishing from a **non-main Ractor** (a request worker's situation) through
+  `Monk::Live.patch` and a `RedisFanout` reaches the other process.
+- Full stack in Chrome: a patch published here morphs a page whose socket is
+  served by the other process. Killing the WS process is noticed by the
+  client, which keeps the page intact and keeps retrying.
+
+**Bugs this found (the point of a verification slice):**
+1. **`Monk::WebSocket::Frame.encode` raised `Encoding::CompatibilityError` for
+   any non-ASCII UTF-8 text.** Pre-existing and shipped (`0.12.x`), invisible
+   because no test used non-ASCII and chat echoes client bytes, which are
+   BINARY. For Monk::Live it was fatal and silent: any fragment with an
+   accent, curly quote or emoji killed the relay thread. Fixed (`payload.b`),
+   regression test in `test/websocket_frame_test.rb`, CHANGELOG entry under
+   *Unreleased*. Worth a patch release on its own.
+2. **A failing relay used to leave a connected client silently stale.** Any
+   unexpected error in the relay thread ended it and nothing else noticed.
+   `Session` now warns and closes the connection with 1011, so the client
+   reconnects and resyncs (ADR 0011). Tested with a connection whose write
+   fails.
+3. **`require "monk/live"` didn't load `Monk::WebSocket`,** although ADR 0008
+   says Live sits on it. It does now.
+
+**Known behavior, documented rather than changed:** if Redis is down,
+`Monk::Live.patch` **raises** (`Redis::CannotConnectError`, in about 1ms), *after*
+delivering to subscribers in the publishing process. A route that publishes
+after a successful write would therefore 500 while Redis is down. Left loud on
+purpose for v0; an app that prefers "best effort" wraps the publish in its own
+`rescue`. If that becomes a common wrapper, a `configure(on_error:)` hook is the
+obvious extension. (Checked with a one-off probe, not a permanent test, since
+the fanout's own subscriber Ractor prints a stack trace when it can't connect.)
+
+**Not covered:** several WS processes each holding many connections (only one
+child process), Redis restarting under a live fanout, and message ordering
+under concurrent publishers (Redis pub/sub keeps per-channel order; not
+asserted here).
 
 ### Phase 8 — Scaffold, docs, first consumer
 
