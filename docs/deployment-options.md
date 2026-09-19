@@ -34,14 +34,28 @@ are (§4).
 
 These are repository findings, not host problems. They gate *any* deploy.
 
-- **`gem "monk"` does not resolve to this framework.** The scaffolded
-  `Gemfile` (`lib/monk/templates/base/Gemfile`) declares `gem "monk"`, but
-  RubyGems' `monk` is the dormant 2009 Janowski/Martens gem (v0.0.7, last
-  released 2009-09-24). A generated app therefore cannot `bundle install`
-  on a build server today — it needs a `git:`/`path:` source until the
-  rename `NOTES-V2.md` already flags actually happens. This is the single
-  biggest obstacle to *every* option below, and it is entirely inside this
-  repo.
+- **`gem "monk"` does not resolve to this framework — closing on the
+  `monkrb` release.** The scaffolded `Gemfile`
+  (`lib/monk/templates/base/Gemfile`) declares `gem "monk"`, but RubyGems'
+  `monk` is the dormant 2009 Janowski/Martens gem (v0.0.7, last released
+  2009-09-24). Until the rename `NOTES-V2.md` flags actually ships, a
+  generated app cannot `bundle install` on a build server at all — it
+  needs a `git:`/`path:` source, which drags `git` into the runtime image
+  (§7.3). The name **`monkrb` is free** (checked 2026-09-19: 404 from the
+  RubyGems API, no search hits) and the release is planned for the week of
+  2026-09-22, at which point this blocker disappears and every option
+  below becomes executable as written.
+
+  Three release-side details that touch deployment rather than packaging:
+  the gem name stops matching the require path (`gem "monkrb"` but
+  `require "monk"`, as `rubyzip` → `require "zip"`), so the scaffold's
+  `Gemfile` line and the README both need to say so or people will require
+  the wrong thing; `spec.files` shells out to `git ls-files`, so a
+  `gem build` run anywhere without git — a CI container, an extracted
+  tarball — silently produces an empty gem, worth a `gem contents` check
+  before `gem push`; and the executable stays `monk`, which the 2009 gem
+  also ships, so the two conflict for anyone holding both (dormant enough
+  not to matter, but it is the one collision the rename does not resolve).
 - **Lockfile platforms.** The scaffold's `.gitignore` does *not* ignore
   `Gemfile.lock`, so the app commits it. A lockfile resolved on an Apple
   Silicon laptop carries only `arm64-darwin`; a Linux build box then has
@@ -224,9 +238,12 @@ spam is an outage.
 - **If the operational burden is unwelcome: Railway**, one service running
   all three processes behind Caddy, its managed Postgres and Redis
   alongside, and mail over a provider's HTTPS API rather than SMTP.
-- **Either way, fix the two repo-side blockers first** (§2): `gem "monk"`
-  resolving to a 2009 stranger, and the missing `bundle lock
-  --add-platform` step. Nothing deploys cleanly until those are settled.
+- **One repo-side blocker is left** (§2). The `monkrb` release closes the
+  gem-name one; `bundle lock --add-platform x86_64-linux` is still a
+  prerequisite for every Docker and buildpack deploy, since it is `kino`'s
+  precompiled binaries at stake, not the framework's name. Worth folding
+  into the release week: it is the step that turns "the gem installs" into
+  "the image builds".
 
 ## 6. Open questions
 
@@ -333,12 +350,14 @@ single and guarantees both run identical code. Build notes:
   carries `x86_64-linux` (or `aarch64-linux`), per §2. If it does not,
   this build is where it surfaces, as a surprise `cargo` compile or a
   frozen-lockfile failure.
-- **`git` is needed at build *and* run time** for as long as the app's
-  `Gemfile` pulls `monk` from a git source (§2's first blocker), for the
-  reason this repo's own `Dockerfile` documents: Bundler re-evaluates the
-  gemspec on every `bundle exec`, and `monk.gemspec` shells out to
-  `git ls-files`. Once `monk` is a normal published gem, `git` drops out
-  of the runtime stage.
+- **`git` is needed at build *and* run time only until `monkrb` ships**
+  (§2). While the app's `Gemfile` pulls the framework from a git source,
+  the runtime stage needs `git` for the reason this repo's own
+  `Dockerfile` documents: Bundler re-evaluates the gemspec on every
+  `bundle exec`, and `monk.gemspec` shells out to `git ls-files`. Once
+  `gem "monkrb"` resolves from RubyGems, `git` drops out of the runtime
+  stage entirely and the final image is `ruby:4.0-slim` + `libpq5` and
+  nothing else.
 - Drop `rackup`/`webrick` from the app's Gemfile; `kino` is the server.
 
 ### 7.4 Lifecycle: health checks work, WS shutdown does not
