@@ -104,7 +104,8 @@ JSON text frames, one envelope each. Small and closed set of ops:
   with `querySelectorAll` (one push, every matching node — the doc's
   out-of-band answer).
 - `batch` — several ops applied in one animation frame, in order.
-- `ack`/`nack` for client-originated events (Phase 5 only).
+- `subscribed` / `unsubscribed` / `error` replies to client-originated
+  `subscribe`/`unsubscribe` (Phase 3, no `seq`).
 
 Every envelope carries a monotonically increasing `seq` per connection so
 the client can detect a gap after reconnect and ask for a resync rather
@@ -315,14 +316,64 @@ suite 384 green, RuboCop clean.
 - **Not covered (Phase 7):** publishing through a real `RedisFanout`, and
   socket write cost per connection.
 
-### Phase 3 — Subscription & authorization
+### Phase 3 — Subscription & authorization — DONE 2026-09-19
 
-A connection-side handler: on `subscribe`, check the connection's
-`subject` (from `Monk::Auth`) is allowed the topic via an app-supplied
-policy callable, then `Registry#register`. Default is deny. Without this,
-any authenticated user could subscribe to any topic — this is the
-security-critical slice. Tests: allowed, denied, unauth'd connection,
-unsubscribe on disconnect (no leaked registrations).
+`Monk::Live::Policy` (`policy.rb`), `Monk::Live::Session` (`session.rb`),
+`Monk::Live::HANDLER`, plus `Monk::Live.authorize/authorized?`. Tests:
+`test/live_policy_test.rb` (13), `test/live_session_test.rb` (17, one of
+them through a real `Monk::WebSocket::Server` and socket); full suite 414
+green, RuboCop clean, session tests run 8x with no flakes.
+
+Usage in a WS process:
+
+    Monk::Live.configure(registry: REGISTRY)
+    Monk::Live.authorize("contacts:*") { |subject, topic| topic == "contacts:#{subject}" }
+    server.run(&Monk::Live::HANDLER)
+
+- **Deny by default.** No rule → nothing is subscribable. Rules match in
+  declaration order and **the first match decides** (a specific rule can
+  sit above a general one). A pattern is an exact topic or a prefix ending
+  in a single `*`; anything else raises at boot.
+- **Anonymous subjects (nil) are denied unless the matching rule says
+  `anonymous: true`,** and the block isn't even called for them. Without
+  this, `topic == "contacts:#{subject}"` lets a nil subject subscribe to
+  `"contacts:"`. A block that raises **fails closed** (denied, connection
+  stays up). The block must be Ractor-shareable, with the same precise
+  `UnshareableBlockError` as `Server#run`.
+- **Topic hygiene before the policy:** a client topic must match
+  `\A[\w:.\-/@]{1,200}\z`: no `*` (so no client-side globbing), no
+  whitespace, NUL or non-ASCII. Only a topic that passes that *and* the
+  policy is ever turned into a Symbol, so a client can't grow the symbol
+  table. A per-connection cap (`max_topics:`, default 100) denies the
+  overflow, and a message can carry at most 100 topics.
+- **Wire protocol additions (client → server):**
+  `{"op":"subscribe"|"unsubscribe","topics":[...]}`. Replies:
+  `subscribed` (with `topics` and `denied`), `unsubscribed`, or
+  `{"op":"error","reason":"bad_message"}` for malformed JSON, a non-object,
+  an unknown op or a bad `topics`; the connection stays open. A denial
+  never says why or whether the topic exists. Subscribing twice is
+  idempotent.
+- **`seq` is stamped here,** by the session's relay thread, per
+  connection, by splicing `"seq":N,` after the opening `{` of the
+  publisher's shared frozen string (a per-connection copy; the shared
+  string is untouched). Control replies carry no `seq`. One connection can
+  hold many topics: the session owns a single `Ractor::Port` registered
+  under each topic key (`Connection#subscribe` only takes one key, so the
+  WS layer was left unchanged, per ADR 0008).
+- **Cleanup on every exit** (clean hang-up, crashed read, close): all
+  registrations removed and the port closed, tested with a raised
+  exception in the session thread. Real-socket test asserts the registry
+  count returns to 0 after the client closes.
+- **Not covered / known limits:**
+  - **No revocation while connected.** Policy runs at subscribe time only;
+    if a user loses access mid-connection they keep receiving that topic
+    until they disconnect. The WS layer's `reverify_interval` re-checks the
+    *session*, not per-topic access. Fine for v0; a periodic re-check of
+    held topics is the obvious extension.
+  - Authenticated-subject flows (`authenticate: true` needs Postgres) are
+    tested through the `FakeConnection`'s `subject`, not a real login.
+  - The client runtime doesn't exist yet, so `subscribe` is only exercised
+    from tests (Phase 4 sends it from `data-live-topic`).
 
 ### Phase 4 — Client runtime
 
