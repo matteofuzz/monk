@@ -81,8 +81,9 @@ certificate itself.
   every managed Postgres below.
 - **R5**: Postgres' own `max_connections` is yours to raise.
 - **R6**: `docker compose run --rm app bin/setup_db`.
-- **R8**: the decisive one — **no outbound SMTP port blocking**, which is
-  not true of any managed platform in this list (§4).
+- **R8**: the decisive one — **port 587 is open from day one**, no plan
+  upgrade and no support ticket, which is true of no managed platform in
+  this list (§4).
 - **Cost**: ~€4–6/month all-in (CX22-class box), everything included.
 - **Price paid**: backups, Postgres upgrades and OS patching are yours.
   [Coolify or Dokku](https://dev.to/abhijais1/self-hosted-paas-in-2026-coolify-vs-dokku-vs-caprover-vs-ownkube-126m)
@@ -193,12 +194,16 @@ route handler, inside a worker Ractor. Three consequences:
 **Port policy is the deciding factor between hosts**, and it is uniformly
 hostile on managed platforms:
 
-| Host | 25 | 465/587 |
-|---|---|---|
-| Own VPS | open | open |
-| Railway | blocked | Pro plan and above only |
-| Render | blocked (all plans) | paid instances only |
-| Fly.io | blocked | support request in practice |
+| Host | 25 | 465 | 587 |
+|---|---|---|---|
+| Own VPS (Hetzner) | blocked for new accounts, unblockable on request after ~1 month | same as 25 | **open immediately** |
+| Railway | blocked | Pro plan and above only | Pro plan and above only |
+| Render | blocked (all plans) | paid instances only | paid instances only |
+| Fly.io | blocked | support request in practice | support request in practice |
+
+A VPS is not "no blocking" — it is *the one place 587 works on day one*,
+which is all a relay needs. Nobody should be sending on 25 from an app
+server anyway: that is direct-to-MX delivery, i.e. running your own MTA.
 
 So: **on a VPS, real SMTP is fine. On a PaaS, prefer a provider's HTTPS
 API** — same provider, same deliverability, no port policy. Free tiers as
@@ -255,3 +260,180 @@ Checked 2026-09-19.
 - [Free transactional email tiers compared, 2026](https://www.brevo.com/blog/free-smtp-servers/)
 - [`kino` on RubyGems](https://rubygems.org/gems/kino) — 0.7.0, Ruby >= 4.0, precompiled linux/darwin platforms
 - [`monk` on RubyGems](https://rubygems.org/gems/monk) — the unrelated 2009 gem holding the name
+
+---
+
+## 7. Option 1 in detail — one VPS, one Compose file
+
+Expanded from §3.1. Still analysis: what the shape is, what it costs, what
+it gets wrong if you are not careful. No files are generated for it.
+
+### 7.1 Topology and the port map
+
+Five containers on one box, one network, exactly one of them published:
+
+| Container | Binds | Published | Role |
+|---|---|---|---|
+| `caddy` | `:80`, `:443` | yes | TLS, the only internet-facing process; routes `/ws*` to the WS container, everything else to the app |
+| `app` | `:9292` | no | `kino` serving `config.ru` |
+| `ws` | `:9293` | no | `bin/websocket_server` |
+| `postgres` | `:5432` | no | `postgres:16`, named volume |
+| `redis` | `:6379` | no | `redis:7`, no persistence needed (§7.6) |
+
+This is the shape R3 wants: Caddy, `kino` and the WS process share one
+host, so the `HttpOnly` session cookie reaches the WS handshake with no
+`Domain=` attribute and no Bearer fallback. The Caddyfile is the
+four-line one already in `docs/deploying.md` §3 — nothing new to design.
+
+**Port collision to avoid.** `kino`'s optional read-only control plane is
+documented with `control_bind "127.0.0.1:9293"`, and 9293 is exactly the
+port `bin/websocket_server` defaults to (`WS_PORT`, and this repo's own
+`Dockerfile` `EXPOSE`s it too). On a single host that is a real clash:
+give the control plane its own port, or move the WS process with
+`WS_PORT`.
+
+### 7.2 Sizing, which is smaller than Rails instinct suggests
+
+`kino -w` defaults to `Kino.available_parallelism` — one Ractor worker per
+core — and in `:ractor` mode the default is **1 thread per worker**. Monk
+opens one memoized `PG::Connection` per Ractor (R5). So on a 2 vCPU box:
+
+```
+Postgres connections = 2 workers × 1 thread = 2, plus 1 while bin/setup_db runs
+```
+
+Against `postgres:16`'s default `max_connections = 100` that is noise.
+Connection exhaustion — the thing that forces PgBouncer into most small
+Rails deploys — is not a concern at this shape, and there is no pooler to
+introduce. It only becomes one if the app is scaled to several `kino`
+containers *and* the box grows cores: the number to watch is
+`instances × workers × threads`.
+
+The WebSocket side scales differently: `Server#run` spawns **one Ractor
+per accepted connection**, with no cap in the accept loop
+(`lib/monk/websocket/server.rb`). Concurrent socket count, not request
+rate, is what sizes RAM on this box, and nothing in Monk refuses the
+N+1st connection — on a public endpoint that is the limit worth measuring
+before launch.
+
+A CX22-class box (2 vCPU / 4 GB / 80 GB, €4.49/month as of April 2026,
+before Hetzner's June 2026 adjustment) comfortably holds all five
+containers. Coolify on the same box adds roughly 700 MB of resident
+memory, Dokku roughly 150 MB — relevant on 4 GB, irrelevant on 8.
+
+### 7.3 One image, two commands
+
+The `app` and `ws` containers are the *same* image with different
+commands (`bin/server` vs `bin/websocket_server`), which keeps the build
+single and guarantees both run identical code. Build notes:
+
+- `ruby:4.0-slim` base (R1); `libpq-dev` at build time, `libpq5` at
+  runtime, as `docs/deploying.md` §2 already works out.
+- **No Rust toolchain needed** — provided the committed `Gemfile.lock`
+  carries `x86_64-linux` (or `aarch64-linux`), per §2. If it does not,
+  this build is where it surfaces, as a surprise `cargo` compile or a
+  frozen-lockfile failure.
+- **`git` is needed at build *and* run time** for as long as the app's
+  `Gemfile` pulls `monk` from a git source (§2's first blocker), for the
+  reason this repo's own `Dockerfile` documents: Bundler re-evaluates the
+  gemspec on every `bundle exec`, and `monk.gemspec` shells out to
+  `git ls-files`. Once `monk` is a normal published gem, `git` drops out
+  of the runtime stage.
+- Drop `rackup`/`webrick` from the app's Gemfile; `kino` is the server.
+
+### 7.4 Lifecycle: health checks work, WS shutdown does not
+
+- **Readiness.** `kino`'s control plane (`control_bind`, optionally behind
+  `control_token`) serves `GET /ready` — 200 when serving, 503 during boot
+  and drain — plus `/live`, `/stats` and `/metrics` (Prometheus). That is
+  the Compose healthcheck for the `app` container, and what Caddy should
+  wait on before sending traffic.
+- **Graceful HTTP shutdown.** `kino` traps INT/TERM and drains, with a
+  configurable `shutdown_timeout` (default 30s) — so set the app
+  container's `stop_grace_period` above it, or Docker kills the drain.
+- **The WS process has no graceful shutdown under Docker.**
+  `Server#run` rescues `Interrupt` only — i.e. SIGINT. `docker compose
+  stop` sends **SIGTERM**, which Ruby handles by terminating immediately:
+  the listen socket is not closed cleanly, no RFC 6455 close frames are
+  sent, and every connection Ractor dies mid-frame. Clients see an
+  abnormal 1006 close and must reconnect, and the scaffold's chat has no
+  resume. `STOPSIGNAL SIGINT` on that image (or `docker stop --signal`)
+  routes Docker's stop into the path the server actually implements —
+  worth knowing before the first deploy rather than after.
+- **Deploys are brief downtime.** One box, no blue/green: `docker compose
+  up -d` recreates the containers. Caddy holding the socket softens it;
+  true zero-downtime needs two app containers and a Caddy upstream list,
+  which is the point at which §3.2's managed option starts looking
+  cheaper in effort.
+
+### 7.5 Migrations and secrets
+
+`bin/setup_db` is idempotent (applied versions live in
+`schema_migrations`), so R6 is a one-liner run against the same network:
+`docker compose run --rm app bin/setup_db`, before `up -d` on a deploy
+that adds a migration. No release-phase concept exists here, which is a
+feature: the step is explicit and its output is in front of you.
+
+Secrets come from a root-owned `env_file` on the host, never from a `.env`
+baked into the image — `Monk::Settings` reads `ENV` once in the main
+Ractor at boot and seals the values shareable (R10), so platform-injected
+vars are all it ever needs. `dotenv` stays what the scaffold intends it to
+be: a development convenience.
+
+### 7.6 State: what needs a volume and what does not
+
+- **Postgres** needs a named volume, and a real backup: a nightly
+  `pg_dump` from a one-off container to object storage is the minimum.
+  Hetzner's own snapshot/backup add-ons cover the disk, not a consistent
+  dump — they are a different guarantee, not a substitute.
+- **Redis needs neither.** `RedisFanout` is pure pub/sub relay — it
+  publishes and `psubscribe`s on `monk:ws:*` and keeps no state; the
+  design notes say explicitly that a broadcast still reaches local
+  connections directly if Redis is briefly away. Run it with persistence
+  off and treat it as restartable. Also note that on **one** box with one
+  WS container, `REDIS_URL` can simply be left unset (R7) — the fan-out
+  is already in-process, and the container drops out of the stack
+  entirely. Redis earns its place here only as headroom for a second WS
+  process later.
+- **`log/`** (R9) needs a writable path, and either a named volume or the
+  acceptance that each deploy discards the access log. Since `Monk::Log`
+  never echoes to stdout outside development, `docker compose logs` will
+  be near-silent either way — on this option you at least *can* mount the
+  directory and tail it.
+
+### 7.7 Mail on this box
+
+Port 587 is open on a Hetzner cloud server from day one (§4), so a
+provider relay works with no plan upgrade and no support ticket: this is
+the only option in this document where "add an SMTP" is literally true.
+Ports 25 and 465 are blocked for roughly the first month and unblockable
+on request afterwards — irrelevant, since sending on 25 means running an
+MTA, which nobody should do for magic links.
+
+What still applies, because it is Monk's shape and not the host's (§4):
+the client is built per request inside the worker Ractor, credentials come
+from `Settings` rather than a request-time `ENV` read, and the send blocks
+a pool slot — which on a 2-core box means **one of two**. That is the
+strongest argument on this option for a fast HTTPS API call with a tight
+timeout over a multi-round-trip SMTP conversation, even though SMTP is
+available. DNS work (SPF, DKIM, DMARC on the sending domain) is unchanged
+by the hosting choice.
+
+### 7.8 What you are accepting
+
+- One box: no HA, and a reboot is an outage. Postgres shares CPU with the
+  app, so a heavy query is a slow request.
+- Postgres upgrades, OS patching and backup *verification* are yours.
+- The scaling path is graceful, though: move Postgres to a managed
+  instance first (the five `DB_*` vars already point anywhere), keep the
+  box for the app, and only then reconsider the platform.
+
+Pick §3.2 instead the moment "nobody wants to own the database" is true —
+that, not cost and not the Monk-side constraints, is the line between
+these two options.
+
+### 7.9 Sources added for this section
+
+- [Hetzner: port 25/465 restricted on new cloud accounts, 587 open](https://queensmtp.com/smtp-settings/hetzner)
+- [Hetzner CX22 pricing, 2026](https://bestusavps.com/reviews/hetzner/) and the [June 2026 price adjustment](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/)
+- [`kino` README](https://github.com/yaroslav/kino) — `-w` defaults to `Kino.available_parallelism`, ractor mode defaults to 1 thread per worker, `control_bind`/`control_token` with `/ready`, `/live`, `/stats`, `/metrics`, INT/TERM drain with a 30s `shutdown_timeout`
