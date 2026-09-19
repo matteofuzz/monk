@@ -272,16 +272,48 @@ Phase 0 spike predicted: the renderer builds a detached
   (as `Monk::WebSocket::Server.new` does for `authenticate: true`), which
   is Phase 2.
 
-### Phase 2 — Envelope + publisher
+### Phase 2 — Envelope + publisher — DONE 2026-09-19
 
-`Monk::Live::Envelope` (build/serialize, shareable, frozen) and
-`Monk::Live::Publisher`, exposed as `Monk::Live.patch/append/prepend/remove/batch`
-with the keyword syntax from "Ergonomics": render once →
-`Registry#broadcast(topic, envelope_json)`. Tests include: reserved keyword
-names rejected, remaining keywords reach the partial as locals. Tests against
-a real `Registry` with fake ports; verifies one render regardless of
-subscriber count; verifies dead ports are self-healed (already Registry
-behavior — assert we don't regress it).
+`Monk::Live::Envelope` (`lib/monk/live/envelope.rb`), `Monk::Live::Publisher`
+(`publisher.rb`) and the module-level API in `lib/monk/live.rb`. Tests:
+`test/live_envelope_test.rb` (11) and `test/live_publisher_test.rb` (15),
+against a real `Monk::WebSocket::Registry` with real `Ractor::Port`s; full
+suite 384 green, RuboCop clean.
+
+- **Envelope:** frozen Hashes, encoded to one frozen JSON String. Modes:
+  `morph replace append prepend remove`. Validates mode and a non-blank
+  String target; `remove` carries no html, every other mode requires it;
+  a batch needs at least one op.
+- **Publisher:** `patch/append/prepend/remove/batch`, keyword syntax as
+  decided (`to:`, `partial:`, `mode:` reserved, everything else is a local
+  read as `locals[:name]`). Validation happens *before* rendering, and a
+  batch renders every op inside the block, so a failure raises before
+  anything is sent. `remove` never renders. An empty batch is a no-op.
+  Topics are Strings in app code and Symbols on the `Registry`.
+- **Render once, shared by reference:** verified with 3 subscribers all
+  receiving the *same frozen object* (`equal?`), not equal copies.
+- **Module API:** `Monk::Live.configure(registry:)` (boot, main Ractor;
+  `Registry` or `RedisFanout`), then `Monk::Live.patch(...)` etc.
+  Publishing from a non-main Ractor works (tested). `configure` raises at
+  boot if the registry isn't Ractor-shareable rather than on a live
+  request. `NotConfiguredError` if publishing before `configure`.
+- **Dead-port self-healing** (existing `Registry` behavior) is asserted
+  through the publisher, so a regression there shows up here.
+- **`seq` is not in the envelope.** It is per connection, so stamping it
+  in the publisher would break render-once-share-by-reference. It is
+  stamped where a connection writes the frame (Phase 3/4): the connection
+  handler splices `"seq":N,` after the opening `{` of the shared JSON, a
+  cheap per-connection string build that leaves the publisher's frozen
+  string untouched.
+- **Boot/freeze deviation from ADR 0010:** `configure` does *not* call
+  `Monk.freeze!`. It can run before an app sets its views root, and a
+  freeze at that point would compile the wrong directory. The fail-fast is
+  at first publish instead (`NotFrozenError` from Phase 1's guard, with
+  the fix in the message); freezing stays with `Monk.boot`/`Monk.freeze!`.
+  A WS-only process that publishes (no `Monk::Base`) calls `Monk.freeze!`
+  itself, exactly as it already must for `authenticate: true`.
+- **Not covered (Phase 7):** publishing through a real `RedisFanout`, and
+  socket write cost per connection.
 
 ### Phase 3 — Subscription & authorization
 

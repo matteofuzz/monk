@@ -109,16 +109,4 @@ class LiveRendererTest < Minitest::Test
       assert_equal Monk::Live::NotFrozenError, ractor.value
     end
   end
-
-  private
-
-  # Seals views the way Base#freeze!/Monk.freeze! does, without booting an
-  # app -- the renderer only needs the frozen registry.
-  def with_frozen_views(templates, layout: nil)
-    with_views(templates) do
-      Monk::Views.layout = layout
-      Monk::Views.freeze_registry!
-      yield
-    end
-  end
 end
