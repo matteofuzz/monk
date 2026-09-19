@@ -106,15 +106,129 @@ than silently rendering a stale page. Client → server in v0: `subscribe`
 
 ### Phase 0 — Spikes (throwaway, not TDD)
 
-- **Ractor spike:** can a `Monk::Views` template be rendered to a String
-  from a non-request Ractor with no `Context` from an HTTP request? What
-  does a "detached context" need (helpers, `h`, no `rendering` state)?
-  This gates Phase 1's whole design; do it first.
-- **Client spike:** hand-write the ~100-line client against a static
-  `Monk::WebSocket` server pushing hard-coded envelopes; confirm morph
-  preserves focus, scroll, and an open `<details>` in untouched siblings.
-- Measure: cost of render-once-send-many for N=1k connections on one
-  Registry topic (feeds the doc's render-cost open question).
+- **Ractor spike — DONE 2026-09-19 (Ruby 4.0.6), decision 5 confirmed.**
+  Throwaway script (not committed) rendering a partial with a nested
+  partial, escaping and `asset_path` from non-main Ractors.
+  - **Works with no changes to `Monk::Views`:** a plain
+    `Monk::Context.new({})` (or even `new(nil, nil)`) in a non-main
+    Ractor renders correctly: HTML-escaping intact, nested `render`,
+    `asset_path`, both a one-shot Ractor and a long-lived renderer
+    Ractor answering over a `Ractor::Port`. ~3µs per render (10k renders
+    in ~30ms), so render cost is not the bottleneck; fan-out is.
+  - **Requires `Monk.freeze!` in the rendering process.** Without it:
+    `Ractor::IsolationError ... @registry from Monk::Views`.
+    `Monk::WebSocket::Server` only calls it when `authenticate: true`, so
+    MonkLive must call it itself at boot and fail fast with a clear error
+    (ADR 0003 posture), not leave it to the app.
+  - **The default layout wraps a fragment** (`render` without
+    `layout: false` returned `<html><body>…`). MonkLive's renderer must
+    force `layout: false`; never trust the caller to remember.
+  - **Locals are read as `locals[:contact]` in templates, not bare
+    `contact`.** This is existing Monk behavior (README/`docs/views.md`),
+    and the "keyword locals" publish syntax maps onto it directly. Live
+    partials must document it.
+  - **Locals crossing into another Ractor** work either as a shareable
+    value (`Ractor.make_shareable`) or copied (a mutable Struct sent
+    via `send` rendered fine). The result is a `Monk::Views::Raw`
+    String that is *not* shareable; it gets copied on send/broadcast,
+    which is cheap at fragment sizes but means "render once, send many"
+    copies the string per port unless we freeze it first
+    (`String#freeze` / `make_shareable`, to be measured).
+  - **New rule for live partials: request-independent.** A detached
+    Context has no `params`/`env`/session, so a partial that calls
+    `params` or a per-request helper (e.g. a `current_user` helper) would
+    render wrong or raise. Everything a fragment needs must come in as
+    locals. Worth a lint/doc callout; per-viewer fragments pass the
+    viewer as a local.
+  - **Not yet tested:** a real `Monk::Persistence::Model` instance as a
+    local (shareability/copy behavior across the boundary). Test in
+    Phase 1 against the real persistence layer, not a stand-in Struct.
+  - **Consequence for the design:** publishing can render in the
+    publisher's own Ractor (a request worker) with no extra Ractor and
+    no new machinery; a dedicated renderer Ractor is an option, not a
+    need. Phase 1 shrinks to "a `MonkLive` renderer that builds a
+    detached Context, forces `layout: false`, and ensures freeze".
+- **Client spike — DONE 2026-09-19, morph approach confirmed with one
+  gap.** ~60-line client + idiomorph 0.7.3 (9KB minified) against a real
+  `Monk::WebSocket::Server` pushing hard-coded envelopes, driven in real
+  Chrome. Throwaway, not committed.
+  - **Holds:** patching a sibling row kept focus, typed value, selection,
+    an open `<details>` and the scroll position of the pane. Patching the
+    node that *contains* the focused input kept the same DOM node, focus,
+    value and selection (idiomorph's `ignoreActiveValue: true`), so
+    "focus is protected automatically" costs one option, not custom code.
+  - **`data-live-ignore` works** via `beforeNodeMorphed` returning false:
+    a widget with local text state survived a patch of its parent.
+  - **Multi-match selector works:** one envelope with `.status-dot`
+    patched 4 nodes (`querySelectorAll`), as the doc's OOB idea needs.
+  - **Control confirms the need:** a naive `outerHTML` replace replaced
+    the node, dropped focus and cleared the typed value.
+  - **append/remove and `seq` gap detection** behave (gap event fired
+    with `expected: 9, got: 20`).
+  - **The gap: client-only state inside a patched region is reset.** A
+    `<details>` the user opened *inside* the patched node closed after the
+    morph, because the server HTML has no `open` attribute (idiomorph
+    syncs attributes to the server's). Focus/value are special-cased by
+    idiomorph; `open`, checked-ness of non-focused controls, scroll of
+    inner containers and similar are not. Design consequences: (a) v0 rule,
+    documented: state the user can change locally must live *outside*
+    patched regions, be re-rendered by the server, or be marked
+    `data-live-ignore`; (b) consider a `beforeAttributeUpdated` callback
+    that preserves `open` on `<details>` by default. Decide in Phase 4.
+  - **Not covered by the spike:** reconnect/resubscribe behavior, the
+    page-refetch resync morph (a much bigger morph than a fragment),
+    interplay with Attractive.js state, IME composition and text
+    selection outside the focused input, and behavior on Safari/Firefox
+    (only Chrome tested). Carry into Phase 4/5 tests.
+- **Fan-out measurement — DONE 2026-09-19.** Real `Monk::WebSocket::Registry`,
+  N consumer Ractors each holding a registered `Ractor::Port`, 20 rounds,
+  median. Measures Ractor-to-Ractor delivery only (no socket writes, no
+  Redis), on an 8-core Mac; treat as order-of-magnitude, noise is
+  visible. `broadcast_call` = how long `Registry#broadcast` blocks;
+  `last_receive` = until the last consumer has the payload.
+
+  | N conns | payload | unfrozen: call / last | frozen: call / last |
+  | --- | --- | --- | --- |
+  | 100 | 0.5 KB | 2.4 / 2.7 ms | 2.0 / 3.0 ms |
+  | 100 | 50 KB | 3.5 / 3.5 ms | 2.2 / 3.2 ms |
+  | 500 | 0.5 KB | 28 / 28 ms | 18 / 29 ms |
+  | 500 | 50 KB | 36 / 37 ms | 19 / 39 ms |
+  | 1000 | 0.5 KB | 120 / 128 ms | 58 / 113 ms |
+  | 1000 | 5 KB | 130 / 135 ms | 71 / 136 ms |
+  | 1000 | 50 KB | 177 / 177 ms | 34 / 92 ms |
+
+  - **Render cost is irrelevant; delivery cost is per-subscriber.**
+    Fragment size barely moves the numbers (0.5 KB to 50 KB is within
+    noise for unfrozen up to 500 conns). Rendering is ~3µs; fan-out to
+    1k is ~100ms. "Render once, send many" is right, but the thing to
+    budget is subscriber count, not template cost.
+  - **Freezing the payload helps the publisher side** (call time roughly
+    halves at 500-1000 conns; 5x at 1k x 50 KB) because a shareable
+    String is passed by reference instead of copied per port. It does
+    not shorten time-to-last-receive much at small sizes. Decision:
+    Publisher freezes/`make_shareable`s the envelope string before
+    broadcast (one line, no downside).
+  - **Scaling is worse than linear:** 100 → 500 → 1000 conns took ~2.5 →
+    28 → 120 ms. Some of that is consumer Ractors all waking and
+    contending for cores at once, not registry work, so this overstates
+    the registry's own cost; but it means "1k subscribers on one topic"
+    is a ~100ms event, and 5-10k would be seconds. Not a problem for the
+    monk_talk contact-list scale (recipient topics fan out to a handful
+    of connections per user), a real limit for one hot topic.
+  - **Broadcast blocks the whole Registry.** It is one single-threaded
+    Ractor, so during a 1k-subscriber broadcast (~60-120ms) every
+    `register`/`unregister`/`count`, on *any* topic, waits. Connections
+    opening or closing stall behind a big fan-out. Acceptable for v0;
+    if it bites, shard the Registry by topic hash (N registry Ractors)
+    or move fan-out off the register/unregister path. Recipient topics
+    (default) keep per-topic subscriber counts small, which is another
+    point in their favor.
+  - **Not measured:** socket write cost per connection (likely the real
+    dominant cost with slow clients: `Connection#write` is blocking, so
+    one slow client's full send buffer stalls only its own relay thread,
+    but that should be verified), the Redis hop, memory per connection
+    Ractor at 1k+, and batching many small patches (the `batch` op) vs
+    many broadcasts. Carry into Phase 2 and 7 tests.
 
 ### Phase 1 — Fragment rendering
 
@@ -217,8 +331,9 @@ presence tracking, history/replay beyond snapshot-on-subscribe.
 
 ## Risks worth watching
 
-- Phase 0's Ractor rendering result could force a redesign of Phase 1
-  (and of decision 5); everything downstream is provisional until it runs.
+- ~~Phase 0's Ractor rendering result could force a redesign of Phase 1~~
+  Resolved by the spike: rendering from a non-main Ractor works as-is.
+  Remaining Phase 0 items (client morph, fan-out cost) are still open.
 - Authorization (Phase 3) leaking patch content is the worst failure mode;
   fragments must never be rendered with data the subscriber can't see.
 - Per-viewer fragments defeat render-once and re-create the cost problem;
