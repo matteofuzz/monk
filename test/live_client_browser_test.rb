@@ -163,4 +163,133 @@ class LiveClientBrowserTest < Minitest::Test
     sleep 1.5
     assert_equal connections, @proxy.connections, "the runtime kept reconnecting after it stopped"
   end
+
+  # --- Phase 5: the refetch morph is a whole-body morph, so it has to honor
+  # the same protections a single patch does. ---
+
+  def test_a_resync_keeps_focus_typed_text_ignored_subtrees_and_open_details
+    open_page(resync_page(status: "before", widget: "LOCAL", note: "old"))
+    run_js(<<~JS)
+      const i = document.querySelector('#draft');
+      i.focus(); i.value = 'half-typed'; i.setSelectionRange(2, 6); window.__draft = i;
+      document.querySelector('#more').open = true;
+      document.querySelector('#widget').textContent = 'LOCAL-EDIT';
+    JS
+    @pages.serve_page(page_html(resync_page(status: "after", widget: "SERVER", note: "new")))
+
+    @proxy.sever!
+
+    wait_for("resync") { events("resynced").size == 1 }
+    assert_equal ["after", "new"],
+      evaluate("[document.querySelector('#status').textContent, document.querySelector('#note').textContent]")
+    assert_equal [true, "half-typed", 2, 6],
+      run_js(<<~JS)
+        const i = document.activeElement;
+        return [i === window.__draft, i.value, i.selectionStart, i.selectionEnd];
+      JS
+    assert_equal "LOCAL-EDIT", evaluate("document.querySelector('#widget').textContent")
+    assert evaluate("document.querySelector('#more').open"), "the resync closed a <details> the user opened"
+  end
+
+  def test_a_resync_answered_with_an_error_or_a_non_html_page_stops_and_leaves_the_page_alone
+    { 401 => "status_401", 500 => "status_500" }.each do |status, reason|
+      assert_stops_with(reason) { @pages.serve_page("nope", status: status) }
+    end
+    assert_stops_with("not_html") do
+      @pages.serve_page('{"ok":true}', headers: { "content-type" => "application/json" })
+    end
+  end
+
+  def test_a_failed_resync_is_retried_with_backoff_until_it_works
+    open_page(%(<ul data-live-topic="t:1"><li id="contact-1">before</li></ul>))
+    @pages.serve_page("", drop: true)
+    @proxy.sever!
+    wait_for("failed resync") { events("resync-failed").size >= 1 }
+
+    @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">recovered</li></ul>)))
+
+    wait_for("retry", timeout: 10) { events("resynced").size == 1 }
+    assert_equal "recovered", evaluate("document.querySelector('#contact-1').textContent")
+  end
+
+  def test_overlapping_resync_triggers_coalesce_into_one_follow_up_fetch
+    with_frozen_views({ "row.erb" => ROW }) do
+      open_page(%(<ul data-live-topic="t:1"><li id="contact-1">v0</li></ul>))
+      @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">v1</li></ul>)), delay: 1.0)
+      hits_before = @pages.page_hits
+
+      @proxy.sever!
+      wait_for("resync fetch in flight") { @pages.page_hits == hits_before + 1 }
+      wait_for("resubscribed") { @registry.count(:"t:1") == 1 }
+      3.times do |n|
+        @proxy.drop_next_server_frame!
+        @publisher.remove("t:1", to: "#nothing")
+        @publisher.remove("t:1", to: "#nothing")
+        wait_for("gap #{n + 1}") { events("gap").size == n + 1 } # one lost frame at a time
+      end
+
+      wait_for("resyncs done", timeout: 10) { events("resynced").size >= 2 }
+      sleep 1.5
+      assert_equal 3, events("gap").size
+      assert_equal 2, events("resynced").size, "overlapping triggers were not coalesced"
+      assert_equal hits_before + 2, @pages.page_hits, "more page fetches than the in-flight one plus one follow-up"
+    end
+  end
+
+  def test_a_resync_of_a_large_page_converges_and_keeps_the_focused_input
+    rows = lambda { |label|
+      (1..800).map do |n|
+        %(<li id="row-#{n}" class="r">#{label} #{n} <input id="in-#{n}"></li>)
+      end.join
+    }
+    open_page(%(<ul data-live-topic="t:1">#{rows.call("old")}</ul>))
+    run_js("const i = document.querySelector('#in-400'); i.focus(); i.value = 'keep me'; window.__in = i;")
+    @pages.serve_page(page_html(%(<ul data-live-topic="t:1">#{rows.call("new")}</ul>)))
+
+    @proxy.sever!
+
+    wait_for("large resync", timeout: 15) { events("resynced").size == 1 }
+    subscribed_at, resynced_at = evaluate(
+      "[window.__events.filter(e => e.name === 'subscribed').at(-1).at, " \
+      "window.__events.find(e => e.name === 'resynced').at]",
+    )
+    puts "\n  [800-row resync: fetch+parse+morph #{(resynced_at - subscribed_at).round}ms]" if ENV["MONK_TEST_VERBOSE"]
+    assert_equal ["new 800", 800],
+      evaluate("[document.querySelector('#row-800').firstChild.textContent.trim(), " \
+               "document.querySelectorAll('.r').length]")
+    assert_equal [true, "keep me"], run_js("return [document.activeElement === window.__in, window.__in.value];")
+  end
+
+  private
+
+  def resync_page(status:, widget:, note:)
+    <<~HTML
+      <div data-live-topic="t:1">
+        <p id="status">#{status}</p><p id="note">#{note}</p>
+        <input id="draft"> <span id="widget" data-live-ignore>#{widget}</span>
+        <details id="more"><summary>more</summary>bio</details>
+      </div>
+    HTML
+  end
+
+  # Opens a live page, makes the next page fetch answer with whatever the
+  # block serves, cuts the connection, and expects the runtime to stop with
+  # `reason` and leave the page exactly as it was.
+  def assert_stops_with(reason)
+    @page.close
+    @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">mine</li></ul>)))
+    @page = LiveBrowserHelpers.browser.create_page
+    @page.go_to("http://127.0.0.1:#{@pages.port}/page")
+    wait_for("client subscribed") { evaluate("window.__events.some(e => e.name === 'subscribed')") }
+    yield
+
+    @proxy.sever!
+
+    wait_for("stop") { events("stopped").size == 1 }
+    assert_equal [{ "reason" => reason }], events("stopped")
+    assert_equal "mine", evaluate("document.querySelector('#contact-1').textContent")
+    connections = @proxy.connections
+    sleep 1.2
+    assert_equal connections, @proxy.connections, "the runtime kept reconnecting after it stopped"
+  end
 end

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   INITIAL_DELAY, MAX_DELAY, nextDelay, topicsFrom, diffTopics,
-  subscribeMessage, unsubscribeMessage, parseMessage, checkSeq,
+  subscribeMessage, unsubscribeMessage, parseMessage, checkSeq, resyncVerdict,
 } from "../../lib/monk/live/client/protocol.js";
 
 test("nextDelay doubles from the initial delay and caps at 30s", () => {
@@ -85,4 +85,19 @@ test("checkSeq accepts only the next number", () => {
   assert.equal(checkSeq(4, 6), "gap");
   assert.equal(checkSeq(4, 4), "gap");
   assert.equal(checkSeq(4, 1), "gap");
+});
+
+test("resyncVerdict accepts only an ok, un-redirected HTML response", () => {
+  const ok = { ok: true, redirected: false, status: 200, contentType: "text/html; charset=utf-8" };
+
+  assert.equal(resyncVerdict(ok), null);
+  assert.equal(resyncVerdict({ ...ok, redirected: true }), "redirected");
+  assert.equal(resyncVerdict({ ...ok, ok: false, status: 401 }), "status_401");
+  assert.equal(resyncVerdict({ ...ok, ok: false, status: 500 }), "status_500");
+  assert.equal(resyncVerdict({ ...ok, contentType: "application/json" }), "not_html");
+  assert.equal(resyncVerdict({ ...ok, contentType: null }), "not_html");
+});
+
+test("a redirect is reported as redirected even when the login page answers 200", () => {
+  assert.equal(resyncVerdict({ ok: true, redirected: true, status: 200, contentType: "text/html" }), "redirected");
 });

@@ -29,17 +29,20 @@ module LiveBrowserHelpers
   # Serves the page under test (whatever #serve_page last set) and the
   # client files, one request per connection.
   class PageServer
-    attr_reader :port
+    attr_reader :port, :page_hits
 
     def initialize
       @server = TCPServer.new("127.0.0.1", 0)
       @port = @server.addr[1]
-      @page = [200, {}, ""]
+      @page = [200, {}, "", 0, false]
+      @page_hits = 0
       @thread = Thread.new { loop { handle(@server.accept) } }
     end
 
-    def serve_page(body, status: 200, headers: {})
-      @page = [status, headers, body]
+    # `delay:` holds the response back (seconds); `drop: true` closes the
+    # connection without answering, which the browser sees as a network error.
+    def serve_page(body, status: 200, headers: {}, delay: 0, drop: false)
+      @page = [status, headers, body, delay, drop]
     end
 
     def close
@@ -71,7 +74,11 @@ module LiveBrowserHelpers
       when "/login"
         write(client, 200, { "content-type" => "text/html" }, "<body>login</body>")
       else
-        status, headers, body = @page
+        status, headers, body, delay, drop = @page
+        @page_hits += 1
+        sleep delay if delay.positive?
+        return if drop
+
         write(client, status, { "content-type" => "text/html; charset=utf-8" }.merge(headers), body)
       end
     end
@@ -195,7 +202,7 @@ module LiveBrowserHelpers
       <script>
         window.__events = [];
         #{EVENTS.to_json}.forEach(n => document.addEventListener("monk-live:" + n,
-          e => window.__events.push({ name: n, detail: e.detail })));
+          e => window.__events.push({ name: n, detail: e.detail, at: performance.now() })));
       </script>
       <body>#{body_html}<script type="module" src="/js/monk_live.js"></script></body>
     HTML

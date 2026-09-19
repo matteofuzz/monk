@@ -110,7 +110,8 @@ JSON text frames, one envelope each. Small and closed set of ops:
 Every envelope carries a monotonically increasing `seq` per connection so
 the client can detect a gap after reconnect and ask for a resync rather
 than silently rendering a stale page. Client → server in v0: `subscribe`
-/ `unsubscribe` (topic) and `resync`. Nothing else.
+/ `unsubscribe` (topics). A `resync` message was sketched and never needed:
+the client refetches the page over HTTP (Phase 5). Nothing else.
 
 ## Phases
 
@@ -446,20 +447,44 @@ What the client does (each covered by a browser test unless noted):
   Phase 8's scaffold work; today an app copies the directory into its
   public root.
 
-### Phase 5 — Resync and initial state
+### Phase 5 — Resync and initial state — DONE 2026-09-19
 
-The hard correctness slice. After (re)connect, or on a `seq` gap, the
-client must converge to current server state without missed patches.
-**Decided:** resync is a **full page refetch, morphed in** (Turbo's
-approach): the client re-fetches the current page URL and morphs the
-result over the DOM, then resumes patches. No snapshot API, no second
-definition of what a topic renders, always correct because it reuses the
-page's own view. Patches are therefore purely an optimization over "the
-page can always be re-fetched". Tests: kill a connection mid-stream,
-publish, reconnect, assert converged DOM; assert focus-protection and
-`data-live-ignore` also hold during the refetch morph; assert a page that
-now returns 401/redirect stops the runtime rather than morphing a login
-page over the app.
+Most of resync landed with the client in Phase 4 (refetch, `seq` gap →
+resync, reconnect → resubscribe → resync-after-ack, redirect stops the
+runtime, new topics subscribed after a resync). Phase 5 hardened it and
+proved the whole-body morph honors the same protections a single patch
+does. **Decided:** resync is a full page refetch, morphed in (ADR 0011);
+patches are an optimization over "the page can always be re-fetched".
+
+Added, with tests (`test/live_client_browser_test.rb` now 15, Node protocol
+tests now 13; full suite 437 green, RuboCop clean):
+- **Whole-body resync keeps focus, typed text and selection, `data-live-ignore`
+  subtrees and open `<details>`,** while the rest of the page converges. Passed
+  first time (Phase 4's morph options already applied); now guarded, and
+  mutation-checked: removing the protections fails the resync tests too.
+- **Every "not the app page" answer stops the runtime** through a pure,
+  Node-tested `resyncVerdict` in `protocol.js`: `redirected` (checked first,
+  since a login redirect usually answers 200 HTML), `status_N` (401, 500...),
+  `not_html`. The page is left untouched and it stops reconnecting. Before,
+  a 200 non-HTML answer was reported misleadingly as `status_200`.
+- **A failed refetch (network error) retries with backoff** (500ms doubling,
+  30s cap, reset on success) instead of waiting for the next reconnect or
+  gap. Timer is cleared on stop.
+- **Overlapping resync triggers coalesce:** a reconnect resync in flight plus
+  three lost frames produced exactly one follow-up fetch (3 page fetches
+  total including the initial load), not one per trigger.
+- **Large page:** 800 rows with inputs converge correctly with a focused
+  input's text kept; fetch + parse + morph took **~26ms** (localhost, so it
+  excludes real network latency). `MONK_TEST_VERBOSE=1` prints the timing.
+- Each new behavior was mutation-checked (disabling coalescing, the retry, or
+  the morph protections fails the matching tests).
+- **Test-infra fixes worth knowing:** Ferrum's `evaluate` wraps `return <js>`,
+  so multi-statement scripts need an IIFE (`run_js` helper); dropping frames
+  in the proxy needs one loss at a time or armed flags race.
+- **Not covered / open:** the client → server `resync` message from the plan's
+  protocol sketch was never needed (the client refetches over HTTP) and is
+  **not implemented**; the protocol section still lists it as reserved. Real
+  network latency on a large page, and Firefox/Safari, are unmeasured.
 
 **Possible future evolution (not v0): explicit snapshots.** If a full
 refetch proves too heavy (large pages, frequent reconnects on flaky
@@ -473,13 +498,19 @@ refetch cost/latency in monk_talk, not speculation. Nothing in the v0
 protocol should preclude it (`resync` stays a client → server message the
 server may answer either way).
 
-### Phase 6 — Optimistic UI rule
+### Phase 6 — Optimistic UI rule — DECIDED (no code), 2026-09-19
 
 Resolve the `pendingByClientId` question. Recommendation for v0: **no
 optimistic rendering in Monk::Live**; client-local sprinkles may show a
 pending state, and the server round-trip is the only thing that writes
 server-owned DOM. Revisit only if latency demands it; if so, patches carry
 an optional `client_id` so the client can replace, not duplicate.
+
+**Status:** nothing to build. The v0 client has no optimistic path (it only
+writes server-owned DOM from patches and resyncs), which is what makes the
+resync-by-refetch model safe: there is no locally invented state to conflict
+with. monk_talk's `chat.js` keeps its own `pendingByClientId` handling for
+its message list until/unless that moves onto Monk::Live.
 
 ### Phase 7 — Multi-process
 
