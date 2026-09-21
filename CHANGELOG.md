@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
-## Unreleased
+## 0.13.0 - 2026-09-21
 
 ### Added
 
@@ -31,6 +31,12 @@ in `lib/monk/version.rb`.
   were sendable. The payload is now sent as bytes. Found by the Monk::Live
   cross-process tests, where a fragment with an accent silently never
   arrived.
+
+### Changed
+
+- **Docs reorganized**: plans, notes and one-off analyses moved to
+  `docs/history/`, usage guides to `docs/guides/`, design docs to
+  `docs/design/`; the README Status now states the project is pre-1.0.
 
 ## 0.12.5 - 2026-09-18
 
