@@ -32,7 +32,7 @@ module Monk
         headers
       end
 
-      # PLAN-WEBSOCKET.md step 21: (a) Authorization: Bearer -- the
+      # docs/history/plan-websocket.md step 21: (a) Authorization: Bearer -- the
       # non-browser/S2S path -- takes priority; (b) otherwise the
       # session_token cookie, arriving automatically because cookies
       # aren't port-scoped. Mirrors Monk::Auth::Helpers' identical

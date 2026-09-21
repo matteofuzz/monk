@@ -31,15 +31,15 @@ Three decisions taken after the plan was written, all narrowing it:
 Steps are struck through below where the decision dropped them, rather
 than deleted, so the plan still reads as the record of what was considered.
 
-Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
+Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
 then the minimum code to pass it. Phase 0 is the exception, per
-`PLAN-PERSISTENCE.md`'s and `PLAN-WEBSOCKET.md`'s precedent — it's a spike,
+`docs/history/plan-persistence.md`'s and `docs/history/plan-websocket.md`'s precedent — it's a spike,
 not TDD, and it gates everything below.
 
 Every phase runs on Monk's target Ruby, 4.0.6 (`.ruby-version`). The spikes
 behind `docs/views.md` ran on 3.3.6 because that was what the exploring
-session had; that is exactly the situation `PLAN-WEBSOCKET.md`'s rule
+session had; that is exactly the situation `docs/history/plan-websocket.md`'s rule
 ("Ractor behavior is measured on 4.x directly, never inferred from a 3.x
 result") exists for, so Phase 0 re-measures the Ractor-flavored ones before
 any of it is trusted.
@@ -213,7 +213,7 @@ Declared locals aren't built. What replaced the phase:
 45. Several real Ractors reading the manifest concurrently all get correct
     bodies and ETags
 46. An app with views, assets and SCSS all configured is `Ractor.shareable?`
-    after `Monk.boot`, and `kino --check` agrees (manual, per `PLAN.md` step
+    after `Monk.boot`, and `kino --check` agrees (manual, per `docs/history/core-plan.md` step
     21's precedent)
 
 ## Phase 9 — Scaffold, docs, demo
@@ -228,7 +228,7 @@ Declared locals aren't built. What replaced the phase:
 49. `config.ru` in this repo grows an HTML route alongside the JSON ones, so
     `bin/server` shows a real page
 50. README gets a "Views" and a "Static assets" section; `CONTEXT.md` gets
-    the three vocabulary entries proposed in `docs/views.md`; `NOTES-V2.md`
+    the three vocabulary entries proposed in `docs/views.md`; `docs/history/notes-post-core.md`
     marks the templating candidate done
 51. An ADR for the two calls most likely to be questioned later:
     `docs/adr/0004-boot-time-template-compilation.md` and
@@ -237,6 +237,6 @@ Declared locals aren't built. What replaced the phase:
 ## Explicitly out of scope for this plan
 
 Everything listed under "Explicitly out of scope" in `docs/views.md`, plus:
-streaming/chunked bodies (a known v1 limitation tracked in `NOTES-V2.md`),
+streaming/chunked bodies (a known v1 limitation tracked in `docs/history/notes-post-core.md`),
 live reloading of `.rb` files, and the CSRF view helper `docs/auth-sessions.md`
-will want — that belongs to `PLAN-AUTH.md`.
+will want — that belongs to `docs/history/plan-auth.md`.

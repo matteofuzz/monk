@@ -4,7 +4,7 @@ Branch: `claude/passwordless-auth-session-6dfx9u`. Companion doc:
 `docs/auth-sessions.md` (design rationale, storage options considered,
 security decisions, open questions).
 
-Like `PLAN.md`, this develops in small, gradual, red → green cycles.
+Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles.
 Each numbered step is one vertical slice: one failing test against its
 seam, then the minimum code to pass it. Refactoring is a separate pass
 per item, not folded into the loop itself.
@@ -48,7 +48,7 @@ it, so they're stated up front rather than discovered mid-implementation.
    and CSRF — but Phase 9 (cookies, redirects, CSRF) is now a committed
    phase, not an optional one, per `docs/auth-sessions.md`'s finalized
    "three transports, one token model": API/S2S uses Bearer, browsers use
-   the cookie, and `Monk::WebSocket` (`PLAN-WEBSOCKET.md`) reuses whichever
+   the cookie, and `Monk::WebSocket` (`docs/history/plan-websocket.md`) reuses whichever
    of the two the connecting client already has.
 5. **Absolute session expiry, not rolling.** Rolling expiry means a
    write on every authenticated request — a read-only hot path turned
@@ -65,7 +65,7 @@ it, so they're stated up front rather than discovered mid-implementation.
 
 - **Seam A (extended) — `App.call(env)`**: the request/response
   plumbing auth needs (`Context#env`, response headers), tested as
-  observable HTTP behavior exactly as `PLAN.md` Seam A does.
+  observable HTTP behavior exactly as `docs/history/core-plan.md` Seam A does.
 - **Seam B (extended) — `.freeze!` / boot**: `Monk::Auth`'s config must
   be made `Ractor.shareable?` at boot, the same way `Model` config and
   `Persistence`'s registry already are.
@@ -77,7 +77,7 @@ it, so they're stated up front rather than discovered mid-implementation.
 - **Seam P — real concurrent Ractor integration**: multiple real
   Ractors verifying sessions and racing to redeem one login token — the
   only place the single-use guarantee is actually proven (the analogue
-  of `PLAN.md` Seam D and `PLAN-PERSISTENCE.md` Seam G).
+  of `docs/history/core-plan.md` Seam D and `docs/history/plan-persistence.md` Seam G).
 - **Seam Q — `monk-consumer-test` end-to-end**: the gem consumed from
   outside the repo, serving a real magic-link round trip under `kino`.
 
@@ -93,7 +93,7 @@ The unavoidable prerequisite: `lib/monk/base.rb:62` currently builds
    underscored, upcased Rack form. A missing header returns `nil`.
 3. The `404` path (`lib/monk/base.rb:92`) also receives `env` — today it
    hardcodes `Context.new({}, status: 404)`. Fixing this while here also
-   removes a limitation already logged in `NOTES-V2.md` ("`error 404`
+   removes a limitation already logged in `docs/history/notes-post-core.md` ("`error 404`
    handlers can't see route params").
 4. `env` is per-request and never crosses a Ractor boundary, so it
    changes nothing about shareability — assert this directly: an app
@@ -103,9 +103,9 @@ The unavoidable prerequisite: `lib/monk/base.rb:62` currently builds
 ## Phase 2 — Token core, no HTTP (Seam N, part 1)
 
 Runs against the live (Dockerized) Postgres from
-`PLAN-PERSISTENCE.md` Phase 0, with the two tables from
+`docs/history/plan-persistence.md` Phase 0, with the two tables from
 `docs/auth-sessions.md` applied as migrations
-(`PLAN-MIGRATIONS.md` file conventions).
+(`docs/history/plan-migrations.md` file conventions).
 
 5. `Monk::Auth.configure(db_name:, secret:, login_ttl:, session_ttl:)`
    stores config and is readable back; a missing required key raises a
@@ -138,7 +138,7 @@ today's `Pg::Model` doesn't reach."
     `nil`), then build `redeem` on it. The concurrent proof is Phase 7,
     step 22 — a sequential test cannot demonstrate atomicity.
 12. `Model.claim` stays equality-only, consistent with `where`
-    (`PLAN-PERSISTENCE.md` Phase 3, step 9). The `used_at IS NULL` guard
+    (`docs/history/plan-persistence.md` Phase 3, step 9). The `used_at IS NULL` guard
     is expressed as a `nil` condition value mapping to `IS NULL`, not as
     an operator DSL. If that proves too narrow, the fallback is raw SQL
     through `Pg.checkout` in `Monk::Auth` and no `Model` change at all —
@@ -170,7 +170,7 @@ today's `Pg::Model` doesn't reach."
     `docs/persistence-ractor-connections.md` "Phase 4 finding" and
     "Phase 5 finding".
 18. The failing test for step 17 must run *inside a real Ractor* —
-    every one of `PLAN-PERSISTENCE.md` Phases 1–4's tests passed while
+    every one of `docs/history/plan-persistence.md` Phases 1–4's tests passed while
     the code was in fact unusable from a worker Ractor, because none of
     them ever left the main one. A main-Ractor-only test here proves
     nothing.
@@ -212,7 +212,7 @@ today's `Pg::Model` doesn't reach."
     `sessions` contains exactly one new row. This is the step Phase 3
     exists to make possible and the reason `Model.claim` is a
     conditional `UPDATE` rather than a read-then-update — mirrors
-    `PLAN.md` step 20 and `PLAN-PERSISTENCE.md` step 16.
+    `docs/history/core-plan.md` step 20 and `docs/history/plan-persistence.md` step 16.
 23. N real Ractors concurrently verifying N distinct valid session
     tokens all succeed with correct, independent subjects.
 24. A full magic-link round trip driven through `App.call(env)` from
@@ -241,7 +241,7 @@ browser-facing flow is wanted": it ships.
     response by `dispatch`, `halt`, and `json` — replacing the
     hardcoded `{}` / lone content-type at `lib/monk/context.rb:14`,
     `:18` and `lib/monk/base.rb:65`. Closes another limitation logged
-    in `NOTES-V2.md` ("No custom response headers").
+    in `docs/history/notes-post-core.md` ("No custom response headers").
 28. `Context#redirect(location, status: 302)` — needed so the callback
     can redeem and then bounce to a token-free URL, which is what keeps
     the token out of the `Referer` header.
@@ -286,7 +286,7 @@ browser-facing flow is wanted": it ships.
 
 ## Phase 10 — `monk-consumer-test` end-to-end proof (Seam Q)
 
-37. The consumer app (see `PLAN-PERSISTENCE.md` Phase 6) gains the two
+37. The consumer app (see `docs/history/plan-persistence.md` Phase 6) gains the two
     migrations (including `login_tokens.redirect_to`), `require
     "monk/auth"`, a `Monk::Auth.configure` in `config/persistence.rb`'s
     sibling `config/auth.rb`, and routes: request, callback, a guarded
@@ -301,7 +301,7 @@ browser-facing flow is wanted": it ships.
     confirm `/me` works cookie-only, confirm the CSRF-guarded route
     rejects a request missing `X-CSRF-Token` and accepts one with it,
     logout, confirm the cookie no longer authenticates. Documented as a
-    verification step, not an automated cycle — mirrors `PLAN.md`
+    verification step, not an automated cycle — mirrors `docs/history/core-plan.md`
     step 21.
 
 ## Explicitly out of scope for this plan
@@ -312,10 +312,10 @@ OAuth/OIDC/SAML, no WebAuthn/passkeys, no TOTP or second factors, no
 templating, no authorization/roles/permissions (authentication only),
 no JWT, no session-listing or "log out everywhere" UI, no query-condition
 DSL beyond equality + `AND` + `IS NULL`, no scheduled-job runner for
-`sweep!` (async jobs are their own `NOTES-V2.md` candidate), no
+`sweep!` (async jobs are their own `docs/history/notes-post-core.md` candidate), no
 cross-origin (CORS) cookie sharing — a frontend on a different origin is
 a Bearer consumer, not a cookie consumer. `Monk::WebSocket`'s own
 `Origin`-allowlist validation and its reuse of this phase's cookie
-(`PLAN-WEBSOCKET.md` Phase 5) are that plan's scope, not this one's — this
+(`docs/history/plan-websocket.md` Phase 5) are that plan's scope, not this one's — this
 plan only has to make the cookie exist and verify the same way Bearer
 does.

@@ -27,7 +27,7 @@ section for the design and the four decisions behind it. This revision
 supersedes the original Sequel-based phases; nothing below should be
 implemented against the pre-spike version.
 
-Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
+Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
 then the minimum code to pass it. Phase 0 is the exception — it's a spike,
 not TDD, and it gated everything after it.
@@ -37,7 +37,7 @@ not TDD, and it gated everything after it.
 - **Seam E — `Monk::Persistence`'s own public API**: registry and
   per-Ractor connection lifecycle (a `Mutex`-guarded raw `PG::Connection`,
   not a pool), tested directly against its own interface (mirrors how
-  `PLAN.md` Seam C tested `StateRactor`).
+  `docs/history/core-plan.md` Seam C tested `StateRactor`).
 - **Seam F — `Monk::Persistence::Model`**: the CRUD-sugar layer
   (`create`/`find`/`where`/`update`/`delete`) built on top of Seam E.
 - **Seam B (extended) — `.freeze!` / boot**: `Model` subclasses need their
@@ -45,7 +45,7 @@ not TDD, and it gated everything after it.
   boot, the same way routes already are.
 - **Seam G — real concurrent Ractor integration**: multiple real Ractors
   actually hitting a live Postgres through Seam E/F at once — the
-  persistence equivalent of `PLAN.md` Seam D, and the only place that
+  persistence equivalent of `docs/history/core-plan.md` Seam D, and the only place that
   proves the premise holds under real parallelism.
 - **Seam H — `monk-consumer-test` end-to-end**: the gem consumed from
   *outside* the repo, via the `path:` dependency, boots for real and
@@ -155,9 +155,9 @@ alongside `Model.freeze_all!`. Full detail:
 15. Multiple real Ractors calling `Model.find`/`.where` concurrently,
     against the live (Dockerized) Postgres from Phase 0, all succeed with
     correct, independent results — the actual proof this design exists
-    for. Mirrors `PLAN.md` step 19.
+    for. Mirrors `docs/history/core-plan.md` step 19.
 16. Multiple real Ractors calling `Model.create` with distinct data
-    concurrently never lose or corrupt a write — mirrors `PLAN.md` step
+    concurrently never lose or corrupt a write — mirrors `docs/history/core-plan.md` step
     20's race-safety proof, but for connections instead of `StateRactor`.
 17. Two real threads inside the *same* (really spawned) Ractor, contending
     for that Ractor's own connection slot via `Monk::Persistence.checkout`

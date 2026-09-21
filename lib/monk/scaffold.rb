@@ -6,7 +6,7 @@ module Monk
   # Writes a new Monk project's skeleton to disk. Templates are static
   # files, copied verbatim -- nothing here needs the project's own name
   # substituted in, so there's no templating engine involved. See
-  # PLAN-INIT.md for the full design.
+  # docs/history/plan-init.md for the full design.
   class Scaffold
     TEMPLATES_DIR = File.expand_path("templates", __dir__)
 

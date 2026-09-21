@@ -4,9 +4,9 @@ module Monk
   module WebSocket
     # Intended to be the entire body of a small standalone script (e.g.
     # bin/websocket_server) -- never embedded in the same process as Kino
-    # (PLAN-WEBSOCKET.md Decision 1).
+    # (docs/history/plan-websocket.md Decision 1).
     class Server
-      # allowed_origins: and authenticate: implement PLAN-WEBSOCKET.md
+      # allowed_origins: and authenticate: implement docs/history/plan-websocket.md
       # Phase 5 (identity via Monk::Auth, reused unmodified -- Decision
       # 5). authenticate: defaults false so a plain server (Phases 1-4)
       # behaves exactly as before; turning it on requires Monk::Auth to
@@ -22,7 +22,7 @@ module Monk
       # reverify_interval: (seconds) re-runs Monk::Auth.verify against the
       # same credential on that cadence for as long as the connection
       # stays open, closing it the moment verify comes back nil (gap 4,
-      # docs/chat-gap-analysis.md) -- authenticate: true only checks the
+      # docs/history/chat-gap-analysis.md) -- authenticate: true only checks the
       # credential once, at the handshake, so a session revoked or
       # expired afterward would otherwise leave the socket live
       # indefinitely. Requires authenticate: true (there's no credential
@@ -64,7 +64,7 @@ module Monk
           # Monk::Auth's config is a plain, unfrozen Hash until this runs
           # (lib/monk/freeze_hooks.rb) -- without it, the first
           # Monk::Auth.verify call from inside a connection Ractor raises
-          # Ractor::IsolationError (PLAN-WEBSOCKET.md Phase 5 step 20).
+          # Ractor::IsolationError (docs/history/plan-websocket.md Phase 5 step 20).
           # Called here, not left to the boot script to remember, the same
           # way Base.call already auto-freezes on first use rather than
           # trusting every app to call Base.freeze! itself.
@@ -120,7 +120,7 @@ module Monk
       end
 
       # Runs entirely inside the connection's own dedicated Ractor
-      # (PLAN-WEBSOCKET.md Decision 3) -- a class method, not an instance
+      # (docs/history/plan-websocket.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
       def self.serve(
@@ -155,7 +155,7 @@ module Monk
           block.call(connection)
         rescue StandardError
           # Isolates this connection's failure to its own Ractor
-          # (PLAN-WEBSOCKET.md step 12): neither the accept loop nor any
+          # (docs/history/plan-websocket.md step 12): neither the accept loop nor any
           # other connection's Ractor is affected. Deliberately swallowed,
           # not re-raised -- there's no caller left to hand it to once
           # we're inside this connection's own dedicated Ractor.
@@ -171,11 +171,11 @@ module Monk
         socket.close
       end
 
-      # PLAN-WEBSOCKET.md steps 22-23: the Origin allowlist check runs
+      # docs/history/plan-websocket.md steps 22-23: the Origin allowlist check runs
       # before Monk::Auth.verify, and only for a cookie-derived
       # credential -- a Bearer connection has no Origin header to check
       # by construction (mirrors require_csrf!'s own Bearer exemption in
-      # PLAN-AUTH.md). Returns the verified subject, or nil after writing
+      # docs/history/plan-auth.md). Returns the verified subject, or nil after writing
       # the appropriate 403/401 response itself.
       def self.authenticate!(socket, headers, allowed_origins)
         credential = Handshake.credential_from(headers)

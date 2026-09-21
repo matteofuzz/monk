@@ -25,5 +25,5 @@ automatically on first use. A failing statement rolls back just that
 migration's transaction and halts the run — later pending migrations are
 never attempted. Migrations never run implicitly (no hook into
 `Monk.boot`/`.freeze!`); running them is an explicit step your app invokes
-itself, e.g. a `bin/migrate` script — see `PLAN-MIGRATIONS.md` for the full
+itself, e.g. a `bin/migrate` script — see `docs/history/plan-migrations.md` for the full
 design and phase-by-phase plan.

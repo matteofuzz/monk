@@ -77,7 +77,7 @@ module Monk
       # testing the login flow from a second device (another browser, a
       # phone) trivial without a mailer. A no-op outside development,
       # same posture as every other dev-only escape hatch in this
-      # framework (docs/secure-cookie-dev-http.md).
+      # framework (docs/history/secure-cookie-dev-http.md).
       #
       # subject: is optional context for the printed line only (e.g. the
       # email being logged in) -- useful once more than one login is in

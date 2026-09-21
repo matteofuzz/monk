@@ -3,7 +3,7 @@ require "monk/websocket"
 
 class WebSocketRegistryTest < Minitest::Test
   # No real socket needed to prove the registry's own bookkeeping
-  # (PLAN-WEBSOCKET.md step 16) -- a bare Ractor::Port stands in for
+  # (docs/history/plan-websocket.md step 16) -- a bare Ractor::Port stands in for
   # whatever a real connection would register.
   def test_broadcast_delivers_to_every_port_registered_under_the_key
     registry = Monk::WebSocket::Registry.new
@@ -46,7 +46,7 @@ class WebSocketRegistryTest < Minitest::Test
     port&.close
   end
 
-  # Simulates the race gap 2 of docs/chat-gap-analysis.md describes: a
+  # Simulates the race gap 2 of docs/history/chat-gap-analysis.md describes: a
   # port closed out from under the registry without ever going through
   # #unregister (e.g. the owning connection Ractor died before its own
   # cleanup ran). Before the rescue in Registry#initialize, port.send

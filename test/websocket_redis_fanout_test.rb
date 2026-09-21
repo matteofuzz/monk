@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "monk/websocket"
 require "monk/websocket/redis_fanout"
 
-# RedisFanout wraps a Registry for cross-process fan-out (PLAN-WEBSOCKET.md
+# RedisFanout wraps a Registry for cross-process fan-out (docs/history/plan-websocket.md
 # Phase 6). Two concerns: it has to be usable the exact way Registry
 # already is -- held behind a module constant, read from every connection's
 # own Ractor -- and its Redis round trip has to actually deliver across two

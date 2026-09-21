@@ -7,9 +7,9 @@ separately-spawned Ractor, for two different, gem-specific reasons (see
 finding pointed to — a real `TCPServer`, sockets moved into dedicated
 per-connection Ractors, hand-rolled RFC 6455 — works correctly, including
 true concurrency and isolated per-connection failure (see "End-to-end
-spike"). Implementation plan: `PLAN-WEBSOCKET.md`. No code lives in this
+spike"). Implementation plan: `docs/history/plan-websocket.md`. No code lives in this
 repo yet, no ADR yet (the "own process, not in-Kino" call is the one most
-likely to want one). `NOTES-V2.md` lists "WebSocket support, with session
+likely to want one). `docs/history/notes-post-core.md` lists "WebSocket support, with session
 persistence" as a v2 candidate; this doc is the first design pass at it.
 The identity/token-carrying question this doc originally left open for
 Phase 5 is now resolved as part of the same 2026-09-01 pass that finalized
@@ -127,7 +127,7 @@ the WebSocket process, because that design is already DB-backed
 the WebSocket process just needs its own `Monk::Persistence.register` call
 against the same database, and `Monk::Auth.verify` runs the same way there
 as it does inside a Kino worker. Nothing about crossing a process boundary
-is special-cased — it's the same reason `NOTES-V2.md` already pairs
+is special-cased — it's the same reason `docs/history/notes-post-core.md` already pairs
 "WebSocket support" with "session persistence" as one candidate: a
 connection that can't identify its subject isn't useful for most of what
 WebSocket gets reached for, and a DB-backed session (not in-memory state)
@@ -247,7 +247,7 @@ without touching the accept loop or either other connection. This is the
 direct, empirical version of the "isolates failure the right way" claim
 made earlier in this doc, not just an assertion.
 
-**What this doesn't yet prove**, left for `PLAN-WEBSOCKET.md`: TLS
+**What this doesn't yet prove**, left for `docs/history/plan-websocket.md`: TLS
 (`wss://`), fragmented frames (`FIN=0`, continuation opcode `0x0`),
 close-handshake opcode `0x8` and ping/pong (`0x9`/`0xA`), payloads needing
 the 64-bit length branch, and the registry/fan-out layer — this spike only
@@ -298,7 +298,7 @@ multi-message session.
    the registry's `broadcast` also publishes to Redis, and a dedicated
    subscriber Ractor per WS process re-broadcasts locally — same shape as
    the deferred Postgres sketch, Redis instead of `pg`. See Phase 6 of
-   `PLAN-WEBSOCKET.md`.
+   `docs/history/plan-websocket.md`.
 4. **Does Monk generate reverse-proxy config** (an `nginx.conf` /
    `Caddyfile` snippet from `monk new`), or only document it by hand the
    way `docs/deploying.md` does for Render/Fly today? Leaning: document,
@@ -328,6 +328,6 @@ uncertainty: TLS, fragmentation, close/ping-pong opcodes, and the
 registry/fan-out layer are unexercised, and questions 2–4 (process
 topology, fan-out transport, proxy config generation) are ordinary design
 choices rather than empirical unknowns. That's enough to move this from
-exploration to an implementation plan — see `PLAN-WEBSOCKET.md`, the same
+exploration to an implementation plan — see `docs/history/plan-websocket.md`, the same
 transition `docs/persistence-ractor-connections.md` made once its own
 Phase 0 held up.

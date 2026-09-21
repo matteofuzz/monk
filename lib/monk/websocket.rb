@@ -12,7 +12,7 @@ require_relative "websocket/registry"
 
 # Opt-in, like Monk::Persistence backends and Monk::Auth: require
 # "monk/websocket" explicitly. `require "monk"` alone must not load this
-# (PLAN-WEBSOCKET.md Decision 7).
+# (docs/history/plan-websocket.md Decision 7).
 module Monk
   module WebSocket
   end

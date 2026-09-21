@@ -56,7 +56,7 @@ total — a public endpoint shouldn't trust a claimed length, or let many
 small frames add up past it. A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 [`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
-phase-by-phase build: [`websocket.md`](websocket.md) / `PLAN-WEBSOCKET.md`.
+phase-by-phase build: [`websocket.md`](websocket.md) / `docs/history/plan-websocket.md`.
 
 ## Cross-process fan-out — `Monk::WebSocket::RedisFanout`
 

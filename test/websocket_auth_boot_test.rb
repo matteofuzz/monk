@@ -8,7 +8,7 @@ class WebSocketAuthBootTest < Minitest::Test
   end
 
   # The WS-specific version of auth_boot_test.rb's regression
-  # (PLAN-WEBSOCKET.md Phase 5 step 20): a process that never touches
+  # (docs/history/plan-websocket.md Phase 5 step 20): a process that never touches
   # Monk::Base at all (Decision 1) still needs Monk::Auth's config
   # readable from a worker Ractor -- proving the freeze doesn't secretly
   # still depend on Base.

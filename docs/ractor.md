@@ -157,7 +157,7 @@ and just references it from routes, and why `#update` raises a precise
 
 ### Known sharp edges
 
-From `NOTES-V2.md`'s known-limitations list: a `StateRactor` runs for the process's
+From `docs/history/notes-post-core.md`'s known-limitations list: a `StateRactor` runs for the process's
 whole lifetime with no shutdown path, a slow `#update` block serializes and blocks
 *every* other caller waiting on that same instance (no timeout, no async variant),
 and there's no cross-`StateRactor` transactionality if an operation needs to touch

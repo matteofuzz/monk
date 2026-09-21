@@ -6,7 +6,7 @@ yet — the decisions below are locked in here directly, since the surface
 is small enough not to need a separate rationale doc the way persistence
 did.
 
-Like `PLAN.md` and `PLAN-PERSISTENCE.md`, this develops in small, gradual,
+Like `docs/history/core-plan.md` and `docs/history/plan-persistence.md`, this develops in small, gradual,
 red → green cycles. Each numbered step is one vertical slice: one failing
 test against its seam, then the minimum code to pass it.
 
@@ -49,12 +49,12 @@ test against its seam, then the minimum code to pass it.
 - **Seam I — `Monk::Persistence::Pg::Migrator`'s own public API**: file
   discovery/ordering, applying pending migrations, rolling back, and
   status introspection — tested directly against its own interface
-  (mirrors how `PLAN-PERSISTENCE.md` Seam E tested `Monk::Persistence::Pg`
+  (mirrors how `docs/history/plan-persistence.md` Seam E tested `Monk::Persistence::Pg`
   itself), against a real Postgres (there's no meaningful fake for "ran
   this SQL file").
 - **Seam J — consumer-facing entrypoint**: a runnable script in
   `monk-consumer-test` wrapping the `Migrator`, the persistence equivalent
-  of `PLAN-PERSISTENCE.md` Seam H — proves the gem is usable from outside
+  of `docs/history/plan-persistence.md` Seam H — proves the gem is usable from outside
   the repo, not just against its own test suite.
 
 ## Phase 1 — Migration file discovery (Seam I, part 1) — done
@@ -114,7 +114,7 @@ test against its seam, then the minimum code to pass it.
     consumer app rather than the library.
 14. Verified manually against a disposable `postgres:16` container: a
     `create_users` migration pair takes the place of the hand-run
-    `db/schema.sql` from `PLAN-PERSISTENCE.md` Phase 6 — `bin/migrate` run
+    `db/schema.sql` from `docs/history/plan-persistence.md` Phase 6 — `bin/migrate` run
     twice is idempotent, `bin/migrate rollback` cleanly drops what it
     added, and `GET /users` still round-trips correctly afterward.
 

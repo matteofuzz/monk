@@ -154,7 +154,7 @@ Concrete, ordered by how likely a chat workload is to hit them.
    message into many small frames would have silently bypassed the
    per-frame check.
 6. ~~**One WebSocket process, structurally.**~~ **Fixed 2026-09-09.**
-   `Monk::WebSocket::RedisFanout` (`PLAN-WEBSOCKET.md` Phase 6 — Redis
+   `Monk::WebSocket::RedisFanout` (`docs/history/plan-websocket.md` Phase 6 — Redis
    pub/sub, not Postgres `LISTEN`/`NOTIFY`, per that doc's Open Question 3)
    wraps a `Registry` with the identical `#register`/`#broadcast`
    interface, tested end-to-end against a real Redis, and every scaffolded

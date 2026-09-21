@@ -14,14 +14,14 @@ This doc started as the design pass and now doubles as the record of what
 shipped and what was left on the table. Six throwaway spikes preceded it,
 plus two Ractor bugs the integration tests caught afterwards that no amount
 of design would have — see "What the real Ractor tests caught". Plan:
-`PLAN-VIEWS.md`.
+`docs/history/plan-views.md`.
 
 **Caveat on the spike results below.** Monk's target Ruby is 4.0.6
-(`.ruby-version`), and `PLAN-WEBSOCKET.md` sets the rule that Ractor
+(`.ruby-version`), and `docs/history/plan-websocket.md` sets the rule that Ractor
 behavior is measured on 4.x directly, never inferred from a 3.x result.
 The session that produced this doc had only Ruby 3.3.6 available, so every
 Ractor-flavored number below is provisional and re-run on 4.0.6 as Phase 0
-of `PLAN-VIEWS.md`. The findings split cleanly into two kinds: pure ERB /
+of `docs/history/plan-views.md`. The findings split cleanly into two kinds: pure ERB /
 asset mechanics (stdlib behavior, version-stable, safe to design against)
 and Ractor isolation behavior (must be re-measured). Each finding says
 which it is.
@@ -567,7 +567,7 @@ all), or anything about JavaScript beyond serving bytes.
   email body from a job)? It only needs a `Context`, so it's nearly free,
   but "a `Context` with no `env`" is a concept the framework doesn't have
   yet.
-- **Streaming responses** stay out (`NOTES-V2.md` lists the single-string
+- **Streaming responses** stay out (`docs/history/notes-post-core.md` lists the single-string
   body as a known v1 limitation) — but a `render` that builds one big
   string is the thing a future streaming body would have to unwind. Worth
   knowing before, not solving now.

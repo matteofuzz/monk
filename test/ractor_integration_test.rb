@@ -49,13 +49,13 @@ class RactorIntegrationTest < Minitest::Test
   end
 
   # Settles, by measurement on this project's actual target (Ruby 4.0.6,
-  # .ruby-version), a question PLAN-AUTH.md Phase 5 step 20 left open: does
+  # .ruby-version), a question docs/history/plan-auth.md Phase 5 step 20 left open: does
   # a non-main Ractor read ENV at all, and does it see the same value the
   # main Ractor set? A 3.3.6 probe exists in docs/auth-sessions.md but is
   # explicitly not a substitute -- see this project's own history of
   # Ractor behavior not porting across versions by assumption (the Phase 0
   # Sequel spike, the Phase 4/5 freezing findings). Answer: yes, on 4.0.6.
-  # PLAN-CONFIG.md Phase 4 makes the answer moot for MONK_ENV specifically
+  # docs/history/plan-config.md Phase 4 makes the answer moot for MONK_ENV specifically
   # either way -- base.rb no longer reads ENV["MONK_ENV"] per request at
   # all, so request logging can't depend on whichever answer this returns.
   def test_env_is_readable_and_consistent_from_a_real_worker_ractor
@@ -68,9 +68,9 @@ class RactorIntegrationTest < Minitest::Test
     ENV.delete("MONK_RACTOR_ENV_PROBE")
   end
 
-  # PLAN-CONFIG.md Phase 4 step 14: base.rb's log_request used to read
+  # docs/history/plan-config.md Phase 4 step 14: base.rb's log_request used to read
   # ENV["MONK_ENV"] per request, inside whichever Ractor served it --
-  # PLAN-AUTH.md step 20's flagged inconsistency with Assets' boot-frozen
+  # docs/history/plan-auth.md step 20's flagged inconsistency with Assets' boot-frozen
   # pattern. It now reads a boolean computed once at Boot (@quiet_logging,
   # from Monk.env), so this proves the fixed version survives a real
   # worker pool exactly the way Assets' @production already did.
@@ -211,7 +211,7 @@ class RactorIntegrationTest < Minitest::Test
     end
   end
 
-  # PLAN-CONFIG.md Phase 7 step 21: the analogue of the Assets/Views
+  # docs/history/plan-config.md Phase 7 step 21: the analogue of the Assets/Views
   # concurrent-Ractor proofs above, for a custom app-declared Settings key.
   def test_concurrent_ractors_read_a_custom_settings_key_correctly
     with_settings do
@@ -235,7 +235,7 @@ class RactorIntegrationTest < Minitest::Test
     end
   end
 
-  # PLAN-CONFIG.md Phase 7 step 22: same proof, for Monk.env's predicates
+  # docs/history/plan-config.md Phase 7 step 22: same proof, for Monk.env's predicates
   # specifically -- not just log_request's suppression behavior, which
   # only exercises .development?.
   def test_concurrent_ractors_read_monk_env_predicates_correctly

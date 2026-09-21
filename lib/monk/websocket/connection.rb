@@ -1,13 +1,13 @@
 module Monk
   module WebSocket
-    # Monk's Context-equivalent for a WS connection (PLAN-WEBSOCKET.md step
+    # Monk's Context-equivalent for a WS connection (docs/history/plan-websocket.md step
     # 10): the socket and frame machinery are never exposed directly to app
     # code. Lives entirely inside its own connection Ractor -- never itself
     # crosses a Ractor boundary, so it needs no shareability of its own.
     class Connection
       # 1 MiB -- generous for chat-sized text, cheap insurance against a
       # hostile length claim on a public endpoint (gap 5,
-      # docs/chat-gap-analysis.md). Enforced twice: against a single
+      # docs/history/chat-gap-analysis.md). Enforced twice: against a single
       # frame's declared length (#read_frame, before the payload is ever
       # read off the wire) and against a fragmented message's reassembled
       # total (#read) -- otherwise chunking a message into many frames
@@ -16,7 +16,7 @@ module Monk
 
       # subject is whatever Monk::Auth.verify returned when
       # Server.new(authenticate: true) verified this handshake
-      # (PLAN-WEBSOCKET.md Phase 5) -- nil for an unauthenticated server.
+      # (docs/history/plan-websocket.md Phase 5) -- nil for an unauthenticated server.
       attr_reader :subject
 
       def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE)
@@ -93,7 +93,7 @@ module Monk
       end
 
       # Registers this connection's own Ractor::Port -- the "connection
-      # handle" a Monk::WebSocket::Registry holds (PLAN-WEBSOCKET.md step
+      # handle" a Monk::WebSocket::Registry holds (docs/history/plan-websocket.md step
       # 17) -- under key, and relays whatever the registry broadcasts onto
       # this socket via a background Thread inside this connection's own
       # Ractor (safe: a Ractor may freely spawn ordinary Threads within
@@ -121,7 +121,7 @@ module Monk
 
       # Sends an unsolicited ping frame every `interval` seconds for as
       # long as the connection stays open (gap 3,
-      # docs/chat-gap-analysis.md): answering a client's own ping keeps a
+      # docs/history/chat-gap-analysis.md): answering a client's own ping keeps a
       # connection alive only if the client ever sends one, and browser
       # JavaScript has no API to send WS ping frames at all -- so a truly
       # idle browser connection still gets dropped by a reverse proxy's

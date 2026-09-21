@@ -43,4 +43,4 @@ browsers, `set_session_cookie(session)` sets that cookie (plus a readable
 requests, since a forged cross-origin request has no way to set that
 header. `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows. Full design and phase-by-phase
-build: [`auth-sessions.md`](auth-sessions.md) / `PLAN-AUTH.md`.
+build: [`auth-sessions.md`](auth-sessions.md) / `docs/history/plan-auth.md`.

@@ -64,7 +64,7 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 - [`docs/deploying.md`](docs/deploying.md): worked deployment examples.
 - [`docs/ractor.md`](docs/ractor.md): how Monk uses Ruby's `Ractor`.
 - [`docs/adr/`](docs/adr) and [`CONTEXT.md`](CONTEXT.md): architectural decisions and domain vocabulary.
-- Design docs and phase-by-phase plans behind each feature: [`docs/views.md`](docs/views.md), [`docs/auth-sessions.md`](docs/auth-sessions.md), [`docs/websocket.md`](docs/websocket.md), [`docs/persistence-ractor-connections.md`](docs/persistence-ractor-connections.md), [`docs/reactive-partials.md`](docs/reactive-partials.md), and the `PLAN-*.md` files.
+- Design docs and phase-by-phase plans behind each feature: [`docs/views.md`](docs/views.md), [`docs/auth-sessions.md`](docs/auth-sessions.md), [`docs/websocket.md`](docs/websocket.md), [`docs/persistence-ractor-connections.md`](docs/persistence-ractor-connections.md), and the phase-by-phase plans and archived notes in [`docs/history/`](docs/history).
 - [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Working on this repo
@@ -79,4 +79,4 @@ More (server modes, Docker) in [`docs/development.md`](docs/development.md).
 
 ## Status
 
-v1 is done (`PLAN.md`); Monk is now on v2, worked one candidate at a time. The living list is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `NOTES-V2.md`). Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, and live updates (`Monk::Live`, as of 2026-09-19).
+v1 is done (`docs/history/core-plan.md`); Monk is now on v2, worked one candidate at a time. The living list is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `docs/history/notes-post-core.md`). Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, and live updates (`Monk::Live`, as of 2026-09-19).

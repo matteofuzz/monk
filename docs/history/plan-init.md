@@ -3,8 +3,8 @@
 Branch: not yet created. Depends on: `Monk::Persistence::Pg` and
 `Monk::Persistence::Pg::Migrator` (`main`, both done) — the `--postgres`
 variant's templates are exactly the hand-written files
-`PLAN-MIGRATIONS.md` Phase 5 added to `monk-consumer-test`. No companion
-design doc yet, same call as `PLAN-MIGRATIONS.md`: the surface is small
+`docs/history/plan-migrations.md` Phase 5 added to `monk-consumer-test`. No companion
+design doc yet, same call as `docs/history/plan-migrations.md`: the surface is small
 enough to lock decisions in directly here.
 
 Like the other plans, this develops in small, gradual, red → green cycles.
@@ -41,7 +41,7 @@ seam, then the minimum code to pass it.
    version as this repo's own). Mirrors persistence itself being opt-in in
    the library — a new Monk project shouldn't be handed Postgres wiring it
    didn't ask for.
-6. **`--postgres` adds exactly what `PLAN-MIGRATIONS.md` Phase 5 hand-wrote
+6. **`--postgres` adds exactly what `docs/history/plan-migrations.md` Phase 5 hand-wrote
    into `monk-consumer-test`**: `config/persistence.rb`, `bin/console`,
    `bin/setup_db`, `bin/migrate`, and an empty `db/migrate/` directory,
    plus `pg`/`irb` added to the base `Gemfile` template. No demo migration
@@ -57,7 +57,7 @@ seam, then the minimum code to pass it.
    seam pure filesystem, trivially testable without a subprocess or
    network access.
 9. **The shipped `Gemfile` template says plain `gem "monk"`** (correct for
-   once the gem is actually published — see `NOTES-V2.md`'s note that
+   once the gem is actually published — see `docs/history/notes-post-core.md`'s note that
    RubyGems already has an unrelated dormant gem named `monk`, a rename
    will be needed first). Phase 4's own end-to-end test patches the
    generated `Gemfile` to add `path: "../monk"` itself, as a test-harness
@@ -69,7 +69,7 @@ seam, then the minimum code to pass it.
   directory and a `postgres:` flag, writes the right file set to disk.
   Pure filesystem — no network, no Postgres — tested directly against its
   own interface into a `Dir.mktmpdir`, the same style Phase 1 of
-  `PLAN-MIGRATIONS.md` used for file discovery.
+  `docs/history/plan-migrations.md` used for file discovery.
 - **Seam L — `exe/monk`'s argument parsing/dispatch**: thin CLI wrapper
   turning `ARGV` into a `Monk::Scaffold` call (or a usage error), tested
   by invoking the executable as a real subprocess against a scratch
@@ -77,7 +77,7 @@ seam, then the minimum code to pass it.
 - **Seam M — end-to-end proof**: a freshly `monk new`'d project actually
   resolves `monk` and boots (base variant), and actually serves a request
   round-tripping through Postgres (`--postgres` variant) — the scaffolding
-  equivalent of `PLAN-PERSISTENCE.md` Seam H / `PLAN-MIGRATIONS.md` Seam J.
+  equivalent of `docs/history/plan-persistence.md` Seam H / `docs/history/plan-migrations.md` Seam J.
 
 ## Phase 1 — Base skeleton writer (Seam K, part 1) — done
 
@@ -127,7 +127,7 @@ seam, then the minimum code to pass it.
 11. Same scratch-directory proof for `--postgres`: against a disposable
     `postgres:16` container, `bin/setup_db` then a real request against a
     `/users`-style route (added by hand to the scaffolded `config.ru` for
-    this one verification, same as `PLAN-MIGRATIONS.md` Phase 5's
+    this one verification, same as `docs/history/plan-migrations.md` Phase 5's
     `monk-consumer-test` route) round-trips correctly.
 
 ## Phase 5 — Always-on WebSocket base skeleton + `--redis` opt-in (Seam K, part 3) — done
@@ -138,13 +138,13 @@ This one is bigger (a `RedisFanout` correctness fix, a new base-skeleton
 file, a new flag, new tests), so it gets a real phase.
 
 Unlike Postgres and Redis, plain WebSocket (`Monk::WebSocket::Server`
-Phases 1–5 of `PLAN-WEBSOCKET.md`) needs no external service — it's just
+Phases 1–5 of `docs/history/plan-websocket.md`) needs no external service — it's just
 another Ruby process on another port — so there's no infra reason to gate
 it behind a flag the way `--postgres`/`--redis` are. `bin/websocket_server`
 instead joins the base skeleton unconditionally and adapts at boot:
 
 12. `bin/websocket_server` ships in `BASE_FILES`, always, executable. Its
-    demo `:chat` channel is the same shape Phase 8 of `PLAN-WEBSOCKET.md`
+    demo `:chat` channel is the same shape Phase 8 of `docs/history/plan-websocket.md`
     already hand-verified in `monk-consumer-test` (commit `555989d`), minus
     the hardcoded `authenticate: true` — this is that same file made
     boot-adaptive instead of hand-authored per app.
@@ -212,6 +212,6 @@ interactive prompts (`monk new` takes flags, not a wizard), no custom/
 user-supplied template directories (`--template=...`), no "eject" or
 upgrade tooling for updating an existing scaffolded app's boilerplate
 after the fact, no publishing `monk` to RubyGems (a separate, unrelated
-decision — see `NOTES-V2.md`). `redis_url:`/`authenticate:`
+decision — see `docs/history/notes-post-core.md`). `redis_url:`/`authenticate:`
 auto-detection inside `Monk::WebSocket::Server` itself (Phase 5 decision —
 deliberately left to the generated script, not the library).
