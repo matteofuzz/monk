@@ -26,7 +26,7 @@ up front rather than discovered mid-implementation.
    serving; only `development` is verbose/dev-mode.
 3. **`base.rb`'s `log_request` moves to the boot-frozen pattern
    `assets.rb` already uses** — `ENV["MONK_ENV"]` is main-Ractor state
-   (`docs/persistence-ractor-connections.md`), so a per-request read
+   (`docs/design/persistence-ractor-connections.md`), so a per-request read
    inside a worker Ractor is the same class of bug ADR 0003 exists to
    catch, just not yet caught.
 4. **`test/test_helper.rb`'s forced default becomes `MONK_ENV=test`**,
@@ -58,7 +58,7 @@ up front rather than discovered mid-implementation.
     global code) and `Context#settings` (per-request, mirroring
     `Context#params`/`#env`).
 12. **`monk` the gem never depends on `dotenv`.** Adoption is a
-    scaffold/docs concern only — consistent with `docs/deploying.md`,
+    scaffold/docs concern only — consistent with `docs/guides/deploying.md`,
     where hosting platforms inject env vars directly and dotenv is
     never mentioned.
 13. **A new `config/settings.rb` ships in the *base* scaffold skeleton**
@@ -89,7 +89,7 @@ up front rather than discovered mid-implementation.
 - **Seam G — real Ractor integration**: `Settings`/`Monk.env` read
   correctly from a real worker Ractor after `Boot` — the recurring
   hazard this codebase keeps re-discovering
-  (`docs/persistence-ractor-connections.md`), so it needs its own proof
+  (`docs/design/persistence-ractor-connections.md`), so it needs its own proof
   here rather than an assumption carried over from Assets/Persistence.
 - **Seam H — `monk-consumer-test` end-to-end proof**: the gem consumed
   from outside the repo, a generated app reading its own `Settings` and
@@ -122,7 +122,7 @@ up front rather than discovered mid-implementation.
 6. The frozen value hash is `Ractor.make_shareable`'d at that point —
    assert a real worker Ractor can read a previously-declared key after
    `Boot` without `Ractor::IsolationError` (this phase's version of the
-   bug `docs/persistence-ractor-connections.md` keeps naming).
+   bug `docs/design/persistence-ractor-connections.md` keeps naming).
 7. Calling `Monk::Settings.configure` again after `Boot` raises — the
    registry is closed the same moment routes and views are.
 

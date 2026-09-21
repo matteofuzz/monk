@@ -5,7 +5,7 @@ module Monk
   module WebSocket
     module Handshake
       # An unfrozen constant here is exactly the bug Phase 0's spike hit
-      # (docs/websocket.md) -- Ractor::IsolationError the first time this is
+      # (docs/design/websocket.md) -- Ractor::IsolationError the first time this is
       # read from a connection Ractor. .freeze is not optional.
       MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".freeze
 

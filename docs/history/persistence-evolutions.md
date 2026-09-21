@@ -11,7 +11,7 @@ it comes up in discussion/review; when one is actually built, strike it
 
 **Status**: open, not started. **Complexity**: high.
 
-`where` is AND-only (`docs/persistence-ractor-connections.md` decision 4,
+`where` is AND-only (`docs/design/persistence-ractor-connections.md` decision 4,
 and its 2026-09-07 update after gap 1 of `docs/history/chat-gap-analysis.md` added
 comparison operators/`IN`/`ORDER BY`/`LIMIT`). A query like "sender=A and
 recipient=B, or the reverse" — needed for a 1:1 chat conversation's full
@@ -64,7 +64,7 @@ connection, per Kino's default) could end up issuing commands on the same
 live connection concurrently: the exact wire-protocol-corruption failure
 the `SizedQueue`-based checkout exists to prevent in the first place (same
 failure category as the Phase 4/5 Ractor-shareability bugs recorded in
-`docs/persistence-ractor-connections.md`, just about thread-locality
+`docs/design/persistence-ractor-connections.md`, just about thread-locality
 instead).
 
 Also needs an explicit decision before any code gets written: nested

@@ -7,7 +7,7 @@ require_relative "errors"
 module Monk
   # ERB templates, compiled once at Boot into real instance methods on a
   # module that Context includes, then frozen. Never compiled at request
-  # time -- see docs/views.md for why that isn't a preference: a worker
+  # time -- see docs/design/views.md for why that isn't a preference: a worker
   # Ractor can't hold a template cache (shared mutable state) and mustn't
   # install methods on a shared module, so the lazy-compile-and-cache
   # design every other Ruby template engine uses is unavailable here.

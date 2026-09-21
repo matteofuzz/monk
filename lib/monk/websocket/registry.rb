@@ -2,7 +2,7 @@ module Monk
   module WebSocket
     # A dedicated Ractor holding the live set of connection handles keyed by
     # an app-assigned channel/subject -- mirrors StateRactor's shape
-    # (docs/ractor.md): the mutable Hash stays hidden inside this one
+    # (docs/design/ractor.md): the mutable Hash stays hidden inside this one
     # Ractor, and every call is a synchronous "ask" via a fresh
     # Ractor::Port, so registration/broadcast can never race each other.
     class Registry

@@ -1,7 +1,7 @@
 # Monk persistence — implementation plan
 
 Branch: `main_dev/add_db_support`. Companion doc:
-`docs/persistence-ractor-connections.md` (design rationale, facts gathered,
+`docs/design/persistence-ractor-connections.md` (design rationale, facts gathered,
 resolved decisions).
 
 **Superseded by a multi-backend refactor on `main_dev/add_db_support_multi`**
@@ -61,7 +61,7 @@ non-main ractor.` from any non-main Ractor, in every configuration tried
 the main Ractor first). Raw `pg` was verified as the fallback: two separate
 Ractors, each calling `PG.connect(...)` and running a real round-trip
 query, both succeeded with no Ractor errors. Full detail:
-`docs/persistence-ractor-connections.md` → "Phase 0 result."
+`docs/design/persistence-ractor-connections.md` → "Phase 0 result."
 
 ## Phase 1 — Registry & per-Ractor connection lifecycle (Seam E)
 
@@ -120,7 +120,7 @@ query, both succeeded with no Ractor errors. Full detail:
     `table_name`, not the class holding them
     (`subclass.table_name = Ractor.make_shareable(subclass.table_name)`).
     Verified empirically before implementing — see
-    `docs/persistence-ractor-connections.md` → "Phase 4 finding." This was
+    `docs/design/persistence-ractor-connections.md` → "Phase 4 finding." This was
     a real, live bug in Phases 2–3's `Model` classes (String `table_name`s
     were never actually safe to read from a worker Ractor). `.freeze!` now
     calls `Monk::Persistence::Model.freeze_all!`, which does this for every
@@ -137,7 +137,7 @@ query, both succeeded with no Ractor errors. Full detail:
     `.freeze!` — reproduced directly in the test suite while implementing.
     The shareability check has no such problem (pure class property,
     independent of any registry state) and is kept. Full reasoning:
-    `docs/persistence-ractor-connections.md` → "Phase 4 finding."
+    `docs/design/persistence-ractor-connections.md` → "Phase 4 finding."
 
 ## Phase 5 — Real Ractor integration against live Postgres (Seam G) — done
 
@@ -150,7 +150,7 @@ worker Ractor, despite all of Phases 1–4's tests passing (none had ever
 run outside the main Ractor). Fixed with `Monk::Persistence.
 freeze_registry!` (freezes `@configs` itself), called from `Base#freeze!`
 alongside `Model.freeze_all!`. Full detail:
-`docs/persistence-ractor-connections.md` → "Phase 5 finding."
+`docs/design/persistence-ractor-connections.md` → "Phase 5 finding."
 
 15. Multiple real Ractors calling `Model.find`/`.where` concurrently,
     against the live (Dockerized) Postgres from Phase 0, all succeed with
@@ -180,7 +180,7 @@ alongside `Model.freeze_all!`. Full detail:
     `GET /users`. Full detail, including a separate pre-existing bug found
     on `main` (unrelated to persistence — `Monk::VERSION` isn't
     Ractor-shareable, breaks `GET /hello` under real `kino`, deliberately
-    left unfixed here): `docs/persistence-ractor-connections.md` → "Phase
+    left unfixed here): `docs/design/persistence-ractor-connections.md` → "Phase
     6 result."
 
 ## Explicitly out of scope for this plan

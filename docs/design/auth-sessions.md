@@ -10,7 +10,7 @@ Bearer-only slice and deferred the browser and WebSocket cases entirely
 (old "Open questions" #1). That deferral is resolved here: this doc now
 specifies one token model carried three ways — `Authorization: Bearer` for
 API/server-to-server callers, an `HttpOnly` cookie for browsers, and a
-carrier for `Monk::WebSocket` (`docs/websocket.md`) connections that turns
+carrier for `Monk::WebSocket` (`docs/design/websocket.md`) connections that turns
 out to need no new mechanism at all for the browser case. Nothing below
 changes the core design ("Two tokens, not one", the schema, the storage
 options): it adds the delivery and CSRF layer the original pass punted on.
@@ -28,7 +28,7 @@ implemented.
 | Browser (interactive user) | `HttpOnly; Secure; SameSite=Lax` cookie | A cookie the client can't read from JS resists token theft via XSS in a way a Bearer token stashed in `localStorage`/`sessionStorage` (readable by any script on the page) does not. This is the actual reason to prefer cookies for a browser client, not merely "browsers use cookies." |
 | `Monk::WebSocket` connection | Whichever of the above the connecting client already has | See "The WebSocket case" below — this needs no third mechanism. |
 
-`current_subject` / `require_user!` (`docs/auth-sessions.md`'s "Proposed
+`current_subject` / `require_user!` (`docs/design/auth-sessions.md`'s "Proposed
 API") check `Authorization` first and fall back to the cookie when absent.
 Both remain first-class; nothing here removes Bearer or makes cookies
 mandatory. Which one a given app uses is a client-side choice, not a
@@ -50,7 +50,7 @@ A TTL'd opaque token has no such state. Verifying a request is:
 3. compare `expires_at` against `Time.now`.
 
 Pure computation plus a per-Ractor database connection Monk already
-knows how to manage (`docs/persistence-ractor-connections.md`). Nothing
+knows how to manage (`docs/design/persistence-ractor-connections.md`). Nothing
 shared, nothing mutable, nothing that needs `Ractor.make_shareable`
 beyond a frozen config Hash. That's why this is the right auth design
 for Monk and not merely a fashionable one.
@@ -288,7 +288,7 @@ equality + `AND` only, deliberately (`docs/history/plan-persistence.md` Phase 3,
   Hash itself is made shareable — freezing the module does nothing,
   since Modules and Classes are always `Ractor.shareable?` regardless
   of their ivars. This is the exact bug documented twice already in
-  `docs/persistence-ractor-connections.md` ("Phase 4 finding" for
+  `docs/design/persistence-ractor-connections.md` ("Phase 4 finding" for
   `Model` config, "Phase 5 finding" for `Persistence`'s own
   `@configs`). Do not rediscover it a third time: register a freeze
   hook the way `Persistence::Registry.extended` does, so `Base#freeze!`
@@ -504,14 +504,14 @@ making the request.
 
 ## The WebSocket case: identity across a second process
 
-`docs/websocket.md` Phase 5 (step 20) left the token-carrier question for
+`docs/design/websocket.md` Phase 5 (step 20) left the token-carrier question for
 the WS handshake explicitly open, because a browser's `new WebSocket(url)`
 constructor cannot set custom headers — so the plain `Authorization:
 Bearer` pattern above doesn't transfer unchanged. It resolves without a
 third mechanism, from two facts neither doc previously used together:
 
 1. **Cookies are not port-scoped.** RFC 6265 matches a cookie's `Domain`
-   and `Path`, never its port. `docs/websocket.md`'s recommended topology —
+   and `Path`, never its port. `docs/design/websocket.md`'s recommended topology —
    a reverse proxy routing `/ws` on the *same host* to the WS process, and
    everything else to Kino — means the session cookie set by the HTTP
    process is sent automatically by the browser on the WS handshake

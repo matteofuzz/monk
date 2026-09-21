@@ -8,7 +8,7 @@ class WebSocketServerTest < Minitest::Test
   # Defined at class-body scope, not inline in a test method: self here is
   # WebSocketServerTest (a Class, always Ractor.shareable?), which is what
   # Server#run's block requires -- the identical constraint
-  # StateRactor#update already documents (docs/ractor.md).
+  # StateRactor#update already documents (docs/design/ractor.md).
   ECHO_ONE_MESSAGE = proc do |connection|
     message = connection.read
     connection.write(message) if message

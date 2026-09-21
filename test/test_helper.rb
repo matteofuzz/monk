@@ -138,7 +138,7 @@ module PersistenceTestHelpers
 
   def skip_unless_postgres_available
     skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
-      "(set MONK_TEST_PG_* env vars, or start one -- see docs/persistence-ractor-connections.md)" unless postgres_available?
+      "(set MONK_TEST_PG_* env vars, or start one -- see docs/design/persistence-ractor-connections.md)" unless postgres_available?
   end
 
   # Same information_schema check Migrator#ensure_schema_migrations_table

@@ -3,7 +3,7 @@
 Persistence is opt-in: `require "monk"` alone never loads it. Postgres is the
 only backend today, via raw `pg` (Sequel was tried first and ruled out — it
 raises `Ractor::IsolationError` from any non-main Ractor, with no
-workaround; see [`persistence-ractor-connections.md`](persistence-ractor-connections.md)). Add `pg` to your
+workaround; see [`design/persistence-ractor-connections.md`](../design/persistence-ractor-connections.md)). Add `pg` to your
 own `Gemfile` and:
 
 ```ruby

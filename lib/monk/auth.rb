@@ -12,7 +12,7 @@ require_relative "auth/rate_limiter"
 module Monk
   # Passwordless token auth. Opt-in: require "monk/auth" explicitly --
   # `require "monk"` alone does not load this, since it depends on a
-  # persistence backend the app may not use (docs/auth-sessions.md).
+  # persistence backend the app may not use (docs/design/auth-sessions.md).
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
 
@@ -20,7 +20,7 @@ module Monk
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module -- Monk::Auth is always Ractor.shareable?
       # regardless of its ivars, so freezing the module itself would do
-      # nothing (docs/persistence-ractor-connections.md "Phase 4/5 finding").
+      # nothing (docs/design/persistence-ractor-connections.md "Phase 4/5 finding").
       def freeze_registry!
         @config = Ractor.make_shareable(@config)
         freeze_rqrcode!
@@ -153,7 +153,7 @@ module Monk
       end
 
       # Deliberately not grown onto Model: a `<` comparison is real
-      # query-DSL scope for a hygiene task (docs/auth-sessions.md).
+      # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
       def sweep!
         ensure_configured!
         Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
@@ -165,7 +165,7 @@ module Monk
       end
 
       # Stateless double-submit CSRF token, derived not stored
-      # (docs/auth-sessions.md's "CSRF: stateless double-submit, no third
+      # (docs/design/auth-sessions.md's "CSRF: stateless double-submit, no third
       # table") -- the one HMAC implementation set_session_cookie and
       # require_csrf! both call, so there's no second place this could
       # drift out of sync.
@@ -221,7 +221,7 @@ module Monk
       # (confirmed live: requiring rqrcode in the main Ractor first does
       # not help). Walking its constants here, at boot in the main
       # Ractor, and freezing each one is the same fix
-      # docs/persistence-ractor-connections.md documents for this exact
+      # docs/design/persistence-ractor-connections.md documents for this exact
       # class of problem elsewhere in the stack. A no-op if the app
       # hasn't added rqrcode to its own Gemfile (see log_dev_link).
       def freeze_rqrcode!

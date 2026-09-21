@@ -3,7 +3,7 @@ require_relative "../state_ractor"
 module Monk
   module Auth
     # Per-process, approximate rate limiting for POST /auth/request
-    # (docs/auth-sessions.md: StateRactor's "real job" here -- durability is
+    # (docs/design/auth-sessions.md: StateRactor's "real job" here -- durability is
     # explicitly not a goal). Frozen at construction, like StateRactor
     # itself: that's what makes #exceeded? able to build a fresh #update
     # block per call with a shareable self, satisfying CONTEXT.md's

@@ -13,7 +13,7 @@ likely to want one). `docs/history/notes-post-core.md` lists "WebSocket support,
 persistence" as a v2 candidate; this doc is the first design pass at it.
 The identity/token-carrying question this doc originally left open for
 Phase 5 is now resolved as part of the same 2026-09-01 pass that finalized
-`docs/auth-sessions.md` across all three transports — see "Identity
+`docs/design/auth-sessions.md` across all three transports — see "Identity
 crosses the process boundary the same way it crosses Ractors" below.
 
 ## Why a separate process, not a Kino feature
@@ -21,7 +21,7 @@ crosses the process boundary the same way it crosses Ractors" below.
 A prior session established that Kino doesn't support WebSocket and has no
 plan to. This session confirmed *why*, empirically, rather than treating
 that as a fixed fact to route around blindly — the same "verify, don't
-assume" posture `docs/persistence-ractor-connections.md` took with Sequel.
+assume" posture `docs/design/persistence-ractor-connections.md` took with Sequel.
 
 Two live spikes, 2026-09-01, against a real `bundle exec kino` (Ruby 4.0.6,
 Kino 0.5.0), using a throwaway `config.ru` outside this repo:
@@ -80,7 +80,7 @@ Kino for a socket in the first place.
 ## Connection lifecycle: one Ractor per connection
 
 Each accepted WebSocket connection gets its own dedicated `Ractor`, the same
-trick `StateRactor` already uses (`docs/ractor.md`): the mutable thing — the
+trick `StateRactor` already uses (`docs/design/ractor.md`): the mutable thing — the
 live `TCPSocket`, its read buffer, frame-assembly state — stays invisible
 inside one Ractor for as long as the connection is open. What crosses to
 anything that needs to push a message to that connection is a frozen
@@ -103,7 +103,7 @@ layered on top, at two different scopes:
   connection `Ractor::Port`s (or a `Hash` keyed by subject/channel), and
   broadcast means iterating that set and sending to each port. This is the
   same shape as the "pool of connection-owning Ractors" idea explored (and
-  superseded, for the DB case) in `docs/persistence-ractor-connections.md`
+  superseded, for the DB case) in `docs/design/persistence-ractor-connections.md`
   — a dispatcher Ractor holding handles to N worker Ractors — just applied
   to sockets instead of Postgres connections, and here it's the plan, not a
   superseded draft, because unlike a DB connection a socket has nowhere
@@ -121,7 +121,7 @@ layered on top, at two different scopes:
 
 The WebSocket handshake starts as a plain HTTP request, before the
 connection upgrades — so it can carry whatever `Authorization: Bearer` or
-cookie `docs/auth-sessions.md` designs. Verifying it works identically in
+cookie `docs/design/auth-sessions.md` designs. Verifying it works identically in
 the WebSocket process, because that design is already DB-backed
 (`Monk::Persistence::Pg::Model`), not in-Ractor or in-Kino-process state:
 the WebSocket process just needs its own `Monk::Persistence.register` call
@@ -136,7 +136,7 @@ process.
 
 **How the token reaches the handshake is now resolved**, not left to
 Phase 5 as this doc originally had it. Full reasoning lives in
-`docs/auth-sessions.md`'s "The WebSocket case" (finalized 2026-09-01); the
+`docs/design/auth-sessions.md`'s "The WebSocket case" (finalized 2026-09-01); the
 conclusion: a browser-originated connection needs no new carrier at all —
 cookies aren't port-scoped, so the session cookie set by the HTTP process
 rides along on the WS handshake automatically, *as long as the reverse
@@ -175,7 +175,7 @@ different Ractor`. Verified this is **not a load-order problem**: fully
 loading and exercising `Handshake::Server` in the main Ractor first, then
 calling the exact same methods from a worker Ractor, fails identically. A
 follow-up, gem-independent spike confirmed this is a general Ruby 4 Ractor
-rule, not specific to this gem — see the new note in `docs/ractor.md` — and
+rule, not specific to this gem — see the new note in `docs/design/ractor.md` — and
 that it *is* fixable in principle (`Ractor.make_shareable` the block before
 `define_method`), but only by patching the gem's internals, not from
 calling code.
@@ -262,7 +262,7 @@ multi-message session.
 | Connection-per-Ractor lifecycle | Monk owns this — mirrors `StateRactor` |
 | In-process registry / broadcast | Monk owns this |
 | Cross-process fan-out transport | Monk owns the API surface; Redis pub/sub does the transport work underneath, behind an opt-in flag |
-| Reverse-proxy / deploy wiring | Documented, not generated — same posture as `docs/deploying.md` today |
+| Reverse-proxy / deploy wiring | Documented, not generated — same posture as `docs/guides/deploying.md` today |
 
 ## Open questions
 
@@ -301,7 +301,7 @@ multi-message session.
    `docs/history/plan-websocket.md`.
 4. **Does Monk generate reverse-proxy config** (an `nginx.conf` /
    `Caddyfile` snippet from `monk new`), or only document it by hand the
-   way `docs/deploying.md` does for Render/Fly today? Leaning: document,
+   way `docs/guides/deploying.md` does for Render/Fly today? Leaning: document,
    not generate — consistent with the existing posture, and proxy config
    varies more by host than the Ruby side of this feature does.
 
@@ -329,5 +329,5 @@ registry/fan-out layer are unexercised, and questions 2–4 (process
 topology, fan-out transport, proxy config generation) are ordinary design
 choices rather than empirical unknowns. That's enough to move this from
 exploration to an implementation plan — see `docs/history/plan-websocket.md`, the same
-transition `docs/persistence-ractor-connections.md` made once its own
+transition `docs/design/persistence-ractor-connections.md` made once its own
 Phase 0 held up.

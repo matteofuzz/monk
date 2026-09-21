@@ -29,7 +29,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   served from a boot-built frozen manifest with ETag/304 and digest-stamped
   URLs. `lib/monk/views.rb`, `lib/monk/assets.rb`, `test/views_test.rb`,
   `test/assets_test.rb`, plus two real-Ractor cases. Design and the record
-  of what was left out: `docs/views.md`; plan: `docs/history/plan-views.md`.
+  of what was left out: `docs/design/views.md`; plan: `docs/history/plan-views.md`.
   Deliberately not built: SCSS (designed, one file away, but plain CSS
   wins for now), declared/strict locals, and any JavaScript tooling —
   ES modules and import maps instead, demonstrated by `monk new` and this
@@ -49,7 +49,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   all three transports (passwordless, TTL'd tokens; `Authorization:
   Bearer` for API/S2S, an `HttpOnly` cookie + double-submit CSRF for
   browsers, and identity for `Monk::WebSocket` connections resolved via
-  the same cookie, gated by `Origin` validation): `docs/auth-sessions.md` +
+  the same cookie, gated by `Origin` validation): `docs/design/auth-sessions.md` +
   `docs/history/plan-auth.md`. Not implemented; needs `Context#env` and a boot-frozen
   config first.
 - Caching system
@@ -72,7 +72,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   the same day proved the hand-rolled alternative (RFC 6455 over a real
   `TCPServer`, one dedicated Ractor per connection) works correctly,
   including true concurrency and isolated per-connection failure:
-  `docs/websocket.md`. Implementation plan: `docs/history/plan-websocket.md`. Not
+  `docs/design/websocket.md`. Implementation plan: `docs/history/plan-websocket.md`. Not
   implemented yet.
 
 ## Open questions

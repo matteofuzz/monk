@@ -77,7 +77,7 @@ and doesn't imply or get implied by `--postgres`/`--auth`.
 
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and
-an ES-module entry point under `public/` (see [`views-and-assets.md`](views-and-assets.md)). Alongside it, `/hello` and `/api/hello` are two one-line routes
+an ES-module entry point under `public/` (see [`views.md`](views.md)). Alongside it, `/hello` and `/api/hello` are two one-line routes
 showing the plain-string and `json` response styles side by side.
 
 ## Adding Postgres or Auth to an existing app
@@ -119,7 +119,7 @@ written, by hand:
    ```
 2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.
 3. Add a migration creating `login_tokens`/`sessions` — schema in
-   [`auth-sessions.md`](auth-sessions.md). Give it a version that sorts after any migrations you
+   [`design/auth-sessions.md`](../design/auth-sessions.md). Give it a version that sorts after any migrations you
    already have (a timestamp, e.g. `20260907120000_create_auth_tables`) —
    don't reuse `00000000000001`, which `monk new --auth` only picks because
    it assumes it's the first migration in a fresh project.

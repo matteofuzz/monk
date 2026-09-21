@@ -1,7 +1,7 @@
 # Monk WebSocket — implementation plan
 
 Branch: not yet created — nothing in this plan is implemented. Companion
-doc: `docs/websocket.md` (why Kino can't carry this in-process, the Phase 0
+doc: `docs/design/websocket.md` (why Kino can't carry this in-process, the Phase 0
 gem spike, the end-to-end hand-rolled spike this plan builds out for real).
 
 Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles. Each
@@ -18,7 +18,7 @@ rule exists in the first place.
 ## Phase 0 — Spikes: does anything off-the-shelf survive a real Ractor, and does hand-rolling it actually work? (already run, gated everything below)
 
 Not TDD — two throwaway spikes, already run 2026-09-01, full detail in
-`docs/websocket.md`.
+`docs/design/websocket.md`.
 
 **Gem spike, failed for both candidates tried.** `websocket` (1.2.11, pure
 Ruby) fails unconditionally: every core method is built with
@@ -29,7 +29,7 @@ Ractor that defined it, permanently, regardless of load order —
 was never flagged Ractor-safe (`Ractor::UnsafeError`), and its own
 delegator methods use the same `define_method` pattern, so it is expected
 to fail twice over. Neither is usable. New general finding recorded in
-`docs/ractor.md`: `define_method` with an unfrozen block is unusable across
+`docs/design/ractor.md`: `define_method` with an unfrozen block is unusable across
 Ractors at all — the fix (`Ractor.make_shareable` the block first) requires
 patching the gem's own internals, not something callers can do from
 outside.
@@ -43,7 +43,7 @@ unmasked frame round-trip, three concurrent real connections with no
 head-of-line blocking (a deliberately slow connection didn't delay the
 other two), and one connection's simulated internal error caught and
 reported without affecting the accept loop or any other connection. Full
-detail: `docs/websocket.md` → "End-to-end spike."
+detail: `docs/design/websocket.md` → "End-to-end spike."
 
 **Consequence for every phase below**: no gem dependency. Everything is
 hand-rolled on stdlib `Socket`/`Digest::SHA1`/`Base64`, and the phases below
@@ -51,11 +51,11 @@ turn the spike's ad hoc scripts into a tested `Monk::WebSocket` primitive.
 
 ## Decisions locked in before Phase 1
 
-Each of these is a recommendation from `docs/websocket.md` promoted to a
+Each of these is a recommendation from `docs/design/websocket.md` promoted to a
 plan assumption. Reversing one invalidates the phases that rest on it.
 
 1. **A separate process, not a Kino feature.** Confirmed architecturally
-   impossible in-process (`docs/websocket.md` — Kino never exposes a raw
+   impossible in-process (`docs/design/websocket.md` — Kino never exposes a raw
    socket to Ruby, hijack included). `Monk::WebSocket::Server` is a
    standalone process an app boots on its own port; a reverse proxy in
    front routes to it and to Kino separately. No change to `lib/monk/base.rb`
@@ -72,7 +72,7 @@ plan assumption. Reversing one invalidates the phases that rest on it.
 5. **Identity reuses `Monk::Auth` unmodified, and the token-carrying
    question is resolved, not deferred.** The WS process registers its own
    `Monk::Persistence` connection and calls `Monk::Auth.configure` against
-   the same database `docs/auth-sessions.md` already designs — no new auth
+   the same database `docs/design/auth-sessions.md` already designs — no new auth
    mechanism, no new token format. Per that doc's "The WebSocket case"
    (2026-09-01): browser-originated connections authenticate via the
    session cookie, carried automatically because cookies aren't
@@ -88,14 +88,14 @@ plan assumption. Reversing one invalidates the phases that rest on it.
    exists — mirrors how `docs/history/plan-auth.md` deferred cookies to its own
    Phase 9. Phases 1–5 ship a fully working single-process WebSocket
    server with in-process broadcast. Chosen over Postgres `LISTEN`/`NOTIFY`
-   (`docs/websocket.md` Open Question 3): no payload cap, higher
+   (`docs/design/websocket.md` Open Question 3): no payload cap, higher
    throughput, and the `redis` gem's pub/sub client is verified
    Ractor-ready.
 7. **`Monk::WebSocket` is opt-in**, like persistence backends and
    `Monk::Auth`: `require "monk/websocket"` explicitly. `require "monk"`
    alone must not load it.
 8. **Reverse-proxy config is documented, not generated.** No `monk new`
-   output for nginx/Caddy — consistent with `docs/deploying.md`'s existing
+   output for nginx/Caddy — consistent with `docs/guides/deploying.md`'s existing
    posture for Render/Fly, and proxy config varies more by host than the
    Ruby side of this feature does.
 
@@ -287,7 +287,7 @@ plan assumption. Reversing one invalidates the phases that rest on it.
 Not adopted by every app — `--redis` is opt-in (`docs/history/plan-init.md` Phase 5) —
 but the mechanism itself is built, fixed, tested against a real Redis, and
 wired into the base scaffold's `bin/websocket_server`, not just sketched.
-Redis over Postgres `LISTEN`/`NOTIFY` per `docs/websocket.md` Open
+Redis over Postgres `LISTEN`/`NOTIFY` per `docs/design/websocket.md` Open
 Question 3 — the `redis` gem's pub/sub client is verified Ractor-ready.
 
 25. `Monk::WebSocket::RedisFanout` (`lib/monk/websocket/redis_fanout.rb`),
@@ -337,7 +337,7 @@ Question 3 — the `redis` gem's pub/sub client is verified Ractor-ready.
     failing connections both complete without waiting on the slow one, and
     that the failing connection's error is caught and reported without
     affecting the other two or the accept loop — the committed version of
-    `docs/websocket.md`'s "End-to-end spike," in the same spirit as
+    `docs/design/websocket.md`'s "End-to-end spike," in the same spirit as
     `test/ractor_integration_test.rb`'s hammer test for `StateRactor`.
 31. N real connections registered under the same channel (Phase 4),
     broadcasting from a real Ractor other than any connection's own, all
@@ -363,7 +363,7 @@ Question 3 — the `redis` gem's pub/sub client is verified Ractor-ready.
     `Origin` is rejected. Documented as a verification step, not an
     automated cycle — mirrors `docs/history/core-plan.md` step 21 and `docs/history/plan-auth.md`
     step 38.
-34. `docs/deploying.md` gains a worked reverse-proxy example (nginx or
+34. `docs/guides/deploying.md` gains a worked reverse-proxy example (nginx or
     Caddy, whichever the existing Render/Fly cases make cheaper to show)
     routing `/ws` to the WebSocket process's port and everything else to
     Kino, on the **same host** as the HTTP process (per Decision 5) —

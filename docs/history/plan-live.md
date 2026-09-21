@@ -135,7 +135,7 @@ the client refetches the page over HTTP (Phase 5). Nothing else.
     `layout: false` returned `<html><body>…`). Monk::Live's renderer must
     force `layout: false`; never trust the caller to remember.
   - **Locals are read as `locals[:contact]` in templates, not bare
-    `contact`.** This is existing Monk behavior (README/`docs/views.md`),
+    `contact`.** This is existing Monk behavior (README/`docs/design/views.md`),
     and the "keyword locals" publish syntax maps onto it directly. Live
     partials must document it.
   - **Locals crossing into another Ractor** work either as a shareable
@@ -601,7 +601,7 @@ event fired. It isn't an automated test because it needs `bundle install` of a
 generated app, a network and two servers; the scaffold tests plus the
 cross-process tests from Phase 7 cover its parts.
 
-**Docs:** `docs/live.md` (the usage guide), a README section and status line,
+**Docs:** `docs/guides/live.md` (the usage guide), a README section and status line,
 `CHANGELOG.md` (*Unreleased* / Added), CONTEXT.md glossary terms (Live, Topic,
 Patch, Live partial, Resync), and `docs/history/reactive-partials.md` now points at what
 was built. ADRs 0007-0011 were written up front.

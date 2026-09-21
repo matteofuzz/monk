@@ -51,7 +51,7 @@ class RactorIntegrationTest < Minitest::Test
   # Settles, by measurement on this project's actual target (Ruby 4.0.6,
   # .ruby-version), a question docs/history/plan-auth.md Phase 5 step 20 left open: does
   # a non-main Ractor read ENV at all, and does it see the same value the
-  # main Ractor set? A 3.3.6 probe exists in docs/auth-sessions.md but is
+  # main Ractor set? A 3.3.6 probe exists in docs/design/auth-sessions.md but is
   # explicitly not a substitute -- see this project's own history of
   # Ractor behavior not porting across versions by assumption (the Phase 0
   # Sequel spike, the Phase 4/5 freezing findings). Answer: yes, on 4.0.6.
@@ -112,7 +112,7 @@ class RactorIntegrationTest < Minitest::Test
     assert_equal "abc123", result
   end
 
-  # The claim docs/views.md rests on: a template compiled to a method in
+  # The claim docs/design/views.md rests on: a template compiled to a method in
   # the main Ractor at Boot renders correctly from a worker, and two
   # workers rendering the same template don't bleed data into each other
   # (each has its own Context; the only shared thing is the frozen

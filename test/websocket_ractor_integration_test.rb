@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "monk/websocket"
 require "socket"
 
-# The committed, automated version of docs/websocket.md's "End-to-end
+# The committed, automated version of docs/design/websocket.md's "End-to-end
 # spike" (docs/history/plan-websocket.md Seam U) -- the only place non-blocking accept
 # and per-connection failure isolation are proven under real concurrency,
 # in the same spirit as test/ractor_integration_test.rb's hammer test for

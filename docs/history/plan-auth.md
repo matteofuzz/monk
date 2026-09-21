@@ -1,7 +1,7 @@
 # Monk passwordless auth & sessions — implementation plan
 
 Branch: `claude/passwordless-auth-session-6dfx9u`. Companion doc:
-`docs/auth-sessions.md` (design rationale, storage options considered,
+`docs/design/auth-sessions.md` (design rationale, storage options considered,
 security decisions, open questions).
 
 Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles.
@@ -19,11 +19,11 @@ each phase below that asserts Ractor behavior must be *measured* on 4.x,
 never inferred from a 3.x result. Nothing in this codebase's Ractor
 history has been portable across versions by assumption — see the Phase
 0 Sequel spike and the Phase 4/5 freezing findings in
-`docs/persistence-ractor-connections.md`.
+`docs/design/persistence-ractor-connections.md`.
 
 ## Decisions locked in before Phase 1
 
-Each of these is a recommendation from `docs/auth-sessions.md` promoted
+Each of these is a recommendation from `docs/design/auth-sessions.md` promoted
 to a plan assumption. Reversing one invalidates the phases that rest on
 it, so they're stated up front rather than discovered mid-implementation.
 
@@ -46,7 +46,7 @@ it, so they're stated up front rather than discovered mid-implementation.
    session token in a JSON body on the way out, `Authorization: Bearer`
    thereafter. That slice defers response headers, query/body parsing,
    and CSRF — but Phase 9 (cookies, redirects, CSRF) is now a committed
-   phase, not an optional one, per `docs/auth-sessions.md`'s finalized
+   phase, not an optional one, per `docs/design/auth-sessions.md`'s finalized
    "three transports, one token model": API/S2S uses Bearer, browsers use
    the cookie, and `Monk::WebSocket` (`docs/history/plan-websocket.md`) reuses whichever
    of the two the connecting client already has.
@@ -104,7 +104,7 @@ The unavoidable prerequisite: `lib/monk/base.rb:62` currently builds
 
 Runs against the live (Dockerized) Postgres from
 `docs/history/plan-persistence.md` Phase 0, with the two tables from
-`docs/auth-sessions.md` applied as migrations
+`docs/design/auth-sessions.md` applied as migrations
 (`docs/history/plan-migrations.md` file conventions).
 
 5. `Monk::Auth.configure(db_name:, secret:, login_ttl:, session_ttl:)`
@@ -167,7 +167,7 @@ today's `Pg::Model` doesn't reach."
     a persistence-named list). **Freeze the value, not the module** —
     Modules are always `Ractor.shareable?` regardless of their ivars.
     This is the third instance of the same bug in this codebase; see
-    `docs/persistence-ractor-connections.md` "Phase 4 finding" and
+    `docs/design/persistence-ractor-connections.md` "Phase 4 finding" and
     "Phase 5 finding".
 18. The failing test for step 17 must run *inside a real Ractor* —
     every one of `docs/history/plan-persistence.md` Phases 1–4's tests passed while
@@ -232,7 +232,7 @@ today's `Pg::Model` doesn't reach."
 
 ## Phase 9 — Cookies, redirects, CSRF (Seam A extended)
 
-Committed, per decision 4 above — `docs/auth-sessions.md`'s "The browser
+Committed, per decision 4 above — `docs/design/auth-sessions.md`'s "The browser
 case" is the design this phase implements. Phases 1–8 don't depend on it
 (Bearer works without it), but it's no longer conditional on "if a
 browser-facing flow is wanted": it ships.
@@ -249,14 +249,14 @@ browser-facing flow is wanted": it ships.
     /auth/request` can accept `redirect_to` and a token can travel as
     `?token=...` instead of a path segment (`lib/monk/base.rb:81` logs
     `PATH_INFO`, not the query string).
-30. `login_tokens` gains the `redirect_to` column (`docs/auth-sessions.md`
+30. `login_tokens` gains the `redirect_to` column (`docs/design/auth-sessions.md`
     schema). `Monk::Auth.request_login(email, redirect_to: nil)` validates
     a non-nil `redirect_to` against an app-supplied allowlist and raises
     rather than storing an unvalidated value — never an open redirect.
 31. `Monk::Auth.redeem` response shape branches on `redirect_to`: `nil` →
     today's JSON Hash (Phase 2 behavior, unchanged); present → the same
     Hash plus the cookie gets set and a `302` issued by the route, per the
-    example in `docs/auth-sessions.md`'s "Proposed API".
+    example in `docs/design/auth-sessions.md`'s "Proposed API".
 32. `set_session_cookie(session)` (a `Monk::Auth::Helpers` method) sets two
     cookies: the session token as `HttpOnly; Secure; SameSite=Lax; Path=/`
     with `Max-Age` matching `session[:expires_at]`, and a **non**-`HttpOnly`

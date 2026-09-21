@@ -3,7 +3,7 @@
 A hand-rolled RFC 6455 server, opt-in (`require "monk/websocket"`),
 running as its **own process on its own port** — Kino has no hijack
 support, so this never shares a process with your HTTP app
-([`websocket.md`](websocket.md)). Each connection gets its own dedicated Ractor:
+([`design/websocket.md`](../design/websocket.md)). Each connection gets its own dedicated Ractor:
 
 ```ruby
 require "monk/websocket"
@@ -56,7 +56,7 @@ total — a public endpoint shouldn't trust a claimed length, or let many
 small frames add up past it. A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 [`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
-phase-by-phase build: [`websocket.md`](websocket.md) / `docs/history/plan-websocket.md`.
+phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/history/plan-websocket.md`.
 
 ## Cross-process fan-out — `Monk::WebSocket::RedisFanout`
 

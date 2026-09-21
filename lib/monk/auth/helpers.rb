@@ -2,7 +2,7 @@ require_relative "../context"
 
 module Monk
   module Auth
-    # Mixed into Monk::Context (docs/auth-sessions.md's "Helpers, not
+    # Mixed into Monk::Context (docs/design/auth-sessions.md's "Helpers, not
     # state"): a Context is per-request and never crosses Ractors, so
     # memoizing current_subject on it is exempt from the app's
     # shareability constraints -- nothing here needs Ractor.make_shareable.
@@ -20,7 +20,7 @@ module Monk
       # A no-op for Bearer-authenticated requests: a cross-origin attacker
       # page has no channel to set an Authorization header at all, so the
       # CSRF vector only exists for the cookie-authenticated path
-      # (docs/auth-sessions.md's "CSRF: stateless double-submit").
+      # (docs/design/auth-sessions.md's "CSRF: stateless double-submit").
       def require_csrf!
         return if bearer_token
 

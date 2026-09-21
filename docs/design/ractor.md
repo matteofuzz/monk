@@ -27,7 +27,7 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   callable from the Ractor that defined it — calling it from any other Ractor,
   even a worker calling a method a gem defined in main at load time, raises
   `RuntimeError: defined with an un-shareable Proc in a different Ractor`.
-  Verified empirically 2026-09-01 (`docs/websocket.md`'s spike): this holds
+  Verified empirically 2026-09-01 (`docs/design/websocket.md`'s spike): this holds
   even after the method is fully exercised in main first, so it isn't a
   load-order/warm-up problem the way the `Model`/`Persistence` ivar bugs
   were — every call from a non-defining Ractor fails, permanently. The fix
@@ -45,10 +45,10 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   library that lazily memoizes a connection, parser, or compiler into an
   `@ivar` on a module or class. Three found so far, all for structurally
   different objects: Sequel's connection handling
-  (`docs/persistence-ractor-connections.md`), `Rack::Utils`' default query
+  (`docs/design/persistence-ractor-connections.md`), `Rack::Utils`' default query
   parser (`lib/monk/base.rb`, `parse_query_string`), and `sass-embedded`'s
   lazily-created `Sass::Compiler`, which owns a pipe to a subprocess
-  (`docs/views.md`, spike 4). The fix is never to patch the gem: do that
+  (`docs/design/views.md`, spike 4). The fix is never to patch the gem: do that
   work once in the main Ractor at boot and hand workers nothing but the
   frozen result.
 - **A stdlib method can be Ractor-unsafe too, and nothing about it says
@@ -71,7 +71,7 @@ Ractors, unlike Threads). The one rule that makes it safe is the
   and is what a constant read on the request path needs — `%w[...]​.freeze`
   has the same hole, while a frozen Array of Symbols is fine because
   Symbols are already shareable. Hit for real in `lib/monk/assets.rb`'s
-  content-type tables (`docs/views.md`, "What the real Ractor tests
+  content-type tables (`docs/design/views.md`, "What the real Ractor tests
   caught"); `Monk::Scaffold`'s constants have the same shape and are
   harmless only because the `monk new` CLI never leaves the main Ractor.
 

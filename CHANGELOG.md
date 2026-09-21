@@ -17,7 +17,7 @@ in `lib/monk/version.rb`.
   marks what a page subscribes to; and a browser runtime (shipped in the gem,
   `Monk::Live.client_dir`, vendoring idiomorph for the DOM morph) applies
   patches while keeping focus and typed text, reconnects, and re-syncs by
-  refetching the page. See `docs/live.md`.
+  refetching the page. See `docs/guides/live.md`.
 - **`monk new APP --live`**: scaffolds a Monk::Live demo (a counter whose
   open tabs update together). Implies `--redis`.
 
