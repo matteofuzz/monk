@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase as of v0.12.5 plus `Monk::Live` (unreleased).
+Complexity and weight comparison, based on the codebase as of v0.13.0 (including `Monk::Live`).
 
 ## Footprint
 
