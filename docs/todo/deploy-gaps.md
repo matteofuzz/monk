@@ -37,6 +37,23 @@ handling of forwarded headers.
   Then #1 must not derive Secure from the scheme, and this becomes a separate
   issue to flag upstream.
 
+**Result (2026-09-21)**
+
+- Kino 0.4.0 and 0.7.0 trust no `X-Forwarded-*`, `X-Real-IP` or `Forwarded`
+  header. `rack.url_scheme`, `REMOTE_ADDR`, `HTTP_HOST`, `SERVER_NAME` and
+  `SERVER_PORT` come from the real connection; the headers arrive only as raw
+  `HTTP_*` entries. (The spike ran in `:threaded` fallback mode; Ractor mode
+  shares the same compiled request-env code but wasn't tested.)
+- Consequence for #1: Secure must come from an explicit setting, since
+  `rack.url_scheme` is always `http` behind a TLS proxy.
+- `monk_talk/config.ru:40` reads only `X-Forwarded-Proto`, and builds the link
+  host from the raw `Host` header. Neither is checked against a trusted proxy.
+  Harmless today (`log_dev_link` is development-only), but once a real mailer
+  sends these links (#3), a direct client could get a login email with a
+  poisoned scheme or host.
+- **Decision:** the magic-link scheme and host must come from a configured
+  public URL, never from request headers. This shapes #3 and #4.
+
 ## 1. Secure cookie always set (`lib/monk/auth/helpers.rb:56`)
 
 - `docs/history/secure-cookie-dev-http.md` already documents the bug as "not
@@ -70,6 +87,10 @@ handling of forwarded headers.
 - `docs/design/auth-sessions.md:321` deliberately keeps email delivery outside
   the framework, so Monk gets no SMTP or mailer dependency.
 - `log_dev_link` stays as the development fallback.
+- The link's scheme and host come from a configured public URL (the same
+  setting as #4), never from `Host` or `X-Forwarded-*` request headers (see
+  step 0). Open question: does Monk build the full link, or hand the app the
+  token and the public URL?
 - The callable must be Ractor-shareable, which fits the existing
   freeze-at-boot rules.
 - Tests: the hook is called with the right arguments, and unconfigured
@@ -85,7 +106,8 @@ handling of forwarded headers.
 - Add a reverse-proxy snippet (nginx or Caddy) to `deploying.md` that routes
   `/ws` to `:9293` under one public origin.
 - Derive `live_ws_url` and `WS_ALLOWED_ORIGINS` from a single public-URL
-  setting. Keep the localhost defaults for development.
+  setting, also used for the magic link in #3. Keep the localhost defaults for
+  development.
 - Tests: check the scaffolded config defaults.
 
 ## Delivery
