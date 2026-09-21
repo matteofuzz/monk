@@ -8,6 +8,42 @@ scaffold as the starting point.
 Neither case changes anything in this repo (`monk` itself) — they describe
 how a generated app deploys.
 
+## What each scaffold needs
+
+`monk new` flags combine along two independent axes — database (none,
+`--postgres`, `--auth`, which implies `--postgres`) and Redis (none,
+`--redis`, `--live`, which implies `--redis`) — so there are nine valid
+combinations. `bin/websocket_server` is scaffolded in every one, but you
+only run it if the app actually uses WebSockets; `--live` is the exception,
+where it is mandatory.
+
+| # | Command | `bin/server` | `bin/websocket_server` | One-off job | Postgres | Redis | Env vars | Extra gems |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `monk new app` | required | only if the app uses WebSockets | none | no | no | none | none |
+| 2 | `--postgres` | required | only if the app uses WebSockets | `bin/setup_db` | yes | no | `DB_*` | `pg`, `dotenv` |
+| 3 | `--auth` (implies `--postgres`) | required | only if the app uses WebSockets | `bin/setup_db` | yes | no | `DB_*`, `AUTH_SECRET` | `pg`, `dotenv` |
+| 4 | `--redis` | required | only if the app uses WebSockets | none | no | only if the WebSocket process runs | `REDIS_URL` | `redis`, `dotenv` |
+| 5 | `--postgres --redis` | required | only if the app uses WebSockets | `bin/setup_db` | yes | only if the WebSocket process runs | `DB_*`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
+| 6 | `--auth --redis` | required | only if the app uses WebSockets | `bin/setup_db` | yes | only if the WebSocket process runs | `DB_*`, `AUTH_SECRET`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
+| 7 | `--live` | required | **required** | none | no | required | `REDIS_URL` | `redis`, `dotenv` |
+| 8 | `--postgres --live` | required | **required** | `bin/setup_db` | yes | required | `DB_*`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
+| 9 | `--auth --live` | required | **required** | `bin/setup_db` | yes | required | `DB_*`, `AUTH_SECRET`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
+
+When the WebSocket process runs:
+
+- It is its own deploy unit: its own port and public URL, and
+  `WS_ALLOWED_ORIGINS` must match the app's origin.
+- With `--auth`, connections must present a valid session; without it they
+  are anonymous.
+- With `--redis` but not `--live`, Redis only matters once you run more than
+  one WebSocket instance (the `:chat` channel then fans out through it).
+  With `--live`, Redis is the link between the app and the WebSocket
+  process, and the app raises at boot without `REDIS_URL`.
+
+The rest of this page walks through deploying case 2 (`--postgres`) on Render
+and Fly.io; adding the WebSocket process is covered in section 3, and a
+single-server alternative in section 4.
+
 ## 1. Render (native Ruby buildpack + managed Postgres)
 
 **Local setup**
@@ -174,6 +210,90 @@ plain `ws://` to the WebSocket process behind it.
   case to Render's Docker deploy path too (same multi-process-behind-Caddy
   shape as Fly above), or accept Bearer-only auth for the WS side if the
   two services must stay separate.
+
+## 4. A single VPS (Docker Compose + Caddy)
+
+One small server (Hetzner, DigitalOcean, Lightsail — any Linux box with
+Docker) runs everything: web, WebSocket, Postgres, Redis and the proxy. It
+suits a staging or closed-beta deploy of any combination in the table
+above: it has no per-platform port or process limits, and `/ws` routing
+(section 3) is just a Caddy rule. The cost is operational — OS patching,
+backups and the firewall are yours.
+
+Build one image from the app's Dockerfile (the one in section 2 works; drop
+its `CMD`, since each service below sets its own) and run it twice with
+different commands. Drop the `postgres` service for combinations without
+`--postgres`/`--auth`, and the `redis` service for ones without
+`--redis`/`--live`. Keep the `ws` service for combinations that use
+WebSockets; it is mandatory under `--live`.
+
+```yaml
+# compose.yaml
+services:
+  web:
+    build: .
+    command: bundle exec kino -p 9292 --bind 0.0.0.0 config.ru
+    env_file: .env.production
+    depends_on: [postgres, redis]
+  ws:
+    build: .
+    command: bin/websocket_server
+    env_file: .env.production
+    depends_on: [redis]
+  postgres:
+    image: postgres:16
+    env_file: .env.production   # POSTGRES_PASSWORD etc.
+    volumes: [pgdata:/var/lib/postgresql/data]
+  redis:
+    image: redis:7
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on: [web, ws]
+volumes:
+  pgdata:
+  caddy_data:
+```
+
+```caddyfile
+# Caddyfile -- same two rules as section 3, with the service names as hosts
+staging.example.com {
+    reverse_proxy /ws* ws:9293
+    reverse_proxy web:9292
+}
+```
+
+Only `caddy` publishes ports; the other services are reachable solely on
+Compose's internal network, so Postgres and Redis are never exposed. Caddy
+obtains and renews the Let's Encrypt certificate on its own once
+`staging.example.com` points at the server.
+
+**Env file** (`.env.production`, not committed): `MONK_ENV=staging`,
+the variables from the table for your combination (`DB_HOST=postgres`,
+`REDIS_URL=redis://redis:6379/0`, `AUTH_SECRET`, ...) and
+`WS_ALLOWED_ORIGINS=https://staging.example.com`.
+
+**Migrations** — run once per deploy, against the Compose Postgres:
+
+```
+docker compose run --rm web bin/setup_db
+```
+
+**Deploying** — on the server: `git pull && docker compose up -d --build`,
+then the migration command above.
+
+**Before the first build**
+
+- `Gemfile.lock` must list the server's platform. A lockfile generated on a
+  Mac only has `arm64-darwin` for native gems such as `kino`; run
+  `bundle lock --add-platform x86_64-linux aarch64-linux` and commit it.
+- A `Gemfile` that points `monk` at a local `path:` can't build inside the
+  image; switch it to a git or gem source first.
+- Open only ports 22, 80 and 443 in the firewall, and schedule a nightly
+  `pg_dump` — nothing here backs up the `pgdata` volume for you.
 
 ## Open question
 
