@@ -1,0 +1,632 @@
+# Monk::Live — implementation plan (first draft)
+
+Branch: not yet created — nothing in this plan is implemented. Companion
+doc: `docs/reactive-partials.md` (the why, prior art, and the sketch this
+plan turns into steps).
+
+Same posture as `PLAN-WEBSOCKET.md`: small red → green slices, one failing
+test per seam, minimum code to pass. Every phase runs on Ruby 4.0.6 and
+Ractor behavior is measured, not assumed. This is a *tentative* plan: the
+decisions below are recommendations to be confirmed (or ADR'd) before the
+phase that depends on them.
+
+## Naming and packaging
+
+`Monk::Live`, in `lib/monk/live.rb` + `lib/monk/live/` like every other Monk
+module. Opt-in like `Monk::WebSocket` and `Monk::Auth`: `require "monk/live"`
+explicitly, `require "monk"` alone never loads it (mirrors
+PLAN-WEBSOCKET.md Decision 7). It depends on `Monk::WebSocket` and
+`Monk::Views`; neither depends on it. Starts in this gem; the one-way
+dependency keeps extraction into a separate gem cheap. (An earlier draft
+had a top-level `MonkLive`; dropped, see ADR 0008.) JS-side names stay
+`monk-live` (`public/monk_live.js`, `monk-live:*` DOM events).
+
+## Decisions to make up front
+
+Written up front as ADRs (2026-09-19), after the Phase 0 spikes, in `docs/adr/`:
+0007 (own envelope + client, vendored idiomorph), 0008 (layer above
+`Monk::WebSocket`), 0009 (topics are opaque names, deny-by-default
+authorization), 0010 (render once in the publisher's Ractor, frozen
+payload; covers decisions 4 and 5), 0011 (resync by page refetch). The
+list below is the working summary; the ADRs are the record.
+
+1. **Own envelope + own tiny client vs. adopt htmx-ws / Datastar / Turbo.**
+   Recommendation: own envelope, own ~100-line client JS, vendored morph
+   library (idiomorph). Reason from the doc: everything else brings its
+   own connection ownership that competes with `Monk::WebSocket`.
+2. **Layer, not a WebSocket feature.** Monk::Live sits on top of
+   `Monk::WebSocket` (uses `Server`, `Connection`, `Registry`) and adds
+   nothing to its wire code. The WS layer already carries opaque text
+   frames; Monk::Live defines what's *in* them. Resolves the doc's "where
+   does this live" question without waiting on RedisFanout.
+3. **Topic-addressed, not connection-addressed.** App code says
+   "topic `contact:42` changed"; it never handles connection handles.
+   Topics map onto `Registry` keys (Symbols, per RedisFanout's constraint).
+   **Decided:** a topic is just a name, so both models work on the same
+   primitive — recipient topics (`contacts:7`, each user subscribes to
+   their own channel; publisher loops over recipients) and entity topics
+   (`contact:42`, clients subscribe per watched entity; one publish per
+   change). Recipient topics are the documented default because they fit
+   deny-by-default authorization; entity topics get no special code and
+   need only an app policy that can answer "may this subject watch this
+   entity?". Per-viewer fragments (content differing per recipient) only
+   fit recipient topics.
+4. **Render once, send many.** A broadcast renders the fragment a single
+   time and fans the string out, when the fragment is identical for all
+   subscribers. Per-viewer fragments (different content per recipient)
+   are an explicit, separate, slower path.
+5. **Rendering happens where?** Views are compiled into a module Context
+   includes and must be callable from a Ractor. Open: does the publishing
+   Ractor (a request worker) render, or the connection Ractor? Recommend
+   the publisher renders, so subscribers just forward bytes.
+
+## Ergonomics (decided)
+
+Illustrative syntax; the shape is fixed, exact names can still move.
+
+Server:
+
+- Partials are ordinary `Monk::Views` templates. Pages mark live regions
+  with a helper: `<ul id="contacts" <%= live_topic "contacts:#{current_user.id}" %>>`
+  (accepts several topics; expands to `data-live-topic`).
+- Publishing uses **keywords**:
+  `Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/row", contact: c`.
+  Same for `append`, `prepend`, `remove` (no partial), and
+  `Monk::Live.batch topic do |b| ... end` for several ops in one frame.
+  `topic` is the only positional argument; `to:`, `partial:` and `mode:`
+  are reserved keyword names, everything else is passed to the partial as
+  locals. Reserved names must be documented (a local called `to` is the
+  price of this syntax) and rejected loudly, not shadowed silently.
+- Authorization at boot, deny by default:
+  `Monk::Live.authorize("contacts:*") { |subject, topic| ... }`.
+
+Client:
+
+- `<script src="/monk_live.js" defer></script>` and nothing else: the
+  runtime finds `[data-live-topic]`, subscribes, morphs patches in,
+  reconnects with backoff and re-subscribes.
+- **DOM events only, no JS API:** `monk-live:patched`,
+  `monk-live:connected`, `monk-live:disconnected`, `monk-live:resynced`,
+  each carrying `detail` (`topic`, `target`, `op`).
+- **Focus is protected automatically:** the morph step skips the focused
+  input/textarea/contenteditable (and its value/selection). `data-live-ignore`
+  is the manual override for anything else (an open widget, a
+  third-party-managed node).
+- Client-local state (panels, modals) stays out of Monk::Live entirely
+  (Attractive.js or plain attributes).
+
+## Wire protocol (server → client), v0
+
+JSON text frames, one envelope each. Small and closed set of ops:
+
+- `patch` — `{op, target, html, mode}`; `mode` ∈ morph (default),
+  replace, append, prepend, remove. `target` is a CSS selector applied
+  with `querySelectorAll` (one push, every matching node — the doc's
+  out-of-band answer).
+- `batch` — several ops applied in one animation frame, in order.
+- `subscribed` / `unsubscribed` / `error` replies to client-originated
+  `subscribe`/`unsubscribe` (Phase 3, no `seq`).
+
+Every envelope carries a monotonically increasing `seq` per connection so
+the client can detect a gap after reconnect and ask for a resync rather
+than silently rendering a stale page. Client → server in v0: `subscribe`
+/ `unsubscribe` (topics). A `resync` message was sketched and never needed:
+the client refetches the page over HTTP (Phase 5). Nothing else.
+
+## Phases
+
+### Phase 0 — Spikes (throwaway, not TDD)
+
+- **Ractor spike — DONE 2026-09-19 (Ruby 4.0.6), decision 5 confirmed.**
+  Throwaway script (not committed) rendering a partial with a nested
+  partial, escaping and `asset_path` from non-main Ractors.
+  - **Works with no changes to `Monk::Views`:** a plain
+    `Monk::Context.new({})` (or even `new(nil, nil)`) in a non-main
+    Ractor renders correctly: HTML-escaping intact, nested `render`,
+    `asset_path`, both a one-shot Ractor and a long-lived renderer
+    Ractor answering over a `Ractor::Port`. ~3µs per render (10k renders
+    in ~30ms), so render cost is not the bottleneck; fan-out is.
+  - **Requires `Monk.freeze!` in the rendering process.** Without it:
+    `Ractor::IsolationError ... @registry from Monk::Views`.
+    `Monk::WebSocket::Server` only calls it when `authenticate: true`, so
+    Monk::Live must call it itself at boot and fail fast with a clear error
+    (ADR 0003 posture), not leave it to the app.
+  - **The default layout wraps a fragment** (`render` without
+    `layout: false` returned `<html><body>…`). Monk::Live's renderer must
+    force `layout: false`; never trust the caller to remember.
+  - **Locals are read as `locals[:contact]` in templates, not bare
+    `contact`.** This is existing Monk behavior (README/`docs/views.md`),
+    and the "keyword locals" publish syntax maps onto it directly. Live
+    partials must document it.
+  - **Locals crossing into another Ractor** work either as a shareable
+    value (`Ractor.make_shareable`) or copied (a mutable Struct sent
+    via `send` rendered fine). The result is a `Monk::Views::Raw`
+    String that is *not* shareable; it gets copied on send/broadcast,
+    which is cheap at fragment sizes but means "render once, send many"
+    copies the string per port unless we freeze it first
+    (`String#freeze` / `make_shareable`, to be measured).
+  - **New rule for live partials: request-independent.** A detached
+    Context has no `params`/`env`/session, so a partial that calls
+    `params` or a per-request helper (e.g. a `current_user` helper) would
+    render wrong or raise. Everything a fragment needs must come in as
+    locals. Worth a lint/doc callout; per-viewer fragments pass the
+    viewer as a local.
+  - **Not yet tested:** a real `Monk::Persistence::Model` instance as a
+    local (shareability/copy behavior across the boundary). Test in
+    Phase 1 against the real persistence layer, not a stand-in Struct.
+  - **Consequence for the design:** publishing can render in the
+    publisher's own Ractor (a request worker) with no extra Ractor and
+    no new machinery; a dedicated renderer Ractor is an option, not a
+    need. Phase 1 shrinks to "a `Monk::Live` renderer that builds a
+    detached Context, forces `layout: false`, and ensures freeze".
+- **Client spike — DONE 2026-09-19, morph approach confirmed with one
+  gap.** ~60-line client + idiomorph 0.7.3 (9KB minified) against a real
+  `Monk::WebSocket::Server` pushing hard-coded envelopes, driven in real
+  Chrome. Throwaway, not committed.
+  - **Holds:** patching a sibling row kept focus, typed value, selection,
+    an open `<details>` and the scroll position of the pane. Patching the
+    node that *contains* the focused input kept the same DOM node, focus,
+    value and selection (idiomorph's `ignoreActiveValue: true`), so
+    "focus is protected automatically" costs one option, not custom code.
+  - **`data-live-ignore` works** via `beforeNodeMorphed` returning false:
+    a widget with local text state survived a patch of its parent.
+  - **Multi-match selector works:** one envelope with `.status-dot`
+    patched 4 nodes (`querySelectorAll`), as the doc's OOB idea needs.
+  - **Control confirms the need:** a naive `outerHTML` replace replaced
+    the node, dropped focus and cleared the typed value.
+  - **append/remove and `seq` gap detection** behave (gap event fired
+    with `expected: 9, got: 20`).
+  - **The gap: client-only state inside a patched region is reset.** A
+    `<details>` the user opened *inside* the patched node closed after the
+    morph, because the server HTML has no `open` attribute (idiomorph
+    syncs attributes to the server's). Focus/value are special-cased by
+    idiomorph; `open`, checked-ness of non-focused controls, scroll of
+    inner containers and similar are not. Design consequences: (a) v0 rule,
+    documented: state the user can change locally must live *outside*
+    patched regions, be re-rendered by the server, or be marked
+    `data-live-ignore`; (b) consider a `beforeAttributeUpdated` callback
+    that preserves `open` on `<details>` by default. Decide in Phase 4.
+  - **Not covered by the spike:** reconnect/resubscribe behavior, the
+    page-refetch resync morph (a much bigger morph than a fragment),
+    interplay with Attractive.js state, IME composition and text
+    selection outside the focused input, and behavior on Safari/Firefox
+    (only Chrome tested). Carry into Phase 4/5 tests.
+- **Fan-out measurement — DONE 2026-09-19.** Real `Monk::WebSocket::Registry`,
+  N consumer Ractors each holding a registered `Ractor::Port`, 20 rounds,
+  median. Measures Ractor-to-Ractor delivery only (no socket writes, no
+  Redis), on an 8-core Mac; treat as order-of-magnitude, noise is
+  visible. `broadcast_call` = how long `Registry#broadcast` blocks;
+  `last_receive` = until the last consumer has the payload.
+
+  | N conns | payload | unfrozen: call / last | frozen: call / last |
+  | --- | --- | --- | --- |
+  | 100 | 0.5 KB | 2.4 / 2.7 ms | 2.0 / 3.0 ms |
+  | 100 | 50 KB | 3.5 / 3.5 ms | 2.2 / 3.2 ms |
+  | 500 | 0.5 KB | 28 / 28 ms | 18 / 29 ms |
+  | 500 | 50 KB | 36 / 37 ms | 19 / 39 ms |
+  | 1000 | 0.5 KB | 120 / 128 ms | 58 / 113 ms |
+  | 1000 | 5 KB | 130 / 135 ms | 71 / 136 ms |
+  | 1000 | 50 KB | 177 / 177 ms | 34 / 92 ms |
+
+  - **Render cost is irrelevant; delivery cost is per-subscriber.**
+    Fragment size barely moves the numbers (0.5 KB to 50 KB is within
+    noise for unfrozen up to 500 conns). Rendering is ~3µs; fan-out to
+    1k is ~100ms. "Render once, send many" is right, but the thing to
+    budget is subscriber count, not template cost.
+  - **Freezing the payload helps the publisher side** (call time roughly
+    halves at 500-1000 conns; 5x at 1k x 50 KB) because a shareable
+    String is passed by reference instead of copied per port. It does
+    not shorten time-to-last-receive much at small sizes. Decision:
+    Publisher freezes/`make_shareable`s the envelope string before
+    broadcast (one line, no downside).
+  - **Scaling is worse than linear:** 100 → 500 → 1000 conns took ~2.5 →
+    28 → 120 ms. Some of that is consumer Ractors all waking and
+    contending for cores at once, not registry work, so this overstates
+    the registry's own cost; but it means "1k subscribers on one topic"
+    is a ~100ms event, and 5-10k would be seconds. Not a problem for the
+    monk_talk contact-list scale (recipient topics fan out to a handful
+    of connections per user), a real limit for one hot topic.
+  - **Broadcast blocks the whole Registry.** It is one single-threaded
+    Ractor, so during a 1k-subscriber broadcast (~60-120ms) every
+    `register`/`unregister`/`count`, on *any* topic, waits. Connections
+    opening or closing stall behind a big fan-out. Acceptable for v0;
+    if it bites, shard the Registry by topic hash (N registry Ractors)
+    or move fan-out off the register/unregister path. Recipient topics
+    (default) keep per-topic subscriber counts small, which is another
+    point in their favor.
+  - **Not measured:** socket write cost per connection (likely the real
+    dominant cost with slow clients: `Connection#write` is blocking, so
+    one slow client's full send buffer stalls only its own relay thread,
+    but that should be verified), the Redis hop, memory per connection
+    Ractor at 1k+, and batching many small patches (the `batch` op) vs
+    many broadcasts. Carry into Phase 2 and 7 tests.
+
+### Phase 1 — Fragment rendering — DONE 2026-09-19
+
+Built as `Monk::Live::Renderer.render(partial, **locals)` in
+`lib/monk/live/renderer.rb` (+ `errors.rb`, and `lib/monk/live.rb` as the
+opt-in entry point), tests in `test/live_renderer_test.rb` (11 tests, full
+suite 358 green). `Monk::Views` itself needed **no change**, as the
+Phase 0 spike predicted: the renderer builds a detached
+`Monk::Context.new({})` and calls its `render(..., layout: false)`.
+
+- Returns a **frozen plain String** (not `Views::Raw`), so it is
+  Ractor-shareable and a broadcast passes a reference (ADR 0010).
+- Never wraps in the default layout; a `layout:` local is rejected with
+  `ArgumentError` instead of being swallowed by `Context#render`'s own
+  keyword.
+- HTML-escaping (ADR 0005), nested partials and `TemplateNotFoundError` for
+  an unknown partial behave exactly as for pages.
+- Unfrozen views raise `Monk::Live::NotFrozenError` ("call Monk.freeze! or
+  Monk.boot(app) in the main Ractor first"), in the main Ractor *and*
+  from a non-main Ractor (where the raw failure would be an opaque
+  `Ractor::IsolationError`).
+- Works from a non-main Ractor.
+- **Persistence open question closed:** `Monk::Persistence::Pg::Model`
+  returns plain Hash rows, not model instances, and an unfrozen Hash row
+  copied into a Ractor renders fine. (Postgres wasn't needed to test it.)
+- **Partial naming convention: none enforced.** Any compiled template
+  renders; `_name.erb` is a convention only, since Monk has no partial
+  concept beyond "a template called from another".
+- **Deferred to Phase 2, deliberately:** the *boot* half of "freeze at
+  boot, fail fast". Phase 1 only guards the render; the code that
+  actually calls `Monk.freeze!` belongs where a publisher is constructed
+  (as `Monk::WebSocket::Server.new` does for `authenticate: true`), which
+  is Phase 2.
+
+### Phase 2 — Envelope + publisher — DONE 2026-09-19
+
+`Monk::Live::Envelope` (`lib/monk/live/envelope.rb`), `Monk::Live::Publisher`
+(`publisher.rb`) and the module-level API in `lib/monk/live.rb`. Tests:
+`test/live_envelope_test.rb` (11) and `test/live_publisher_test.rb` (15),
+against a real `Monk::WebSocket::Registry` with real `Ractor::Port`s; full
+suite 384 green, RuboCop clean.
+
+- **Envelope:** frozen Hashes, encoded to one frozen JSON String. Modes:
+  `morph replace append prepend remove`. Validates mode and a non-blank
+  String target; `remove` carries no html, every other mode requires it;
+  a batch needs at least one op.
+- **Publisher:** `patch/append/prepend/remove/batch`, keyword syntax as
+  decided (`to:`, `partial:`, `mode:` reserved, everything else is a local
+  read as `locals[:name]`). Validation happens *before* rendering, and a
+  batch renders every op inside the block, so a failure raises before
+  anything is sent. `remove` never renders. An empty batch is a no-op.
+  Topics are Strings in app code and Symbols on the `Registry`.
+- **Render once, shared by reference:** verified with 3 subscribers all
+  receiving the *same frozen object* (`equal?`), not equal copies.
+- **Module API:** `Monk::Live.configure(registry:)` (boot, main Ractor;
+  `Registry` or `RedisFanout`), then `Monk::Live.patch(...)` etc.
+  Publishing from a non-main Ractor works (tested). `configure` raises at
+  boot if the registry isn't Ractor-shareable rather than on a live
+  request. `NotConfiguredError` if publishing before `configure`.
+- **Dead-port self-healing** (existing `Registry` behavior) is asserted
+  through the publisher, so a regression there shows up here.
+- **`seq` is not in the envelope.** It is per connection, so stamping it
+  in the publisher would break render-once-share-by-reference. It is
+  stamped where a connection writes the frame (Phase 3/4): the connection
+  handler splices `"seq":N,` after the opening `{` of the shared JSON, a
+  cheap per-connection string build that leaves the publisher's frozen
+  string untouched.
+- **Boot/freeze deviation from ADR 0010:** `configure` does *not* call
+  `Monk.freeze!`. It can run before an app sets its views root, and a
+  freeze at that point would compile the wrong directory. The fail-fast is
+  at first publish instead (`NotFrozenError` from Phase 1's guard, with
+  the fix in the message); freezing stays with `Monk.boot`/`Monk.freeze!`.
+  A WS-only process that publishes (no `Monk::Base`) calls `Monk.freeze!`
+  itself, exactly as it already must for `authenticate: true`.
+- **Not covered (Phase 7):** publishing through a real `RedisFanout`, and
+  socket write cost per connection.
+
+### Phase 3 — Subscription & authorization — DONE 2026-09-19
+
+`Monk::Live::Policy` (`policy.rb`), `Monk::Live::Session` (`session.rb`),
+`Monk::Live::HANDLER`, plus `Monk::Live.authorize/authorized?`. Tests:
+`test/live_policy_test.rb` (13), `test/live_session_test.rb` (17, one of
+them through a real `Monk::WebSocket::Server` and socket); full suite 414
+green, RuboCop clean, session tests run 8x with no flakes.
+
+Usage in a WS process:
+
+    Monk::Live.configure(registry: REGISTRY)
+    Monk::Live.authorize("contacts:*") { |subject, topic| topic == "contacts:#{subject}" }
+    server.run(&Monk::Live::HANDLER)
+
+- **Deny by default.** No rule → nothing is subscribable. Rules match in
+  declaration order and **the first match decides** (a specific rule can
+  sit above a general one). A pattern is an exact topic or a prefix ending
+  in a single `*`; anything else raises at boot.
+- **Anonymous subjects (nil) are denied unless the matching rule says
+  `anonymous: true`,** and the block isn't even called for them. Without
+  this, `topic == "contacts:#{subject}"` lets a nil subject subscribe to
+  `"contacts:"`. A block that raises **fails closed** (denied, connection
+  stays up). The block must be Ractor-shareable, with the same precise
+  `UnshareableBlockError` as `Server#run`.
+- **Topic hygiene before the policy:** a client topic must match
+  `\A[\w:.\-/@]{1,200}\z`: no `*` (so no client-side globbing), no
+  whitespace, NUL or non-ASCII. Only a topic that passes that *and* the
+  policy is ever turned into a Symbol, so a client can't grow the symbol
+  table. A per-connection cap (`max_topics:`, default 100) denies the
+  overflow, and a message can carry at most 100 topics.
+- **Wire protocol additions (client → server):**
+  `{"op":"subscribe"|"unsubscribe","topics":[...]}`. Replies:
+  `subscribed` (with `topics` and `denied`), `unsubscribed`, or
+  `{"op":"error","reason":"bad_message"}` for malformed JSON, a non-object,
+  an unknown op or a bad `topics`; the connection stays open. A denial
+  never says why or whether the topic exists. Subscribing twice is
+  idempotent.
+- **`seq` is stamped here,** by the session's relay thread, per
+  connection, by splicing `"seq":N,` after the opening `{` of the
+  publisher's shared frozen string (a per-connection copy; the shared
+  string is untouched). Control replies carry no `seq`. One connection can
+  hold many topics: the session owns a single `Ractor::Port` registered
+  under each topic key (`Connection#subscribe` only takes one key, so the
+  WS layer was left unchanged, per ADR 0008).
+- **Cleanup on every exit** (clean hang-up, crashed read, close): all
+  registrations removed and the port closed, tested with a raised
+  exception in the session thread. Real-socket test asserts the registry
+  count returns to 0 after the client closes.
+- **Not covered / known limits:**
+  - **No revocation while connected.** Policy runs at subscribe time only;
+    if a user loses access mid-connection they keep receiving that topic
+    until they disconnect. The WS layer's `reverify_interval` re-checks the
+    *session*, not per-topic access. Fine for v0; a periodic re-check of
+    held topics is the obvious extension.
+  - Authenticated-subject flows (`authenticate: true` needs Postgres) are
+    tested through the `FakeConnection`'s `subject`, not a real login.
+  - The client runtime doesn't exist yet, so `subscribe` is only exercised
+    from tests (Phase 4 sends it from `data-live-topic`).
+
+### Phase 4 — Client runtime — DONE 2026-09-19
+
+Files (all under `lib/monk/live/client/`, so they ship in the gem; the
+directory is `Monk::Live.client_dir`, and an app serves or copies it as a
+unit because the files import each other by relative path):
+`monk_live.js` (browser glue), `protocol.js` (pure logic),
+`idiomorph.js` (vendored 0.7.3, see below). Ruby side:
+`Monk::Live::Helpers#live_topic` (mixed into `Monk::Context` on
+`require "monk/live"`).
+
+Page wiring:
+
+    <meta name="monk-live-url" content="ws://localhost:9293">
+    <ul id="contacts" <%= live_topic "contacts:#{current_user.id}" %>> ... </ul>
+    <script type="module" src="/js/monk_live.js"></script>
+
+**Testing, the hybrid (decided 2026-09-19):**
+- **Node layer:** `test/js/protocol.test.js` (11 tests) runs under Node's
+  built-in `node --test`, no npm or `package.json`; `test/live_client_js_test.rb`
+  runs it inside `rake test` and skips without Node >= 22.7.
+- **Browser layer:** `test/live_client_browser_test.rb` (10 tests) drives real
+  headless Chrome through Ferrum against a real `Monk::WebSocket::Server`
+  running `Monk::Live::HANDLER`, with a small HTTP server for the page and a
+  TCP proxy that can cut the connection or drop one server frame
+  (`test/live_browser_helpers.rb`). Skips without Ferrum/Chrome. Ferrum is a
+  gemspec development dependency, so it is excluded from the Docker image.
+- **Mutation-checked:** breaking the client's focus, `data-live-ignore` and
+  `<details>` protections made the corresponding tests fail; restored, all
+  green. Browser tests run 3x with no flakes. Full suite 431 green.
+
+What the client does (each covered by a browser test unless noted):
+- Subscribes to every `data-live-topic` on the page (space-separated, several
+  elements merged); a page with none never opens a connection.
+- Applies `patch` and `batch` envelopes: modes `morph` (idiomorph), `replace`,
+  `append`, `prepend`, `remove`; selectors match with `querySelectorAll` (one
+  op can patch many nodes); an invalid selector warns and is skipped.
+- **Focus, typed value and selection survive a morph**, both in a sibling and
+  inside the patched node (idiomorph `ignoreActiveValue`).
+- **`data-live-ignore`:** the subtree is never morphed or targeted.
+- **`<details open>` is preserved by default** (decision for the Phase 0
+  gap): a patch does not close what the user opened. Consequence: the server
+  cannot force a `<details>` closed with a patch; use `replace` mode (which
+  swaps the node outright) for that.
+- **`seq` gap detection** → resync. A lost frame (proxy drops one) fires
+  `monk-live:gap` and refetches the page.
+- **Reconnect** with backoff (500ms doubling, 30s cap, the `chat.js` numbers),
+  resubscribes, and **resyncs after the server acks the subscription** (not
+  before, or a patch published between fetch and subscribe would be lost).
+- **Resync** = refetch the page URL and morph `<body>` (ADR 0011); a resync
+  that brings new `data-live-topic` regions subscribes to them (and
+  unsubscribes from dropped ones). A non-OK status, a non-HTML response or
+  any redirect **stops the runtime** (`monk-live:stopped`, reason
+  `redirected`/`status_N`) leaving the page untouched, with no further
+  reconnects.
+- **Events, all on `document`, no JS API:** `monk-live:connected`,
+  `disconnected`, `subscribed` (`{topics, denied}`; denials also `console.warn`),
+  `patched` (`{target, mode, matched}`), `gap`, `resynced`, `resync-failed`,
+  `stopped`. Envelopes carry no topic, so `patched` has none either (the
+  earlier sketch listed one; adding it would mean a topic field on the wire).
+- **Vendoring:** `idiomorph.js` is `dist/idiomorph.min.js` (9.3KB) plus one
+  `export { Idiomorph };` line so it loads as an ES module, license text
+  alongside. Its license is **Zero-Clause BSD**, not BSD-2 as ADR 0007 said
+  (corrected there).
+- **Not covered:** Firefox/Safari (Chrome only, as ever), IME composition,
+  `monk-live:resync-failed` retry behavior (the flag retries on the next
+  connect/gap only), and interplay with Attractive.js state.
+- **Not done, deliberately:** serving the files. How an app gets
+  `client_dir` into its assets (scaffold copy vs. an assets mount) is
+  Phase 8's scaffold work; today an app copies the directory into its
+  public root.
+
+### Phase 5 — Resync and initial state — DONE 2026-09-19
+
+Most of resync landed with the client in Phase 4 (refetch, `seq` gap →
+resync, reconnect → resubscribe → resync-after-ack, redirect stops the
+runtime, new topics subscribed after a resync). Phase 5 hardened it and
+proved the whole-body morph honors the same protections a single patch
+does. **Decided:** resync is a full page refetch, morphed in (ADR 0011);
+patches are an optimization over "the page can always be re-fetched".
+
+Added, with tests (`test/live_client_browser_test.rb` now 15, Node protocol
+tests now 13; full suite 437 green, RuboCop clean):
+- **Whole-body resync keeps focus, typed text and selection, `data-live-ignore`
+  subtrees and open `<details>`,** while the rest of the page converges. Passed
+  first time (Phase 4's morph options already applied); now guarded, and
+  mutation-checked: removing the protections fails the resync tests too.
+- **Every "not the app page" answer stops the runtime** through a pure,
+  Node-tested `resyncVerdict` in `protocol.js`: `redirected` (checked first,
+  since a login redirect usually answers 200 HTML), `status_N` (401, 500...),
+  `not_html`. The page is left untouched and it stops reconnecting. Before,
+  a 200 non-HTML answer was reported misleadingly as `status_200`.
+- **A failed refetch (network error) retries with backoff** (500ms doubling,
+  30s cap, reset on success) instead of waiting for the next reconnect or
+  gap. Timer is cleared on stop.
+- **Overlapping resync triggers coalesce:** a reconnect resync in flight plus
+  three lost frames produced exactly one follow-up fetch (3 page fetches
+  total including the initial load), not one per trigger.
+- **Large page:** 800 rows with inputs converge correctly with a focused
+  input's text kept; fetch + parse + morph took **~26ms** (localhost, so it
+  excludes real network latency). `MONK_TEST_VERBOSE=1` prints the timing.
+- Each new behavior was mutation-checked (disabling coalescing, the retry, or
+  the morph protections fails the matching tests).
+- **Test-infra fixes worth knowing:** Ferrum's `evaluate` wraps `return <js>`,
+  so multi-statement scripts need an IIFE (`run_js` helper); dropping frames
+  in the proxy needs one loss at a time or armed flags race.
+- **Not covered / open:** the client → server `resync` message from the plan's
+  protocol sketch was never needed (the client refetches over HTTP) and is
+  **not implemented**; the protocol section still lists it as reserved. Real
+  network latency on a large page, and Firefox/Safari, are unmeasured.
+
+**Possible future evolution (not v0): explicit snapshots.** If a full
+refetch proves too heavy (large pages, frequent reconnects on flaky
+mobile links) or too coarse, add `Monk::Live.snapshot("contacts:*") { |subject, topic| ... }`
+returning per-target partials, so a reconnect re-renders only the regions
+subscribed to instead of the whole page. Costs to weigh then: a second
+definition of the region's markup that can drift from the page's initial
+render (mitigate by having the page view render the same partial), and a
+naming convention tying topics to regions. Trigger to revisit: measured
+refetch cost/latency in monk_talk, not speculation. Nothing in the v0
+protocol should preclude it (`resync` stays a client → server message the
+server may answer either way).
+
+### Phase 6 — Optimistic UI rule — DECIDED (no code), 2026-09-19
+
+Resolve the `pendingByClientId` question. Recommendation for v0: **no
+optimistic rendering in Monk::Live**; client-local sprinkles may show a
+pending state, and the server round-trip is the only thing that writes
+server-owned DOM. Revisit only if latency demands it; if so, patches carry
+an optional `client_id` so the client can replace, not duplicate.
+
+**Status:** nothing to build. The v0 client has no optimistic path (it only
+writes server-owned DOM from patches and resyncs), which is what makes the
+resync-by-refetch model safe: there is no locally invented state to conflict
+with. monk_talk's `chat.js` keeps its own `pendingByClientId` handling for
+its message list until/unless that moves onto Monk::Live.
+
+### Phase 7 — Multi-process — DONE 2026-09-19
+
+Verified for real, not with two fanouts in one process: the publisher is the
+test process (a `RedisFanout` around its own `Registry`, rendering the
+partial), and the WebSocket server is a **separate OS process**
+(`test/support/live_ws_process.rb`: `Monk::Live::HANDLER` on a `RedisFanout`),
+sharing only Redis. Tests: `test/live_redis_test.rb` (6, raw-socket clients)
+and `test/live_multiprocess_browser_test.rb` (2, Chrome through the whole
+stack); helpers in `test/live_multiprocess_helpers.rb`. Skips without Redis.
+Full suite 448 green, RuboCop clean.
+
+Proven:
+- A fragment rendered in one process reaches a WS client connected to another,
+  through Redis, with the envelope intact.
+- **`seq` is per connection, stamped at the edge:** a connection that joins
+  late starts at 1 while an older one carries on at 3, with the publisher
+  stamping nothing. (This is why the publisher's string can be shared and
+  frozen; see Phase 3.)
+- Topics stay separate across the hop; a subscriber in the publishing process
+  gets each message once (the fanout's origin tag), the remote one too.
+- A 150KB multi-line fragment with quotes, backslashes, tabs and unicode
+  arrives byte-for-byte.
+- Publishing from a **non-main Ractor** (a request worker's situation) through
+  `Monk::Live.patch` and a `RedisFanout` reaches the other process.
+- Full stack in Chrome: a patch published here morphs a page whose socket is
+  served by the other process. Killing the WS process is noticed by the
+  client, which keeps the page intact and keeps retrying.
+
+**Bugs this found (the point of a verification slice):**
+1. **`Monk::WebSocket::Frame.encode` raised `Encoding::CompatibilityError` for
+   any non-ASCII UTF-8 text.** Pre-existing and shipped (`0.12.x`), invisible
+   because no test used non-ASCII and chat echoes client bytes, which are
+   BINARY. For Monk::Live it was fatal and silent: any fragment with an
+   accent, curly quote or emoji killed the relay thread. Fixed (`payload.b`),
+   regression test in `test/websocket_frame_test.rb`, CHANGELOG entry under
+   *Unreleased*. Worth a patch release on its own.
+2. **A failing relay used to leave a connected client silently stale.** Any
+   unexpected error in the relay thread ended it and nothing else noticed.
+   `Session` now warns and closes the connection with 1011, so the client
+   reconnects and resyncs (ADR 0011). Tested with a connection whose write
+   fails.
+3. **`require "monk/live"` didn't load `Monk::WebSocket`,** although ADR 0008
+   says Live sits on it. It does now.
+
+**Known behavior, documented rather than changed:** if Redis is down,
+`Monk::Live.patch` **raises** (`Redis::CannotConnectError`, in about 1ms), *after*
+delivering to subscribers in the publishing process. A route that publishes
+after a successful write would therefore 500 while Redis is down. Left loud on
+purpose for v0; an app that prefers "best effort" wraps the publish in its own
+`rescue`. If that becomes a common wrapper, a `configure(on_error:)` hook is the
+obvious extension. (Checked with a one-off probe, not a permanent test, since
+the fanout's own subscriber Ractor prints a stack trace when it can't connect.)
+
+**Not covered:** several WS processes each holding many connections (only one
+child process), Redis restarting under a live fanout, and message ordering
+under concurrent publishers (Redis pub/sub keeps per-channel order; not
+asserted here).
+
+### Phase 8 — Scaffold, docs, first consumer — DONE in this repo 2026-09-19; monk_talk integration pending
+
+**Scaffold: `monk new APP --live`** (`lib/monk/scaffold.rb`, templates under
+`lib/monk/templates/live/`, `test/scaffold_live_test.rb`, 10 tests; full suite
+458 green, RuboCop clean). A fresh app gets a working demo, a counter whose open
+tabs update together:
+- `config/live.rb` (shared by both processes: Redis fanout, `Monk::Live.configure`,
+  a deny-by-default `authorize` rule in a module so the block is shareable, and a
+  `LIVE_WS_URL` setting), `views/live/_hits.erb`, live versions of `config.ru`
+  (`POST /hit` changes a `StateRactor` counter and calls `Monk::Live.patch`),
+  `views/index.erb` (`live_topic "hits"`) and `bin/websocket_server`
+  (`server.run(&Monk::Live::HANDLER)`, still auto-authenticating with `--auth`).
+- The client runtime is **copied from the gem** (`Monk::Live.client_dir`) into
+  `public/js/monk_live/`, byte for byte (tested), not duplicated under
+  `templates/`. The layout gets a `<meta name="monk-live-url">` and the module
+  `<script>`, inserted before `</head>` (guarded, like the other post-write edits).
+- **`--live` implies `--redis`**: `bin/server` and `bin/websocket_server` are
+  separate processes, so a publish only reaches a socket through Redis.
+  Composes with `--postgres`/`--auth` (the config.ru wiring still finds its anchor).
+- SETUP.md gets a "Live updates" section (three things to run, where each piece
+  lives, `WS_ALLOWED_ORIGINS`, `LIVE_WS_URL`); `monk help` documents the flag.
+
+**Acceptance check on a generated app (manual, not in the suite):** generated
+with `--live`, bundled against this checkout, `bin/websocket_server` and
+`bin/server` booted against the local Redis, and two real Chrome tabs driven
+with Ferrum. A click in tab A moved tab B's counter, and a marker set in tab B's
+page survived (so B was patched, not reloaded), with a `monk-live:patched`
+event fired. It isn't an automated test because it needs `bundle install` of a
+generated app, a network and two servers; the scaffold tests plus the
+cross-process tests from Phase 7 cover its parts.
+
+**Docs:** `docs/live.md` (the usage guide), a README section and status line,
+`CHANGELOG.md` (*Unreleased* / Added), CONTEXT.md glossary terms (Live, Topic,
+Patch, Live partial, Resync), and `docs/reactive-partials.md` now points at what
+was built. ADRs 0007-0011 were written up front.
+
+**Not done: the monk_talk integration** (a contact list with live statuses, the
+original reason for all this). It is a separate repository (`../monk_talk`,
+which depends on this one by path) with its own branch and uncommitted work, and
+the contact list itself doesn't exist there yet, so it is a feature of its own
+rather than a wiring step. Rate limiting and throttling of chatty topics (typing
+indicators) stay app-level, per the chat scope decision.
+
+## Explicitly out of scope for v0
+
+Client → server event binding (`live-click`, forms over WS), per-viewer
+diffing, server-held per-connection state à la LiveView, a virtual DOM,
+presence tracking, history/replay beyond snapshot-on-subscribe.
+
+## Risks worth watching
+
+- ~~Phase 0's Ractor rendering result could force a redesign of Phase 1~~
+  Resolved by the spike: rendering from a non-main Ractor works as-is. The
+  client-morph and fan-out-cost spikes also came out fine (Phase 0).
+- Authorization (Phase 3) leaking patch content is the worst failure mode;
+  fragments must never be rendered with data the subscriber can't see.
+- Per-viewer fragments defeat render-once and re-create the cost problem;
+  keep them a deliberate exception.
+- `morph` + client-local library state (Attractive.js) interplay: morphing
+  can wipe attribute-driven local state; test explicitly in Phase 4.

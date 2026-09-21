@@ -1,0 +1,26 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require_relative "../config/settings"
+
+# config/auth.rb only exists if this app was scaffolded with --auth -- a
+# missing file is a harmless no-op, the same way config/settings.rb treats
+# a missing dotenv gem. Present or not, it's what decides whether this
+# process authenticates connections below.
+begin
+  require_relative "../config/auth"
+rescue LoadError
+end
+
+# Monk::Live: the browsers' sockets end here. The handler takes their
+# subscribe/unsubscribe messages, checks each topic against the rules in
+# config/live.rb, and relays whatever config.ru's process publishes over
+# Redis.
+require_relative "../config/live"
+
+authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
+port = ENV.fetch("WS_PORT", "9293").to_i
+allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", "http://localhost:9292").split(",")
+
+server = Monk::WebSocket::Server.new(port: port, authenticate: authenticate, allowed_origins: allowed_origins)
+puts "Monk::Live WebSocket server listening on ws://0.0.0.0:#{port} (authenticate: #{authenticate})"
+server.run(&Monk::Live::HANDLER)

@@ -37,6 +37,32 @@ module Monk
       "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
     }.freeze
 
+    # --live: Monk::Live's demo (a counter whose open tabs update when
+    # another request changes it). These replace three base files outright
+    # rather than patching them -- a live config.ru and index are different
+    # files, not one line of diff -- and add two. config.ru's first line stays
+    # the settings require, so --postgres/--auth wiring still finds it.
+    LIVE_OVERRIDES = {
+      "config.ru" => "live/config.ru",
+      "bin/websocket_server" => "live/bin/websocket_server",
+      "views/index.erb" => "live/views/index.erb",
+    }.freeze
+
+    LIVE_FILES = {
+      "config/live.rb" => "live/config/live.rb",
+      "views/live/_hits.erb" => "live/views/live/_hits.erb",
+    }.freeze
+
+    # Where the client runtime lands in the app's public root (an app serves
+    # it like any other static file; its files import each other by relative
+    # path, so they stay together in one directory).
+    LIVE_CLIENT_DIR = "public/js/monk_live".freeze
+
+    LIVE_HEAD = <<~HTML.gsub(/^/, "    ").freeze
+      <meta name="monk-live-url" content="<%= settings[:live_ws_url] %>">
+      <script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>
+    HTML
+
     EXECUTABLE_FILES = %w[bin/server bin/websocket_server bin/console bin/setup_db bin/migrate].freeze
 
     # auth: implies postgres -- Monk::Auth is Postgres-only (lib/monk/auth.rb
@@ -50,18 +76,25 @@ module Monk
     # it isn't gated behind a flag at all) checks ENV["REDIS_URL"] at boot
     # and only then requires "redis", so the gem has to already be in the
     # bundle for that to work.
-    def initialize(dir, postgres: false, auth: false, redis: false)
+    #
+    # live: implies redis: -- bin/server and bin/websocket_server are separate
+    # processes, so an update published by one only reaches a socket held by
+    # the other through Redis.
+    def initialize(dir, postgres: false, auth: false, redis: false, live: false)
       @dir = dir
       @auth = auth
       @postgres = postgres || auth
-      @redis = redis
+      @live = live
+      @redis = redis || live
     end
 
     def write!
       raise Monk::ScaffoldExistsError, "#{@dir} already exists" if File.exist?(@dir)
 
       FileUtils.mkdir_p(@dir)
-      BASE_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
+      base_files = @live ? BASE_FILES.merge(LIVE_OVERRIDES) : BASE_FILES
+      base_files.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
+      write_live! if @live
 
       if @postgres
         POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
@@ -89,6 +122,29 @@ module Monk
     end
 
     private
+
+    def write_live!
+      LIVE_FILES.each { |relative, template| write_file(relative, template) }
+      copy_live_client!
+      add_live_to_layout!
+    end
+
+    # The runtime ships inside the gem (Monk::Live.client_dir); copied, not
+    # duplicated under templates/, so there is one source of truth.
+    def copy_live_client!
+      source = File.join(__dir__, "live/client")
+      target = File.join(@dir, LIVE_CLIENT_DIR)
+      FileUtils.mkdir_p(target)
+      FileUtils.cp(Dir.children(source).map { |name| File.join(source, name) }, target)
+    end
+
+    def add_live_to_layout!
+      path = File.join(@dir, "views/layouts/app.erb")
+      content = File.read(path)
+      raise "layout wiring failed: </head> not found" unless content.include?("  </head>\n")
+
+      File.write(path, content.sub("  </head>\n", "#{LIVE_HEAD}  </head>\n"))
+    end
 
     def append_gemfile_extra(template_path)
       extra = File.read(File.join(TEMPLATES_DIR, template_path))
@@ -181,6 +237,43 @@ module Monk
 
     def write_setup_md!
       File.write(File.join(@dir, "SETUP.md"), setup_md_content)
+      File.write(File.join(@dir, "SETUP.md"), live_setup_md_content, mode: "a") if @live
+    end
+
+    def live_setup_md_content
+      <<~MARKDOWN
+
+        ## Live updates (Monk::Live)
+
+        `monk new --live` wired a demo: a counter whose open tabs update by
+        themselves. It needs three things running, each in its own terminal:
+
+        ```bash
+        docker run --rm -d -p 6379:6379 --name #{File.basename(@dir)}_redis redis:7   # skip if one is already up
+        bin/server              # the HTTP app on :9292, which publishes updates
+        bin/websocket_server    # the sockets on :9293, which deliver them
+        ```
+
+        Open http://localhost:9292 in two tabs and press the button in one.
+
+        `bin/server` and `bin/websocket_server` are separate processes, so Redis
+        (`REDIS_URL`, already in `.env`) is what carries an update from one to
+        the other. Where things are:
+
+        - `config/live.rb` -- the Redis wiring and the subscribe rules (nothing
+          is allowed unless a rule says so).
+        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+          used this way see only their locals (`locals[:hits]`), never
+          `params` or the session.
+        - `public/js/monk_live/` -- the browser runtime, copied from the gem.
+          The layout points at it and at `LIVE_WS_URL` (default
+          `ws://localhost:9293`; use `wss://` in production).
+
+        `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
+        origin your pages are served from, or the browser's socket is refused.
+      MARKDOWN
     end
 
     def setup_md_content

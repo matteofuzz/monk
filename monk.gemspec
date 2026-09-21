@@ -44,5 +44,10 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
-  spec.add_development_dependency "kino"
+  spec.add_development_dependency "rubocop", "~> 1.90"
+
+  # Headless Chrome over its debugging protocol, pure Ruby (no chromedriver,
+  # no npm): drives the real-browser tests of Monk::Live's client JS.
+  # Those tests skip when Chrome isn't installed.
+  spec.add_development_dependency "ferrum", "~> 0.18"
 end
