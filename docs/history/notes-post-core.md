@@ -1,8 +1,8 @@
-# Monk V2 — Notes
+# Monk — post-core notes
 
-Scratch notes for ideas to consider once V1 is settled. Not a plan yet — see `docs/history/core-plan.md` for that once V2 work actually starts.
+Scratch notes for ideas to consider once the initial core was settled. Not a plan yet — see `docs/history/core-plan.md` for that once this work actually starts.
 
-## Known limitations (v1)
+## Known limitations of the initial core
 
 Grounded in the current `lib/monk` implementation, not just the README's explicit scope cuts (those are listed separately below).
 
@@ -20,7 +20,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 - **Logging is fixed** — stdout only, hardcoded `ENV["MONK_ENV"] == "production"` check to disable it; no pluggable logger, level, or structured format.
 - **No streaming/chunked responses** — the body is always a single-element array wrapping one string.
 
-## Candidates (from v1's deliberate scope cuts)
+## Candidates (from the initial core's deliberate scope cuts)
 
 - HTML templating — **done 2026-09-05**, widened to the whole
   server-rendered surface: ERB views compiled at boot into methods on a

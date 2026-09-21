@@ -568,7 +568,7 @@ all), or anything about JavaScript beyond serving bytes.
   but "a `Context` with no `env`" is a concept the framework doesn't have
   yet.
 - **Streaming responses** stay out (`docs/history/notes-post-core.md` lists the single-string
-  body as a known v1 limitation) — but a `render` that builds one big
+  body as a known limitation of the initial core) — but a `render` that builds one big
   string is the thing a future streaming body would have to unwind. Worth
   knowing before, not solving now.
 

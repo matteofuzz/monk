@@ -44,7 +44,7 @@ up front rather than discovered mid-implementation.
    "z" }`. Mirrors `Auth.configure`'s "several related declarations, one
    block" shape.
 8. **Flat keys, no namespacing. String values only, no type coercion.**
-   Both are deliberate v1 scope cuts, not oversights — see "Explicitly
+   Both are deliberate scope cuts of the initial core, not oversights — see "Explicitly
    out of scope" below.
 9. **Required keys fail fast at `Boot`** (ADR 0003's posture), not at
    `configure` time — `config/settings.rb` runs very early (every entry
@@ -234,9 +234,9 @@ up front rather than discovered mid-implementation.
 
 ## Explicitly out of scope for this plan
 
-- **Type coercion** (Integer/Boolean settings) — string-only for v1; see
+- **Type coercion** (Integer/Boolean settings) — string-only for now; see
   `CONTEXT.md`'s **Settings** entry. Revisit only if a real need shows
   up.
-- **Namespaced/nested keys** — flat only for v1.
+- **Namespaced/nested keys** — flat only for now.
 - **Retrofitting `Persistence.register`/`Auth.configure`** to route
   through `Settings` — see ADR 0006. Not planned, not a deferred phase.

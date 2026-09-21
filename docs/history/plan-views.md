@@ -237,6 +237,6 @@ Declared locals aren't built. What replaced the phase:
 ## Explicitly out of scope for this plan
 
 Everything listed under "Explicitly out of scope" in `docs/design/views.md`, plus:
-streaming/chunked bodies (a known v1 limitation tracked in `docs/history/notes-post-core.md`),
+streaming/chunked bodies (a known limitation of the initial core tracked in `docs/history/notes-post-core.md`),
 live reloading of `.rb` files, and the CSRF view helper `docs/design/auth-sessions.md`
 will want — that belongs to `docs/history/plan-auth.md`.

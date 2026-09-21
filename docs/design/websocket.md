@@ -10,7 +10,7 @@ true concurrency and isolated per-connection failure (see "End-to-end
 spike"). Implementation plan: `docs/history/plan-websocket.md`. No code lives in this
 repo yet, no ADR yet (the "own process, not in-Kino" call is the one most
 likely to want one). `docs/history/notes-post-core.md` lists "WebSocket support, with session
-persistence" as a v2 candidate; this doc is the first design pass at it.
+persistence" as a post-core candidate; this doc is the first design pass at it.
 The identity/token-carrying question this doc originally left open for
 Phase 5 is now resolved as part of the same 2026-09-01 pass that finalized
 `docs/design/auth-sessions.md` across all three transports — see "Identity

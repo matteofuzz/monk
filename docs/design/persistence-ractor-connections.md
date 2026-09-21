@@ -491,8 +491,8 @@ call, inside whichever Ractor makes it.
 ## Current state (superseded by "Resolved design," kept for rationale)
 
 There is no persistence layer in Monk today. `README.md` lists persistence as
-deliberately out of scope for v1. `docs/history/notes-post-core.md` lists "Database support,
-Postgres first" as a v2 candidate with no design attached. This document is
+deliberately out of scope for the initial core. `docs/history/notes-post-core.md` lists "Database support,
+Postgres first" as a post-core candidate with no design attached. This document is
 the first pass at that design space: how to support existing Ruby DB gems
 without weakening Monk's core guarantee — that a booted app is
 `Ractor.shareable?` and safely dispatchable across a Ractor worker pool.

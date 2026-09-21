@@ -15,8 +15,8 @@ out to need no new mechanism at all for the browser case. Nothing below
 changes the core design ("Two tokens, not one", the schema, the storage
 options): it adds the delivery and CSRF layer the original pass punted on.
 
-Sessions/cookies were a deliberate v1 scope cut (`README.md`, `docs/history/core-plan.md`)
-and "Authentication and user sessions" is a listed V2 candidate
+Sessions/cookies were a deliberate scope cut of the initial core (`README.md`, `docs/history/core-plan.md`)
+and "Authentication and user sessions" is a listed post-core candidate
 (`docs/history/notes-post-core.md`). This doc proposes the shape; nothing here is
 implemented.
 
@@ -55,7 +55,7 @@ shared, nothing mutable, nothing that needs `Ractor.make_shareable`
 beyond a frozen config Hash. That's why this is the right auth design
 for Monk and not merely a fashionable one.
 
-## Prerequisites: four gaps in v1 that auth trips over
+## Prerequisites: four gaps in the initial core that auth trips over
 
 These are the actual work; the token logic is the easy half. Each is
 already known (`docs/history/notes-post-core.md` "Known limitations") except the first.
