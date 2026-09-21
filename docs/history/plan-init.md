@@ -1,5 +1,7 @@
 # Monk project scaffolding (`monk new`) — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: not yet created. Depends on: `Monk::Persistence::Pg` and
 `Monk::Persistence::Pg::Migrator` (`main`, both done) — the `--postgres`
 variant's templates are exactly the hand-written files

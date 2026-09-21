@@ -1,5 +1,7 @@
 # Building a 1:1 chat app on Monk — gap analysis
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: analysis, 2026-09-07. No code written. Scope of the exercise: a
 chat product with **1:1 text messages only**, served to two kinds of
 client — a browser and a CLI. The question this doc answers is not "how

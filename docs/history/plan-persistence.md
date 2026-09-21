@@ -1,5 +1,7 @@
 # Monk persistence — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `main_dev/add_db_support`. Companion doc:
 `docs/design/persistence-ractor-connections.md` (design rationale, facts gathered,
 resolved decisions).

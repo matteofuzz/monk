@@ -1,5 +1,7 @@
 # Monk schema & migrations — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `main_dev/25-add-a-basic-support-for-schema-and-migrations-management`
 (issue #25). Depends on: `Monk::Persistence::Pg` (`main`, done). No companion design doc
 yet — the decisions below are locked in here directly, since the surface

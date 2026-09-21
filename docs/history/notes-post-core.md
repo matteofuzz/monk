@@ -1,5 +1,7 @@
 # Monk — post-core notes
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Scratch notes for ideas to consider once the initial core was settled. Not a plan yet — see `docs/history/core-plan.md` for that once this work actually starts.
 
 ## Known limitations of the initial core

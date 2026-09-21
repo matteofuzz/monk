@@ -1,5 +1,7 @@
 # Bug: `Secure` session cookie is silently dropped in dev over plain HTTP
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: reported 2026-09-18, not yet fixed. Found during manual testing
 of `monk_talk`'s V0-1-1 single-socket chat refactor
 (`monk_talk/doc/v0-1-1_single-socket_refactor_plan.md`, "Post-

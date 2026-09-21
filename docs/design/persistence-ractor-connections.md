@@ -1,5 +1,7 @@
 # Persistence & database connections under Ractor isolation
 
+> **Status: implemented** as `Monk::Persistence::Pg` (usage: [`guides/persistence.md`](../guides/persistence.md), migrations: [`guides/migrations.md`](../guides/migrations.md)). The text below is the design and spike record; sections marked superseded are kept for rationale only.
+
 Status: Phase 0 spike ran on 2026-08-31 — **Sequel is not usable inside a
 non-main Ractor, confirmed empirically**. The "Resolved design" below is
 kept as the record of *why* Sequel was chosen and what it bought, but it no

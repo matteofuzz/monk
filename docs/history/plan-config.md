@@ -1,5 +1,7 @@
 # Monk Settings & MONK_ENV — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Companion doc: `docs/adr/0006-settings-alongside-persistence-and-auth-config.md`
 (why `Settings` is a new facility rather than a retrofit of `Persistence`/
 `Auth`'s own config). Glossary: `CONTEXT.md` — **Settings**, **MONK_ENV**.

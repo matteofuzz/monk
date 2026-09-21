@@ -1,5 +1,7 @@
 # Monk core — TDD Implementation Plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 This plan develops Monk in small, gradual, red → green cycles. Each numbered step is one vertical slice: one failing test against its seam, then the minimum code to pass it. Refactoring is a separate pass per item, not folded into the loop itself.
 
 See `CONTEXT.md` for domain vocabulary (`StateRactor`, `Context`, `Boot`) and `docs/adr/` for the architectural decisions this plan builds on.

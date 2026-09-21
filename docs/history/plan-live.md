@@ -1,5 +1,7 @@
 # Monk::Live — implementation plan (first draft)
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: not yet created — nothing in this plan is implemented. Companion
 doc: `docs/history/reactive-partials.md` (the why, prior art, and the sketch this
 plan turns into steps).

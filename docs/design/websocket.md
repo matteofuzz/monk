@@ -1,5 +1,7 @@
 # WebSocket support, as a process separate from Kino
 
+> **Status: implemented** as `Monk::WebSocket` (usage: [`guides/websocket.md`](../guides/websocket.md)). The text below is the original 2026-09-01 design record, so phrases like "no code yet" and "no ADR yet" are out of date.
+
 Status: design exploration, 2026-09-01 — two spikes ran the same day.
 **Phase 0**: neither off-the-shelf WebSocket gem tried survives a real,
 separately-spawned Ractor, for two different, gem-specific reasons (see

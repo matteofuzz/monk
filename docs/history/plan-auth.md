@@ -1,5 +1,7 @@
 # Monk passwordless auth & sessions — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `claude/passwordless-auth-session-6dfx9u`. Companion doc:
 `docs/design/auth-sessions.md` (design rationale, storage options considered,
 security decisions, open questions).

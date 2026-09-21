@@ -1,5 +1,7 @@
 # Passwordless authentication & sessions
 
+> **Status: implemented** as `Monk::Auth` (usage: [`guides/auth.md`](../guides/auth.md)). The text below is the original design record, so phrases like "no code yet", "proposed API" and the working-branch note are out of date.
+
 Status: design finalized across all three transports, 2026-09-01 — no code
 yet. Implementation plan: `docs/history/plan-auth.md`. Working branch:
 `claude/passwordless-auth-session-6dfx9u`. No ADR yet; the decisions most

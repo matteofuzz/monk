@@ -1,5 +1,7 @@
 # Persistence — open list of possible evolutions
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: living list, not a roadmap or a commitment. A place to record
 things considered for `Monk::Persistence::Pg::Model` (and the underlying
 `Pg`/`Registry` layer) that aren't built yet, so the reasoning behind

@@ -1,5 +1,7 @@
 # Monk WebSocket — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: not yet created — nothing in this plan is implemented. Companion
 doc: `docs/design/websocket.md` (why Kino can't carry this in-process, the Phase 0
 gem spike, the end-to-end hand-rolled spike this plan builds out for real).

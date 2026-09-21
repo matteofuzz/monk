@@ -1,5 +1,7 @@
 # Reactive UI via server-pushed HTML partials over the WebSocket
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: built as `Monk::Live` (2026-09-19), see `docs/guides/live.md` for usage and
 `docs/history/plan-live.md` / ADRs 0007-0011 for what was decided and measured. The text
 below is the original proposal, kept as the record of why. Original status:
