@@ -2,7 +2,7 @@ require "json"
 
 module Monk
   module Live
-    # The server -> client wire shape (PLAN-LIVE.md "Wire protocol"): a
+    # The server -> client wire shape (docs/history/plan-live.md "Wire protocol"): a
     # `patch` (one DOM operation: a CSS target, a mode, some html) or a
     # `batch` of them. Built as frozen Hashes and encoded to one frozen JSON
     # String, so a publisher can hand the same object to every subscriber

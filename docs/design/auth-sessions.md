@@ -1,7 +1,9 @@
 # Passwordless authentication & sessions
 
+> **Status: implemented** as `Monk::Auth` (usage: [`guides/auth.md`](../guides/auth.md)). The text below is the original design record, so phrases like "no code yet", "proposed API" and the working-branch note are out of date.
+
 Status: design finalized across all three transports, 2026-09-01 — no code
-yet. Implementation plan: `PLAN-AUTH.md`. Working branch:
+yet. Implementation plan: `docs/history/plan-auth.md`. Working branch:
 `claude/passwordless-auth-session-6dfx9u`. No ADR yet; the decisions most
 likely to deserve one are called out under "Open questions."
 
@@ -10,14 +12,14 @@ Bearer-only slice and deferred the browser and WebSocket cases entirely
 (old "Open questions" #1). That deferral is resolved here: this doc now
 specifies one token model carried three ways — `Authorization: Bearer` for
 API/server-to-server callers, an `HttpOnly` cookie for browsers, and a
-carrier for `Monk::WebSocket` (`docs/websocket.md`) connections that turns
+carrier for `Monk::WebSocket` (`docs/design/websocket.md`) connections that turns
 out to need no new mechanism at all for the browser case. Nothing below
 changes the core design ("Two tokens, not one", the schema, the storage
 options): it adds the delivery and CSRF layer the original pass punted on.
 
-Sessions/cookies were a deliberate v1 scope cut (`README.md`, `PLAN.md`)
-and "Authentication and user sessions" is a listed V2 candidate
-(`NOTES-V2.md`). This doc proposes the shape; nothing here is
+Sessions/cookies were a deliberate scope cut of the initial core (`README.md`, `docs/history/core-plan.md`)
+and "Authentication and user sessions" is a listed post-core candidate
+(`docs/history/notes-post-core.md`). This doc proposes the shape; nothing here is
 implemented.
 
 ## The three transports, one token model
@@ -28,7 +30,7 @@ implemented.
 | Browser (interactive user) | `HttpOnly; Secure; SameSite=Lax` cookie | A cookie the client can't read from JS resists token theft via XSS in a way a Bearer token stashed in `localStorage`/`sessionStorage` (readable by any script on the page) does not. This is the actual reason to prefer cookies for a browser client, not merely "browsers use cookies." |
 | `Monk::WebSocket` connection | Whichever of the above the connecting client already has | See "The WebSocket case" below — this needs no third mechanism. |
 
-`current_subject` / `require_user!` (`docs/auth-sessions.md`'s "Proposed
+`current_subject` / `require_user!` (`docs/design/auth-sessions.md`'s "Proposed
 API") check `Authorization` first and fall back to the cookie when absent.
 Both remain first-class; nothing here removes Bearer or makes cookies
 mandatory. Which one a given app uses is a client-side choice, not a
@@ -50,15 +52,15 @@ A TTL'd opaque token has no such state. Verifying a request is:
 3. compare `expires_at` against `Time.now`.
 
 Pure computation plus a per-Ractor database connection Monk already
-knows how to manage (`docs/persistence-ractor-connections.md`). Nothing
+knows how to manage (`docs/design/persistence-ractor-connections.md`). Nothing
 shared, nothing mutable, nothing that needs `Ractor.make_shareable`
 beyond a frozen config Hash. That's why this is the right auth design
 for Monk and not merely a fashionable one.
 
-## Prerequisites: four gaps in v1 that auth trips over
+## Prerequisites: four gaps in the initial core that auth trips over
 
 These are the actual work; the token logic is the easy half. Each is
-already known (`NOTES-V2.md` "Known limitations") except the first.
+already known (`docs/history/notes-post-core.md` "Known limitations") except the first.
 
 1. **`Context` can't see the request.** `lib/monk/base.rb:62` builds
    `Context.new(params)` and discards `env` entirely. A route can read
@@ -83,7 +85,7 @@ Only #1 is unavoidable. A first slice that puts the login token in a
 **path segment** (`get("/auth/callback/:token")`) and answers in JSON,
 handing the session token back in the response body for the client to
 present as `Authorization: Bearer`, defers #2, #3 and #4 completely.
-That's the slice `PLAN-AUTH.md` Phases 1–4 build.
+That's the slice `docs/history/plan-auth.md` Phases 1–4 build.
 
 The cost of that shortcut is logging: `lib/monk/base.rb:81` writes
 `PATH_INFO` to stdout, so a token in the path lands in the log line. It
@@ -161,14 +163,14 @@ picks the callback's response shape. It is copied verbatim from the
 write time, not at redemption time, so a malicious value never even
 reaches the row.
 
-Versioned `.up.sql`/`.down.sql` pairs, per `PLAN-MIGRATIONS.md` — no
+Versioned `.up.sql`/`.down.sql` pairs, per `docs/history/plan-migrations.md` — no
 DSL, sent to Postgres verbatim.
 
 **Monk should not own a `users` table.** `sessions.subject` is an opaque
 String the app assigns meaning to (an email, a UUID, a tenant-scoped
 key). Monk owns tokens; the app owns accounts. The moment the framework
 ships a user schema it has taken the first step toward the
-ActiveRecord-shaped stack `PLAN-PERSISTENCE.md` explicitly refuses, and
+ActiveRecord-shaped stack `docs/history/plan-persistence.md` explicitly refuses, and
 it inherits every downstream question (profile fields, soft delete,
 uniqueness, email change) with it.
 
@@ -248,7 +250,7 @@ is shareable, not written inline in the route.
 ## Where today's `Pg::Model` doesn't reach
 
 Three queries this design needs are outside the current API. `where` is
-equality + `AND` only, deliberately (`PLAN-PERSISTENCE.md` Phase 3, step
+equality + `AND` only, deliberately (`docs/history/plan-persistence.md` Phase 3, step
 9), and `update` takes an `id` with no additional guard.
 
 1. **TTL comparison** — `expires_at > now()` is not expressible. No API
@@ -288,7 +290,7 @@ equality + `AND` only, deliberately (`PLAN-PERSISTENCE.md` Phase 3, step
   Hash itself is made shareable — freezing the module does nothing,
   since Modules and Classes are always `Ractor.shareable?` regardless
   of their ivars. This is the exact bug documented twice already in
-  `docs/persistence-ractor-connections.md` ("Phase 4 finding" for
+  `docs/design/persistence-ractor-connections.md` ("Phase 4 finding" for
   `Model` config, "Phase 5 finding" for `Persistence`'s own
   `@configs`). Do not rediscover it a third time: register a freeze
   hook the way `Persistence::Registry.extended` does, so `Base#freeze!`
@@ -310,7 +312,7 @@ equality + `AND` only, deliberately (`PLAN-PERSISTENCE.md` Phase 3, step
   doc: Ruby 4 source is unreachable from that environment (the network
   policy answers 403 for `cache.ruby-lang.org` and
   `codeload.github.com`), and no 4.x toolchain was installed.
-  `PLAN-AUTH.md` Phase 5 carries it as an explicit step,
+  `docs/history/plan-auth.md` Phase 5 carries it as an explicit step,
   because it isn't only an auth question: `lib/monk/base.rb:79` reads
   `ENV["MONK_ENV"]` on every request, inside whichever worker Ractor is
   serving it, to decide whether to log. If a non-main Ractor on 4.0 sees
@@ -440,7 +442,7 @@ carries it through to the `login_tokens` row as a plain column. `GET
   with no token anywhere in the URL. This is redeem-then-redirect, the fix
   for `Referer` leakage this doc already flagged — the reason it needs
   prerequisite #2 (response headers) and `Context#redirect`, both Phase 9
-  in `PLAN-AUTH.md`.
+  in `docs/history/plan-auth.md`.
 
 Cookie `expires_at` mirrors the `sessions` row's `expires_at` (`Max-Age`
 matching the 14-day TTL) — an absolute expiry on the cookie itself, not
@@ -504,14 +506,14 @@ making the request.
 
 ## The WebSocket case: identity across a second process
 
-`docs/websocket.md` Phase 5 (step 20) left the token-carrier question for
+`docs/design/websocket.md` Phase 5 (step 20) left the token-carrier question for
 the WS handshake explicitly open, because a browser's `new WebSocket(url)`
 constructor cannot set custom headers — so the plain `Authorization:
 Bearer` pattern above doesn't transfer unchanged. It resolves without a
 third mechanism, from two facts neither doc previously used together:
 
 1. **Cookies are not port-scoped.** RFC 6265 matches a cookie's `Domain`
-   and `Path`, never its port. `docs/websocket.md`'s recommended topology —
+   and `Path`, never its port. `docs/design/websocket.md`'s recommended topology —
    a reverse proxy routing `/ws` on the *same host* to the WS process, and
    everything else to Kino — means the session cookie set by the HTTP
    process is sent automatically by the browser on the WS handshake
@@ -521,7 +523,7 @@ third mechanism, from two facts neither doc previously used together:
    (If the WS process instead lives on a distinct **subdomain** rather
    than a shared-host path, the cookie needs an explicit `Domain=` set to
    the shared parent domain, or this stops working — call this out in
-   whichever topology `PLAN-WEBSOCKET.md` Decision 4 lands on.)
+   whichever topology `docs/history/plan-websocket.md` Decision 4 lands on.)
 2. **Only the browser's `WebSocket` JS API is header-restricted.** A
    non-browser WS client — a server-to-server caller, a CLI tool — is
    making a plain HTTP request for the handshake and can set
@@ -552,7 +554,7 @@ against an explicit allowlist of the app's own origins**, rejecting the
 handshake (before it ever reaches `Monk::Auth.verify`) if `Origin` doesn't
 match. Unlike arbitrary headers, `Origin` is set by the browser itself and
 cannot be overridden by page JS, which is exactly why it's the accepted
-mitigation for CSWSH regardless of `SameSite` behavior. `PLAN-WEBSOCKET.md`
+mitigation for CSWSH regardless of `SameSite` behavior. `docs/history/plan-websocket.md`
 Phase 5 should carry this as an explicit step alongside step 20/21, not as
 a follow-on hardening pass.
 
@@ -594,7 +596,7 @@ a follow-on hardening pass.
    ("The three transports, one token model" above); WebSocket reuses
    whichever of the two the connecting client already has ("The WebSocket
    case"). Prerequisites #2–#4 (response headers, query/body parsing,
-   middleware) are therefore in scope for `PLAN-AUTH.md` now, not deferred
+   middleware) are therefore in scope for `docs/history/plan-auth.md` now, not deferred
    — see its Phase 9.
 2. **Rolling or absolute session expiry?** Recommendation: absolute.
    Rolling means a database write on every authenticated request, which
@@ -607,7 +609,7 @@ a follow-on hardening pass.
    minimal query surface.
 4. **Does `Monk::Auth` own the `login_tokens` schema, or ship it as a
    generator?** Leaning: ship migrations through `Monk::Scaffold`
-   (`PLAN-INIT.md`) as an opt-in template, so the app owns its schema
+   (`docs/history/plan-init.md`) as an opt-in template, so the app owns its schema
    and can add columns.
 5. **How many raw characters go into `prefix`?** Recommendation: 8,
    matching common practice (GitHub, Stripe). It's derived only at mint

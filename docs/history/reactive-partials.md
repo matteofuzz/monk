@@ -1,7 +1,9 @@
 # Reactive UI via server-pushed HTML partials over the WebSocket
 
-Status: built as `Monk::Live` (2026-09-19), see `docs/live.md` for usage and
-`PLAN-LIVE.md` / ADRs 0007-0011 for what was decided and measured. The text
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
+Status: built as `Monk::Live` (2026-09-19), see `docs/guides/live.md` for usage and
+`docs/history/plan-live.md` / ADRs 0007-0011 for what was decided and measured. The text
 below is the original proposal, kept as the record of why. Original status:
 proposed, no code written, 2026-09-17. Grew out of a monk_talk
 exploration session that started as "which vanilla-JS reactive library
@@ -10,13 +12,13 @@ fits a chat contact list" (Alpine, petite-vue, Lit, VanJS,
 else: the reactive layer doesn't belong in monk_talk's JS at all, it
 belongs here, next to `Monk::WebSocket` and `Monk::Views`. This doc is
 the first design pass at that, in the same "no code yet, write down the
-shape first" posture `docs/websocket.md` and `docs/chat-gap-analysis.md`
+shape first" posture `docs/design/websocket.md` and `docs/history/chat-gap-analysis.md`
 took before those were built.
 
 ## The problem this is answering
 
 monk_talk needs a contact list with live profiles/statuses in addition
-to the 1:1 messages `docs/chat-gap-analysis.md` already covers. Both are
+to the 1:1 messages `docs/history/chat-gap-analysis.md` already covers. Both are
 the same shape: **server-owned state that changes and needs to reach an
 open browser tab without a page reload.** The chat MVP solved this once,
 by hand, in `monk_talk/public/js/chat.js` — a hand-rolled `WebSocket`
@@ -71,7 +73,7 @@ owns.
 None of these are Monk-shaped: they either bring their own connection
 management (competing with `Monk::WebSocket`'s per-connection Ractor
 model) or their own view-rendering conventions (competing with
-`Monk::Views`' boot-time-compiled ERB, `docs/views.md`). The proposal
+`Monk::Views`' boot-time-compiled ERB, `docs/design/views.md`). The proposal
 below is to take the *narrowest* useful idea from this table — a
 morph-target primitive, à la idiomorph, driven by a Monk-defined message
 shape — rather than adopting a full library.
@@ -83,7 +85,7 @@ shape — rather than adopting a full library.
   `Monk::WebSocket::Server` connection, addressed to a DOM target:
   `{ type: "patch", target: "#contact-42", html: "<li>...</li>" }`.
 - Fan-out: reuses whatever `Monk::WebSocket::Registry` already does for
-  chat message delivery (`docs/chat-gap-analysis.md` §2) — a status
+  chat message delivery (`docs/history/chat-gap-analysis.md` §2) — a status
   change is just another event broadcast to the connections that should
   see it.
 - Out-of-band-style updates: the same entity (a contact's status dot)
@@ -104,7 +106,7 @@ shape — rather than adopting a full library.
   has this user's status visible), not just per state change. Needs a
   cost model before this is load-bearing for anything high-frequency
   (typing indicators are the extreme case — likely still fine if
-  throttled, matching how `docs/chat-gap-analysis.md` already treats
+  throttled, matching how `docs/history/chat-gap-analysis.md` already treats
   ephemeral vs. persisted messages differently).
 - **Ordering vs. optimistic client state.** `chat.js`'s
   `pendingByClientId` pattern exists because the client renders
@@ -114,22 +116,22 @@ shape — rather than adopting a full library.
   for the server round-trip.
 - **Where this lives relative to `Monk::WebSocket`.** Whether this is a
   new `Monk::WebSocket` feature (message type) or a separate layer on
-  top is undecided — needs its own design pass once `docs/websocket.md`'s
+  top is undecided — needs its own design pass once `docs/design/websocket.md`'s
   multi-process fan-out questions (RedisFanout, gap 6 in
-  `docs/chat-gap-analysis.md`) are settled, since a patch broadcast has
+  `docs/history/chat-gap-analysis.md`) are settled, since a patch broadcast has
   the same cross-process delivery problem a chat message does.
-- **No ADR yet.** Like `docs/websocket.md` before it, the "own
+- **No ADR yet.** Like `docs/design/websocket.md` before it, the "own
   primitive vs. adopt htmx/Datastar" call is exactly the kind of
   decision `docs/adr/` exists for, once this moves from proposal to
   build.
 
 ## Relation to other docs
 
-- `docs/chat-gap-analysis.md` — the 1:1 chat MVP this pattern would
+- `docs/history/chat-gap-analysis.md` — the 1:1 chat MVP this pattern would
   extend to cover contacts/statuses.
-- `docs/websocket.md` — the connection/process model this would build
+- `docs/design/websocket.md` — the connection/process model this would build
   on top of.
-- `docs/views.md` — the ERB compilation this would need to reuse for
+- `docs/design/views.md` — the ERB compilation this would need to reuse for
   fragment rendering, not just full-page rendering.
-- `docs/auth-sessions.md` — identity-on-the-socket, unchanged by this
+- `docs/design/auth-sessions.md` — identity-on-the-socket, unchanged by this
   proposal.

@@ -1,13 +1,15 @@
 # Persistence & database connections under Ractor isolation
 
+> **Status: implemented** as `Monk::Persistence::Pg` (usage: [`guides/persistence.md`](../guides/persistence.md), migrations: [`guides/migrations.md`](../guides/migrations.md)). The text below is the design and spike record; sections marked superseded are kept for rationale only.
+
 Status: Phase 0 spike ran on 2026-08-31 — **Sequel is not usable inside a
 non-main Ractor, confirmed empirically**. The "Resolved design" below is
 kept as the record of *why* Sequel was chosen and what it bought, but it no
 longer describes the plan going forward; see "Phase 0 result" for the
-finding and its consequences. Implementation plan: `PLAN-PERSISTENCE.md`.
+finding and its consequences. Implementation plan: `docs/history/plan-persistence.md`.
 Working branch: `main_dev/add_db_support`. No ADR yet. Open,
 not-yet-built ideas for this layer (OR support, batch update,
-transactions, ...) are tracked in `docs/persistence-evolutions.md`
+transactions, ...) are tracked in `docs/history/persistence-evolutions.md`
 rather than here.
 
 ## Usage: two steps
@@ -178,7 +180,7 @@ Four decisions locked in alongside this:
    (`>`, `IN`, `LIKE`, `OR`) is a query-condition DSL — real scope growth,
    left out until something actually needs it.
 
-   **Update (2026-09-07):** `docs/chat-gap-analysis.md` gap 1 was that
+   **Update (2026-09-07):** `docs/history/chat-gap-analysis.md` gap 1 was that
    "something" — a message-history query needs `id > $n`, `ORDER BY`, and
    `LIMIT`, and every one of them went through app-level raw SQL instead of
    `Model`. `where` now takes comparison operators (`gt`/`gte`/`lt`/`lte`/
@@ -202,14 +204,14 @@ Not yet decided/built: table-name inference (currently explicit-only, no
 pluralization magic) and `PG::Result`'s string-typed values need
 `conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)` set up
 per connection so `Hash` values come back as proper Ruby types rather than
-all-Strings — both are implementation details for `PLAN-PERSISTENCE.md`,
+all-Strings — both are implementation details for `docs/history/plan-persistence.md`,
 not open design questions.
 
 ## Phase 4 finding: freezing a Class does nothing for its ivars (2026-08-31)
 
 Resolves the "does `Ractor.make_shareable` on a Class actually protect its
 instance variables" question this document left open all the way back in
-its first analysis pass. Verified empirically (see `PLAN-PERSISTENCE.md`
+its first analysis pass. Verified empirically (see `docs/history/plan-persistence.md`
 Phase 4): **no.** `Ractor.shareable?(SomeClass)` is unconditionally `true`
 regardless of what's in its instance variables — Class/Module objects are
 always reported shareable. Calling `Ractor.make_shareable(SomeClass)`
@@ -264,7 +266,7 @@ from non-main Ractors (@configs from Monk::Persistence)` — meaning **every
 `Model` method, and `Monk::Persistence[]`/`.checkout` directly, was
 completely unusable from any real worker Ractor**, despite all of Phases
 1–4's tests passing, because none of them had ever run outside the main
-Ractor. This is exactly the failure mode Seam G (`PLAN-PERSISTENCE.md`)
+Ractor. This is exactly the failure mode Seam G (`docs/history/plan-persistence.md`)
 exists to catch — "the only place that proves the premise holds under real
 parallelism" — and it caught it on the first real spike.
 
@@ -281,7 +283,7 @@ Confirmed working end-to-end: real `Ractor.new` calls doing concurrent
 threads inside one spawned Ractor contending for that Ractor's own
 connection slot (proving `Monk::PersistenceTimeoutError` fires under real
 contention, not just a simulated one in the main Ractor) — see
-`PLAN-PERSISTENCE.md` Phase 5.
+`docs/history/plan-persistence.md` Phase 5.
 
 ## Phase 6 result: end-to-end proof in `monk-consumer-test` (2026-08-31)
 
@@ -316,7 +318,7 @@ just on a top-level constant instead of a class ivar. This landed with the
 gem-packaging work (`package-monk-as-local-gem`, PR #18) on `main`, before
 this branch existed, and was never caught because the test suite only
 ever calls `App.call(env)` directly in the main Ractor, and real-Kino
-verification has always been manual (`PLAN.md` step 21). Left unfixed
+verification has always been manual (`docs/history/core-plan.md` step 21). Left unfixed
 here deliberately — it's a `main` bug, not a persistence-branch one, and
 out of Phase 6's stated scope.
 
@@ -491,8 +493,8 @@ call, inside whichever Ractor makes it.
 ## Current state (superseded by "Resolved design," kept for rationale)
 
 There is no persistence layer in Monk today. `README.md` lists persistence as
-deliberately out of scope for v1. `NOTES-V2.md` lists "Database support,
-Postgres first" as a v2 candidate with no design attached. This document is
+deliberately out of scope for the initial core. `docs/history/notes-post-core.md` lists "Database support,
+Postgres first" as a post-core candidate with no design attached. This document is
 the first pass at that design space: how to support existing Ruby DB gems
 without weakening Monk's core guarantee — that a booted app is
 `Ractor.shareable?` and safely dispatchable across a Ractor worker pool.

@@ -5,8 +5,8 @@ module Monk
   module WebSocket
     # Cross-process fan-out for Registry, opt-in: require
     # "monk/websocket/redis_fanout" explicitly -- "monk/websocket" alone
-    # does not load this (PLAN-WEBSOCKET.md Phase 6, chosen over Postgres
-    # LISTEN/NOTIFY per docs/websocket.md Open Question 3).
+    # does not load this (docs/history/plan-websocket.md Phase 6, chosen over Postgres
+    # LISTEN/NOTIFY per docs/design/websocket.md Open Question 3).
     #
     # Wraps a Registry with the same public interface (#register,
     # #unregister, #count, #broadcast), so an app swaps which object it

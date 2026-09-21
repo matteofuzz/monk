@@ -6,7 +6,7 @@ methods — never at request time. That's not a performance preference, it's
 what Ractor-safety leaves available: a worker can't hold a template cache
 or install methods on a shared module. It also means a template with a
 syntax error fails `Monk.boot`, naming the file and line, instead of
-blowing up on a live request. See [`views.md`](views.md) for the full design.
+blowing up on a live request. See [`design/views.md`](../design/views.md) for the full design.
 
 ```ruby
 class App < Monk::Base

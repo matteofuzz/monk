@@ -1,7 +1,9 @@
 # Monk persistence — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `main_dev/add_db_support`. Companion doc:
-`docs/persistence-ractor-connections.md` (design rationale, facts gathered,
+`docs/design/persistence-ractor-connections.md` (design rationale, facts gathered,
 resolved decisions).
 
 **Superseded by a multi-backend refactor on `main_dev/add_db_support_multi`**
@@ -27,7 +29,7 @@ section for the design and the four decisions behind it. This revision
 supersedes the original Sequel-based phases; nothing below should be
 implemented against the pre-spike version.
 
-Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
+Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
 then the minimum code to pass it. Phase 0 is the exception — it's a spike,
 not TDD, and it gated everything after it.
@@ -37,7 +39,7 @@ not TDD, and it gated everything after it.
 - **Seam E — `Monk::Persistence`'s own public API**: registry and
   per-Ractor connection lifecycle (a `Mutex`-guarded raw `PG::Connection`,
   not a pool), tested directly against its own interface (mirrors how
-  `PLAN.md` Seam C tested `StateRactor`).
+  `docs/history/core-plan.md` Seam C tested `StateRactor`).
 - **Seam F — `Monk::Persistence::Model`**: the CRUD-sugar layer
   (`create`/`find`/`where`/`update`/`delete`) built on top of Seam E.
 - **Seam B (extended) — `.freeze!` / boot**: `Model` subclasses need their
@@ -45,7 +47,7 @@ not TDD, and it gated everything after it.
   boot, the same way routes already are.
 - **Seam G — real concurrent Ractor integration**: multiple real Ractors
   actually hitting a live Postgres through Seam E/F at once — the
-  persistence equivalent of `PLAN.md` Seam D, and the only place that
+  persistence equivalent of `docs/history/core-plan.md` Seam D, and the only place that
   proves the premise holds under real parallelism.
 - **Seam H — `monk-consumer-test` end-to-end**: the gem consumed from
   *outside* the repo, via the `path:` dependency, boots for real and
@@ -61,7 +63,7 @@ non-main ractor.` from any non-main Ractor, in every configuration tried
 the main Ractor first). Raw `pg` was verified as the fallback: two separate
 Ractors, each calling `PG.connect(...)` and running a real round-trip
 query, both succeeded with no Ractor errors. Full detail:
-`docs/persistence-ractor-connections.md` → "Phase 0 result."
+`docs/design/persistence-ractor-connections.md` → "Phase 0 result."
 
 ## Phase 1 — Registry & per-Ractor connection lifecycle (Seam E)
 
@@ -120,7 +122,7 @@ query, both succeeded with no Ractor errors. Full detail:
     `table_name`, not the class holding them
     (`subclass.table_name = Ractor.make_shareable(subclass.table_name)`).
     Verified empirically before implementing — see
-    `docs/persistence-ractor-connections.md` → "Phase 4 finding." This was
+    `docs/design/persistence-ractor-connections.md` → "Phase 4 finding." This was
     a real, live bug in Phases 2–3's `Model` classes (String `table_name`s
     were never actually safe to read from a worker Ractor). `.freeze!` now
     calls `Monk::Persistence::Model.freeze_all!`, which does this for every
@@ -137,7 +139,7 @@ query, both succeeded with no Ractor errors. Full detail:
     `.freeze!` — reproduced directly in the test suite while implementing.
     The shareability check has no such problem (pure class property,
     independent of any registry state) and is kept. Full reasoning:
-    `docs/persistence-ractor-connections.md` → "Phase 4 finding."
+    `docs/design/persistence-ractor-connections.md` → "Phase 4 finding."
 
 ## Phase 5 — Real Ractor integration against live Postgres (Seam G) — done
 
@@ -150,14 +152,14 @@ worker Ractor, despite all of Phases 1–4's tests passing (none had ever
 run outside the main Ractor). Fixed with `Monk::Persistence.
 freeze_registry!` (freezes `@configs` itself), called from `Base#freeze!`
 alongside `Model.freeze_all!`. Full detail:
-`docs/persistence-ractor-connections.md` → "Phase 5 finding."
+`docs/design/persistence-ractor-connections.md` → "Phase 5 finding."
 
 15. Multiple real Ractors calling `Model.find`/`.where` concurrently,
     against the live (Dockerized) Postgres from Phase 0, all succeed with
     correct, independent results — the actual proof this design exists
-    for. Mirrors `PLAN.md` step 19.
+    for. Mirrors `docs/history/core-plan.md` step 19.
 16. Multiple real Ractors calling `Model.create` with distinct data
-    concurrently never lose or corrupt a write — mirrors `PLAN.md` step
+    concurrently never lose or corrupt a write — mirrors `docs/history/core-plan.md` step
     20's race-safety proof, but for connections instead of `StateRactor`.
 17. Two real threads inside the *same* (really spawned) Ractor, contending
     for that Ractor's own connection slot via `Monk::Persistence.checkout`
@@ -180,7 +182,7 @@ alongside `Model.freeze_all!`. Full detail:
     `GET /users`. Full detail, including a separate pre-existing bug found
     on `main` (unrelated to persistence — `Monk::VERSION` isn't
     Ractor-shareable, breaks `GET /hello` under real `kino`, deliberately
-    left unfixed here): `docs/persistence-ractor-connections.md` → "Phase
+    left unfixed here): `docs/design/persistence-ractor-connections.md` → "Phase
     6 result."
 
 ## Explicitly out of scope for this plan

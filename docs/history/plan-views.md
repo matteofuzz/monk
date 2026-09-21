@@ -1,5 +1,7 @@
 # Monk views & assets — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `claude/html-css-js-erb-render-j9xyef`. **Status: Phases 1-6, 8 and 9
 are done; Phase 7 (SCSS) is dropped by decision, and Phase 2 (declared
 locals) is dropped by decision. Phase 0 has NOT run** — the implementing
@@ -8,11 +10,11 @@ gate everything below it is still outstanding, and the code shipped on
 3.3.6 measurements instead. Two of its four questions got answered
 sideways by `test/ractor_integration_test.rb` under a `#take` adaptation
 (rendering from a worker works; the frozen manifest is readable), and
-answering them cost two real bugs — see `docs/views.md`, "What the real
+answering them cost two real bugs — see `docs/design/views.md`, "What the real
 Ractor tests caught". Question 3 is moot now SCSS isn't built;
 question 4 (what an unbooted app does when a worker takes the first
 request) is untouched. Run Phase 0 on 4.0.6 before treating any of this as
-proven. Companion doc: `docs/views.md`
+proven. Companion doc: `docs/design/views.md`
 (why everything compiles at boot, the six spikes, the API as built, the two
 Ractor bugs the integration tests caught, and the SCSS design that wasn't
 built).
@@ -21,25 +23,25 @@ Three decisions taken after the plan was written, all narrowing it:
 
 - **No declared locals.** Data reaches a template as a `locals` hash and as
   ivars set in the route. Phase 2 below is dropped entirely; the
-  `docs/views.md` "Locals" section records what the machinery would have
+  `docs/design/views.md` "Locals" section records what the machinery would have
   bought and what its absence costs.
 - **Monk serves assets** (Phase 6 as written) rather than leaving it to
   nginx.
 - **No SCSS, plain CSS only.** Phase 7 is dropped; the design stays in
-  `docs/views.md` as a one-file addition if that changes.
+  `docs/design/views.md` as a one-file addition if that changes.
 
 Steps are struck through below where the decision dropped them, rather
 than deleted, so the plan still reads as the record of what was considered.
 
-Like `PLAN.md`, this develops in small, gradual, red → green cycles. Each
+Like `docs/history/core-plan.md`, this develops in small, gradual, red → green cycles. Each
 numbered step is one vertical slice: one failing test against its seam,
 then the minimum code to pass it. Phase 0 is the exception, per
-`PLAN-PERSISTENCE.md`'s and `PLAN-WEBSOCKET.md`'s precedent — it's a spike,
+`docs/history/plan-persistence.md`'s and `docs/history/plan-websocket.md`'s precedent — it's a spike,
 not TDD, and it gates everything below.
 
 Every phase runs on Monk's target Ruby, 4.0.6 (`.ruby-version`). The spikes
-behind `docs/views.md` ran on 3.3.6 because that was what the exploring
-session had; that is exactly the situation `PLAN-WEBSOCKET.md`'s rule
+behind `docs/design/views.md` ran on 3.3.6 because that was what the exploring
+session had; that is exactly the situation `docs/history/plan-websocket.md`'s rule
 ("Ractor behavior is measured on 4.x directly, never inferred from a 3.x
 result") exists for, so Phase 0 re-measures the Ractor-flavored ones before
 any of it is trusted.
@@ -61,19 +63,19 @@ each with a decision attached:
 3. **Does `sass-embedded` still fail inside a worker Ractor?** Expected yes
    (`Ractor::IsolationError`, third gem to do it). A surprising *pass*
    changes nothing about the design — boot-time compilation is still what
-   we want — but it should be recorded in `docs/ractor.md`.
+   we want — but it should be recorded in `docs/design/ractor.md`.
 4. **What actually happens when a first request hits an app that was never
    `Monk.boot`ed, in a worker Ractor,** now that `Base.call`'s lazy
    `freeze!` would drag template compilation in with it? Whatever the
    answer, it decides whether Phase 1 needs a guard that raises a clear
    `Monk::NotBootedError` instead of whatever Ruby produces.
 
-Record results in `docs/views.md` (replacing the provisional numbers) and
-any new general finding in `docs/ractor.md`.
+Record results in `docs/design/views.md` (replacing the provisional numbers) and
+any new general finding in `docs/design/ractor.md`.
 
 ## Decisions locked in before Phase 1
 
-From `docs/views.md`, so the TDD loop isn't relitigating them:
+From `docs/design/views.md`, so the TDD loop isn't relitigating them:
 
 - Templates compile at `Boot`, in the main Ractor, never at request time.
 - `<%= %>` escapes; `<%= raw(x) %>` doesn't. `Raw < String` with
@@ -90,7 +92,7 @@ From `docs/views.md`, so the TDD loop isn't relitigating them:
 - ~~SCSS is opt-in.~~ **Dropped** — plain CSS only.
 - Stdlib only for views and assets (`erb`, `cgi/escape`, `digest`). Note
   `cgi/escape`, not `erb/util`: `ERB::Util.html_escape` turned out not to
-  be Ractor-safe (`docs/views.md`, "What the real Ractor tests caught").
+  be Ractor-safe (`docs/design/views.md`, "What the real Ractor tests caught").
 
 ## Seams
 
@@ -213,7 +215,7 @@ Declared locals aren't built. What replaced the phase:
 45. Several real Ractors reading the manifest concurrently all get correct
     bodies and ETags
 46. An app with views, assets and SCSS all configured is `Ractor.shareable?`
-    after `Monk.boot`, and `kino --check` agrees (manual, per `PLAN.md` step
+    after `Monk.boot`, and `kino --check` agrees (manual, per `docs/history/core-plan.md` step
     21's precedent)
 
 ## Phase 9 — Scaffold, docs, demo
@@ -223,12 +225,12 @@ Declared locals aren't built. What replaced the phase:
     app that doesn't want them deletes two directories), and the scaffold
     test asserts the generated app boots and renders its own index page
 48. The generated layout demonstrates `<script type="module">` and an
-    import map, since that's the entire JS story (`docs/views.md`, "Vanilla
+    import map, since that's the entire JS story (`docs/design/views.md`, "Vanilla
     JS with no build step")
 49. `config.ru` in this repo grows an HTML route alongside the JSON ones, so
     `bin/server` shows a real page
 50. README gets a "Views" and a "Static assets" section; `CONTEXT.md` gets
-    the three vocabulary entries proposed in `docs/views.md`; `NOTES-V2.md`
+    the three vocabulary entries proposed in `docs/design/views.md`; `docs/history/notes-post-core.md`
     marks the templating candidate done
 51. An ADR for the two calls most likely to be questioned later:
     `docs/adr/0004-boot-time-template-compilation.md` and
@@ -236,7 +238,7 @@ Declared locals aren't built. What replaced the phase:
 
 ## Explicitly out of scope for this plan
 
-Everything listed under "Explicitly out of scope" in `docs/views.md`, plus:
-streaming/chunked bodies (a known v1 limitation tracked in `NOTES-V2.md`),
-live reloading of `.rb` files, and the CSRF view helper `docs/auth-sessions.md`
-will want — that belongs to `PLAN-AUTH.md`.
+Everything listed under "Explicitly out of scope" in `docs/design/views.md`, plus:
+streaming/chunked bodies (a known limitation of the initial core tracked in `docs/history/notes-post-core.md`),
+live reloading of `.rb` files, and the CSRF view helper `docs/design/auth-sessions.md`
+will want — that belongs to `docs/history/plan-auth.md`.

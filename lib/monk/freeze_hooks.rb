@@ -7,7 +7,7 @@ module Monk
     @freeze_hooks ||= []
   end
 
-  # Extracted out of Base#freeze! (PLAN-WEBSOCKET.md Phase 5 step 20):
+  # Extracted out of Base#freeze! (docs/history/plan-websocket.md Phase 5 step 20):
   # Monk::Base.freeze! calls this, but so can any process that never
   # touches Monk::Base at all -- Monk::WebSocket::Server's boot script,
   # per Decision 1 -- and still needs Monk::Auth/Monk::Persistence config
@@ -15,7 +15,7 @@ module Monk
   # unfrozen Hash, and the first Monk::Auth.verify call from inside a
   # connection Ractor raises Ractor::IsolationError -- the same bug class
   # already hit and fixed for persistence (Phase 4/5) and for Base-booted
-  # auth (PLAN-AUTH.md Phase 5 step 17).
+  # auth (docs/history/plan-auth.md Phase 5 step 17).
   def self.freeze!
     freeze_hooks.each(&:freeze_registry!)
     Persistence::Model.freeze_all!

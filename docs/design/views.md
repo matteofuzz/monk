@@ -14,14 +14,14 @@ This doc started as the design pass and now doubles as the record of what
 shipped and what was left on the table. Six throwaway spikes preceded it,
 plus two Ractor bugs the integration tests caught afterwards that no amount
 of design would have — see "What the real Ractor tests caught". Plan:
-`PLAN-VIEWS.md`.
+`docs/history/plan-views.md`.
 
 **Caveat on the spike results below.** Monk's target Ruby is 4.0.6
-(`.ruby-version`), and `PLAN-WEBSOCKET.md` sets the rule that Ractor
+(`.ruby-version`), and `docs/history/plan-websocket.md` sets the rule that Ractor
 behavior is measured on 4.x directly, never inferred from a 3.x result.
 The session that produced this doc had only Ruby 3.3.6 available, so every
 Ractor-flavored number below is provisional and re-run on 4.0.6 as Phase 0
-of `PLAN-VIEWS.md`. The findings split cleanly into two kinds: pure ERB /
+of `docs/history/plan-views.md`. The findings split cleanly into two kinds: pure ERB /
 asset mechanics (stdlib behavior, version-stable, safe to design against)
 and Ractor isolation behavior (must be re-measured). Each finding says
 which it is.
@@ -60,7 +60,7 @@ class/module's state from a non-main Ractor, and where a given Ruby version
 *doesn't* prohibit it, doing it anyway is a race across true-parallel
 workers); and it cannot even call into a library that memoizes an unfrozen
 object in a module ivar — the exact failure mode already recorded for
-Sequel (`docs/persistence-ractor-connections.md`) and `Rack::Utils`
+Sequel (`docs/design/persistence-ractor-connections.md`) and `Rack::Utils`
 (`lib/monk/base.rb`'s `parse_query_string` comment). Spike 4 below shows
 `sass-embedded` failing the same way, for the same reason.
 
@@ -118,7 +118,7 @@ Four things fall out of that, all verified:
   Modules and classes are always shareable; the per-request `Context` that
   actually runs the method is created inside the worker and never crosses a
   boundary, so it stays exempt exactly like it already is for routes
-  (`docs/ractor.md`, "Why `Context` is exempt").
+  (`docs/design/ractor.md`, "Why `Context` is exempt").
 
 Cost: **50,000 renders of a small template in 129ms (~2.6µs each)**, which
 is the point of compiling to a method rather than `eval`ing per request.
@@ -471,7 +471,7 @@ reproduces on 3.3.6 as well.
    `CGI.escapeHTML` produces byte-identical output and is safe; that's
    what `lib/monk/views.rb` uses, and the reason is a comment in the code
    rather than folklore. Now also recorded as a general finding in
-   `docs/ractor.md`.
+   `docs/design/ractor.md`.
 2. **An unfrozen root path in a module ivar breaks a worker before it
    reads anything else.** `Monk::Assets.root` (and `Monk::Views.root`) are
    read on the request path; left as ordinary unfrozen Strings they raised
@@ -490,7 +490,7 @@ reproduces on 3.3.6 as well.
    so the production-mode Ractor test passed while the mode people
    actually develop in was broken. Fixed with `Ractor.make_shareable`, and
    `test/ractor_integration_test.rb` now covers the development path too.
-   The general form is in `docs/ractor.md`.
+   The general form is in `docs/design/ractor.md`.
 
 A fourth was avoided by construction rather than found: every
 reader on these modules is a plain `attr_reader` over an eagerly
@@ -567,8 +567,8 @@ all), or anything about JavaScript beyond serving bytes.
   email body from a job)? It only needs a `Context`, so it's nearly free,
   but "a `Context` with no `env`" is a concept the framework doesn't have
   yet.
-- **Streaming responses** stay out (`NOTES-V2.md` lists the single-string
-  body as a known v1 limitation) — but a `render` that builds one big
+- **Streaming responses** stay out (`docs/history/notes-post-core.md` lists the single-string
+  body as a known limitation of the initial core) — but a `render` that builds one big
   string is the thing a future streaming body would have to unwind. Worth
   knowing before, not solving now.
 
@@ -578,7 +578,7 @@ Template engines other than ERB (Haml, Slim, Markdown); JS bundling,
 transpiling, or minification; CSS minification/autoprefixing; digested
 filenames and a build manifest; asset serving from S3/CDN; HTTP caching
 beyond ETag + max-age; partial-layout nesting more than one level;
-`content_for`-style named slots; i18n; form/CSRF helpers (`docs/auth-sessions.md`
+`content_for`-style named slots; i18n; form/CSRF helpers (`docs/design/auth-sessions.md`
 owns CSRF, and its double-submit design will want one small view helper —
 that helper belongs to auth's plan, not this one); live code reloading of
 `.rb` files.

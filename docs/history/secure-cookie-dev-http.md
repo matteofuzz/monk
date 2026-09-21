@@ -1,5 +1,7 @@
 # Bug: `Secure` session cookie is silently dropped in dev over plain HTTP
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: reported 2026-09-18, not yet fixed. Found during manual testing
 of `monk_talk`'s V0-1-1 single-socket chat refactor
 (`monk_talk/doc/v0-1-1_single-socket_refactor_plan.md`, "Post-
@@ -34,7 +36,7 @@ end
 
 `Secure` cookies are, by spec, only supposed to be set over HTTPS — but
 `bin/server` serves dev over plain `http://localhost:PORT`
-(`docs/deploying.md`'s "in production a reverse proxy terminates TLS" is
+(`docs/guides/deploying.md`'s "in production a reverse proxy terminates TLS" is
 explicitly a *production* concern; dev has no TLS at all). Chromium and
 Firefox both special-case `localhost` (and `127.0.0.1`) as a
 "potentially trustworthy origin" and accept a `Secure` cookie set over
@@ -97,10 +99,10 @@ end
 ```
 
 Behind a reverse proxy that terminates TLS and forwards plain HTTP to
-Kino (`docs/deploying.md` §3's documented production topology), this
+Kino (`docs/guides/deploying.md` §3's documented production topology), this
 needs the proxy to set `X-Forwarded-Proto` and Rack to normalize it into
 `rack.url_scheme` — confirm that's already true of the deployment setups
-`docs/deploying.md` documents before relying on this, since a
+`docs/guides/deploying.md` documents before relying on this, since a
 misconfigured proxy would silently downgrade production cookies to
 non-`Secure` instead of the other way around. That check is the main
 reason this is being filed rather than fixed inline: it changes

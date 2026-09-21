@@ -4,8 +4,8 @@ Server-owned state changes, and every open browser tab showing it updates by
 itself: the server renders an HTML fragment with the same views it already
 has, pushes it over the WebSocket, and a small client morphs it into the page.
 No polling, no client-side copy of the data to keep in sync, no JavaScript of
-your own. Design rationale is in `docs/reactive-partials.md` and ADRs
-0007–0011; the phase-by-phase build is `PLAN-LIVE.md`. This page is how to use
+your own. Design rationale is in `docs/history/reactive-partials.md` and ADRs
+0007–0011; the phase-by-phase build is `docs/history/plan-live.md`. This page is how to use
 it.
 
 ```

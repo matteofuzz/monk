@@ -1,10 +1,12 @@
 # Building a 1:1 chat app on Monk — gap analysis
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: analysis, 2026-09-07. No code written. Scope of the exercise: a
 chat product with **1:1 text messages only**, served to two kinds of
 client — a browser and a CLI. The question this doc answers is not "how
 would the app be structured" alone, but "what does Monk already cover,
-and where does it come up short" — the same posture `docs/websocket.md`
+and where does it come up short" — the same posture `docs/design/websocket.md`
 took before that feature was built.
 
 ## 1. What Monk already covers
@@ -18,7 +20,7 @@ took before that feature was built.
 | Live delivery | `Monk::WebSocket` (own process, one Ractor per connection, `Registry` fan-out) | works, single process |
 | Project skeleton | `monk new chat --auth` | ready |
 
-`docs/auth-sessions.md` already resolved the part that usually costs the
+`docs/design/auth-sessions.md` already resolved the part that usually costs the
 most: a browser-originated WS connection carries the `session_token`
 cookie automatically (cookies aren't port-scoped, so this holds in
 development with no proxy at all), and a non-browser client sets
@@ -37,7 +39,7 @@ Three moving parts, no infrastructure Monk doesn't already assume:
   source of truth and the offline/backfill path.
 
 In production a reverse proxy routes `/ws` to the WS process and
-everything else to Kino, **on the same host** (`docs/deploying.md` §3).
+everything else to Kino, **on the same host** (`docs/guides/deploying.md` §3).
 
 The decision that keeps the MVP small: **messages are written over the
 WebSocket only, never over HTTP.** This is now a choice, not a forced
@@ -93,7 +95,7 @@ needs no ack protocol.
 **Browser** — ERB views plus one ES module (`public/js/chat.js`) using
 the stock `WebSocket` API; the session cookie rides along by itself. No
 build step, consistent with this repo's import-map convention
-(`docs/views.md`).
+(`docs/design/views.md`).
 
 **CLI** — login is `POST /auth/request`, then the token (printed or
 emailed) is redeemed at `GET /auth/callback/:token`, and the resulting
@@ -115,7 +117,7 @@ Concrete, ordered by how likely a chat workload is to hit them.
 1. ~~**`Pg::Model` cannot express message history.**~~ **Fixed
    2026-09-07.** `where` now supports comparison operators (`gt`/`gte`/
    `lt`/`lte`/`ne`), `IN`, `ORDER BY`, and `LIMIT` — see
-   `docs/persistence-ractor-connections.md` decision 4's update. `OR` is
+   `docs/design/persistence-ractor-connections.md` decision 4's update. `OR` is
    still out of scope: a sender/recipient-pair query still needs a raw
    `Pg.checkout` block in an app-level repository object.
 2. ~~**`Registry` fan-out is fragile under a race.**~~ **Fixed
@@ -154,7 +156,7 @@ Concrete, ordered by how likely a chat workload is to hit them.
    message into many small frames would have silently bypassed the
    per-frame check.
 6. ~~**One WebSocket process, structurally.**~~ **Fixed 2026-09-09.**
-   `Monk::WebSocket::RedisFanout` (`PLAN-WEBSOCKET.md` Phase 6 — Redis
+   `Monk::WebSocket::RedisFanout` (`docs/history/plan-websocket.md` Phase 6 — Redis
    pub/sub, not Postgres `LISTEN`/`NOTIFY`, per that doc's Open Question 3)
    wraps a `Registry` with the identical `#register`/`#broadcast`
    interface, tested end-to-end against a real Redis, and every scaffolded

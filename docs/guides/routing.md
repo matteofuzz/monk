@@ -48,7 +48,7 @@ resources("/orders", OrdersController, :index, :create) # only these two
 
 # Context
 
-Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, `settings` (see [`settings.md`](settings.md)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views-and-assets.md`](views-and-assets.md)). There are two ways to write a route block:
+Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, `settings` (see [`settings.md`](settings.md)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views.md`](views.md)). There are two ways to write a route block:
 
 - **Zero-arg** (`get("/x") { params }`) — the common case; helpers are called bare via `instance_exec`.
 - **One-arg** (`get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.

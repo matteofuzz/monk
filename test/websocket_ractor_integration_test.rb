@@ -2,8 +2,8 @@ require_relative "test_helper"
 require "monk/websocket"
 require "socket"
 
-# The committed, automated version of docs/websocket.md's "End-to-end
-# spike" (PLAN-WEBSOCKET.md Seam U) -- the only place non-blocking accept
+# The committed, automated version of docs/design/websocket.md's "End-to-end
+# spike" (docs/history/plan-websocket.md Seam U) -- the only place non-blocking accept
 # and per-connection failure isolation are proven under real concurrency,
 # in the same spirit as test/ractor_integration_test.rb's hammer test for
 # StateRactor.
@@ -91,7 +91,7 @@ class WebSocketRactorIntegrationTest < Minitest::Test
     wait_until { registry.count(:room1) == 3 }
 
     # Neither the main Ractor nor any connection's own -- a fourth,
-    # independent Ractor performs the broadcast (PLAN-WEBSOCKET.md step
+    # independent Ractor performs the broadcast (docs/history/plan-websocket.md step
     # 28's literal wording), proving Registry's own synchronous "ask"
     # shape is safe from any caller, not just the ones already exercised.
     broadcaster = Ractor.new(registry) { |r| r.broadcast(:room1, "hello everyone") }

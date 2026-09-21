@@ -7,7 +7,7 @@ module Monk
       # Applies/rolls back versioned .sql file pairs against a registered
       # Monk::Persistence::Pg database. Deliberately not a DSL: each
       # <version>_<name>.up.sql / .down.sql pair is sent to Postgres
-      # verbatim -- see PLAN-MIGRATIONS.md for the full rationale.
+      # verbatim -- see docs/history/plan-migrations.md for the full rationale.
       class Migrator
         FILENAME = /\A(\d+)_(.+)\.(up|down)\.sql\z/
 

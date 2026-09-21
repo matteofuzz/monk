@@ -2,8 +2,8 @@ require_relative "test_helper"
 require "json"
 require "monk/auth"
 
-# End-to-end over App.call(env), per PLAN-AUTH.md Phase 9 step 36: the
-# browser/cookie path, exercised exactly as docs/auth-sessions.md's
+# End-to-end over App.call(env), per docs/history/plan-auth.md Phase 9 step 36: the
+# browser/cookie path, exercised exactly as docs/design/auth-sessions.md's
 # "Proposed API" describes it, distinct from the Bearer round trip already
 # proven in auth_ractor_integration_test.rb.
 class AuthCookieFlowTest < Minitest::Test

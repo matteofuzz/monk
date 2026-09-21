@@ -1,5 +1,7 @@
 # Persistence — open list of possible evolutions
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Status: living list, not a roadmap or a commitment. A place to record
 things considered for `Monk::Persistence::Pg::Model` (and the underlying
 `Pg`/`Registry` layer) that aren't built yet, so the reasoning behind
@@ -11,8 +13,8 @@ it comes up in discussion/review; when one is actually built, strike it
 
 **Status**: open, not started. **Complexity**: high.
 
-`where` is AND-only (`docs/persistence-ractor-connections.md` decision 4,
-and its 2026-09-07 update after gap 1 of `docs/chat-gap-analysis.md` added
+`where` is AND-only (`docs/design/persistence-ractor-connections.md` decision 4,
+and its 2026-09-07 update after gap 1 of `docs/history/chat-gap-analysis.md` added
 comparison operators/`IN`/`ORDER BY`/`LIMIT`). A query like "sender=A and
 recipient=B, or the reverse" — needed for a 1:1 chat conversation's full
 history — has no representation in a flat conditions hash and still falls
@@ -23,7 +25,7 @@ flat hash" and becomes a real expression-tree DSL — grouping, precedence,
 how deep nesting is allowed before it's just SQL with extra steps. No
 syntax has been chosen (nested arrays? `Sequel`-style `.|(...)`? something
 Monk-specific?); this is a real design decision, not just an
-implementation task, and the kind of scope growth `PLAN-PERSISTENCE.md`
+implementation task, and the kind of scope growth `docs/history/plan-persistence.md`
 explicitly deferred ("no query-condition DSL beyond equality + AND").
 
 ## 2. Batch update
@@ -64,7 +66,7 @@ connection, per Kino's default) could end up issuing commands on the same
 live connection concurrently: the exact wire-protocol-corruption failure
 the `SizedQueue`-based checkout exists to prevent in the first place (same
 failure category as the Phase 4/5 Ractor-shareability bugs recorded in
-`docs/persistence-ractor-connections.md`, just about thread-locality
+`docs/design/persistence-ractor-connections.md`, just about thread-locality
 instead).
 
 Also needs an explicit decision before any code gets written: nested
@@ -74,7 +76,7 @@ counter, fits this codebase's "small primitive" style), or get real
 territory — meaningfully more machinery, no known need for it yet).
 
 Explicitly still out regardless of how this lands: cross-database
-transactions (`PLAN-PERSISTENCE.md`, "Explicitly out of scope" — no
+transactions (`docs/history/plan-persistence.md`, "Explicitly out of scope" — no
 distributed/2PC story, and none planned).
 
 ## (room for more)

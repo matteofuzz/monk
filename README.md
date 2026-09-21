@@ -16,7 +16,7 @@ bundle install
 bin/server           # -> http://localhost:9292/hello
 ```
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, Redis and live updates: see [`docs/scaffolding.md`](docs/scaffolding.md).
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md).
 
 All `monk` commands and flags are listed by:
 
@@ -46,25 +46,25 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 
 | Feature | What it is | Opt-in | Guide |
 |---|---|---|---|
-| Routing, context, errors | `get`/`post`/…, path params, `halt`, `json`, `error`, experimental `resources` | — | [`routing.md`](docs/routing.md) |
-| Boot and shared state | `Monk.boot`, Ractor-shareability checks, `Monk::StateRactor` | — | [`boot-and-shared-state.md`](docs/boot-and-shared-state.md) |
-| Settings | `Monk::Settings`, `MONK_ENV`, env-var config validated at boot | — | [`settings.md`](docs/settings.md) |
-| Views and static assets | ERB compiled at boot, escaped by default, layouts/partials, frozen asset manifest | — | [`views-and-assets.md`](docs/views-and-assets.md) |
-| Logging | request log per environment, `Monk::Log.debug`/`info`/`warn`/`error` | — | [`logging.md`](docs/logging.md) |
-| Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/persistence.md) |
-| Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/migrations.md) |
-| Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/auth.md) |
-| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis fan-out | `require "monk/websocket"`; Redis fan-out: `require "monk/websocket/redis_fanout"` and the `redis` gem | [`websocket-server.md`](docs/websocket-server.md) |
-| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis | [`live.md`](docs/live.md) |
-| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | — (the `monk` command; flags `--postgres`, `--auth`, `--redis`, `--live`) | [`scaffolding.md`](docs/scaffolding.md) |
+| Routing, context, errors | `get`/`post`/…, path params, `halt`, `json`, `error`, experimental `resources` | — | [`routing.md`](docs/guides/routing.md) |
+| Boot and shared state | `Monk.boot`, Ractor-shareability checks, `Monk::StateRactor` | — | [`boot-and-shared-state.md`](docs/guides/boot-and-shared-state.md) |
+| Settings | `Monk::Settings`, `MONK_ENV`, env-var config validated at boot | — | [`settings.md`](docs/guides/settings.md) |
+| Views and static assets | ERB compiled at boot, escaped by default, layouts/partials, frozen asset manifest | — | [`views.md`](docs/guides/views.md) |
+| Logging | request log per environment, `Monk::Log.debug`/`info`/`warn`/`error` | — | [`logging.md`](docs/guides/logging.md) |
+| Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/guides/persistence.md) |
+| Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/guides/migrations.md) |
+| Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
+| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis fan-out | `require "monk/websocket"`; Redis fan-out: `require "monk/websocket/redis_fanout"` and the `redis` gem | [`websocket.md`](docs/guides/websocket.md) |
+| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis | [`live.md`](docs/guides/live.md) |
+| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | — (the `monk` command; flags `--postgres`, `--auth`, `--redis`, `--live`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 
 ## More documentation
 
 - [`docs/framework-comparison.md`](docs/framework-comparison.md): Monk vs. Sinatra vs. Rails, with LOC per module.
-- [`docs/deploying.md`](docs/deploying.md): worked deployment examples.
-- [`docs/ractor.md`](docs/ractor.md): how Monk uses Ruby's `Ractor`.
+- [`docs/guides/deploying.md`](docs/guides/deploying.md): worked deployment examples.
+- [`docs/design/ractor.md`](docs/design/ractor.md): how Monk uses Ruby's `Ractor`.
 - [`docs/adr/`](docs/adr) and [`CONTEXT.md`](CONTEXT.md): architectural decisions and domain vocabulary.
-- Design docs and phase-by-phase plans behind each feature: [`docs/views.md`](docs/views.md), [`docs/auth-sessions.md`](docs/auth-sessions.md), [`docs/websocket.md`](docs/websocket.md), [`docs/persistence-ractor-connections.md`](docs/persistence-ractor-connections.md), [`docs/reactive-partials.md`](docs/reactive-partials.md), and the `PLAN-*.md` files.
+- Design docs and phase-by-phase plans behind each feature: [`docs/design/views.md`](docs/design/views.md), [`docs/design/auth-sessions.md`](docs/design/auth-sessions.md), [`docs/design/websocket.md`](docs/design/websocket.md), [`docs/design/persistence-ractor-connections.md`](docs/design/persistence-ractor-connections.md), and the phase-by-phase plans and archived notes in [`docs/history/`](docs/history).
 - [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Working on this repo
@@ -79,4 +79,4 @@ More (server modes, Docker) in [`docs/development.md`](docs/development.md).
 
 ## Status
 
-v1 is done (`PLAN.md`); Monk is now on v2, worked one candidate at a time. The living list is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from `NOTES-V2.md`). Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, and live updates (`Monk::Live`, as of 2026-09-19).
+Monk is **pre-1.0** (see `lib/monk/version.rb` and the [changelog](CHANGELOG.md)): the API may still change between minor versions. The core is described in [`docs/history/core-plan.md`](docs/history/core-plan.md), and further work is taken one candidate at a time. The living list is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from [`docs/history/notes-post-core.md`](docs/history/notes-post-core.md)). Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, and live updates (`Monk::Live`, as of 2026-09-19).

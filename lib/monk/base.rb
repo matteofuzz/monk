@@ -200,7 +200,7 @@ module Monk
 
       # Query string, then a JSON body on top (POST /auth/request's
       # redirect_to; a callback token as ?token=... instead of a path
-      # segment -- PLAN-AUTH.md Phase 9 step 29). Path segment params
+      # segment -- docs/history/plan-auth.md Phase 9 step 29). Path segment params
       # always win the final merge in #dispatch -- the route's own
       # declared intent outranks anything a caller supplies.
       def parse_params(env)

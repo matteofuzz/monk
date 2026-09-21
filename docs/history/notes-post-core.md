@@ -1,8 +1,10 @@
-# Monk V2 — Notes
+# Monk — post-core notes
 
-Scratch notes for ideas to consider once V1 is settled. Not a plan yet — see `PLAN.md` for that once V2 work actually starts.
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-## Known limitations (v1)
+Scratch notes for ideas to consider once the initial core was settled. Not a plan yet — see `docs/history/core-plan.md` for that once this work actually starts.
+
+## Known limitations of the initial core
 
 Grounded in the current `lib/monk` implementation, not just the README's explicit scope cuts (those are listed separately below).
 
@@ -20,7 +22,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
 - **Logging is fixed** — stdout only, hardcoded `ENV["MONK_ENV"] == "production"` check to disable it; no pluggable logger, level, or structured format.
 - **No streaming/chunked responses** — the body is always a single-element array wrapping one string.
 
-## Candidates (from v1's deliberate scope cuts)
+## Candidates (from the initial core's deliberate scope cuts)
 
 - HTML templating — **done 2026-09-05**, widened to the whole
   server-rendered surface: ERB views compiled at boot into methods on a
@@ -29,7 +31,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   served from a boot-built frozen manifest with ETag/304 and digest-stamped
   URLs. `lib/monk/views.rb`, `lib/monk/assets.rb`, `test/views_test.rb`,
   `test/assets_test.rb`, plus two real-Ractor cases. Design and the record
-  of what was left out: `docs/views.md`; plan: `PLAN-VIEWS.md`.
+  of what was left out: `docs/design/views.md`; plan: `docs/history/plan-views.md`.
   Deliberately not built: SCSS (designed, one file away, but plain CSS
   wins for now), declared/strict locals, and any JavaScript tooling —
   ES modules and import maps instead, demonstrated by `monk new` and this
@@ -49,8 +51,8 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   all three transports (passwordless, TTL'd tokens; `Authorization:
   Bearer` for API/S2S, an `HttpOnly` cookie + double-submit CSRF for
   browsers, and identity for `Monk::WebSocket` connections resolved via
-  the same cookie, gated by `Origin` validation): `docs/auth-sessions.md` +
-  `PLAN-AUTH.md`. Not implemented; needs `Context#env` and a boot-frozen
+  the same cookie, gated by `Origin` validation): `docs/design/auth-sessions.md` +
+  `docs/history/plan-auth.md`. Not implemented; needs `Context#env` and a boot-frozen
   config first.
 - Caching system
 - Async jobs
@@ -61,7 +63,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   set — `development`/`test`/`staging`/`production` — exposed as
   `Monk.env`), deliberately kept separate from `Persistence.register`/
   `Auth.configure`: `docs/adr/0006-settings-alongside-persistence-and-auth-config.md`
-  + `PLAN-CONFIG.md` (all 8 phases), glossary in `CONTEXT.md`. Verified
+  + `docs/history/plan-config.md` (all 8 phases), glossary in `CONTEXT.md`. Verified
   end to end against `../monk-consumer-test` under a real `kino` worker
   pool, the same way the gem-packaging line above was.
 - WebSocket support, with session persistence — design proposed (separate
@@ -72,7 +74,7 @@ Grounded in the current `lib/monk` implementation, not just the README's explici
   the same day proved the hand-rolled alternative (RFC 6455 over a real
   `TCPServer`, one dedicated Ractor per connection) works correctly,
   including true concurrency and isolated per-connection failure:
-  `docs/websocket.md`. Implementation plan: `PLAN-WEBSOCKET.md`. Not
+  `docs/design/websocket.md`. Implementation plan: `docs/history/plan-websocket.md`. Not
   implemented yet.
 
 ## Open questions

@@ -33,7 +33,7 @@ end
 Two Postgres tables back this — `login_tokens` (single-use, short-lived)
 and `sessions` (multi-use, long-lived). `monk new --auth` scaffolds a
 migration for both; otherwise create them yourself the same way persistence
-tables aren't generated either — schema in [`auth-sessions.md`](auth-sessions.md).
+tables aren't generated either — schema in [`design/auth-sessions.md`](../design/auth-sessions.md).
 
 Both an `Authorization: Bearer <token>` header and a `session_token`
 cookie work identically via `current_subject`/`require_user!`. For
@@ -43,4 +43,4 @@ browsers, `set_session_cookie(session)` sets that cookie (plus a readable
 requests, since a forged cross-origin request has no way to set that
 header. `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows. Full design and phase-by-phase
-build: [`auth-sessions.md`](auth-sessions.md) / `PLAN-AUTH.md`.
+build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/plan-auth.md`.

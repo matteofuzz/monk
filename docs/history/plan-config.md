@@ -1,10 +1,12 @@
 # Monk Settings & MONK_ENV — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Companion doc: `docs/adr/0006-settings-alongside-persistence-and-auth-config.md`
 (why `Settings` is a new facility rather than a retrofit of `Persistence`/
 `Auth`'s own config). Glossary: `CONTEXT.md` — **Settings**, **MONK_ENV**.
 
-Like `PLAN-AUTH.md`, this develops in small, gradual, red → green cycles.
+Like `docs/history/plan-auth.md`, this develops in small, gradual, red → green cycles.
 Each numbered step is one vertical slice: one failing test against its
 seam, then the minimum code to pass it.
 
@@ -26,7 +28,7 @@ up front rather than discovered mid-implementation.
    serving; only `development` is verbose/dev-mode.
 3. **`base.rb`'s `log_request` moves to the boot-frozen pattern
    `assets.rb` already uses** — `ENV["MONK_ENV"]` is main-Ractor state
-   (`docs/persistence-ractor-connections.md`), so a per-request read
+   (`docs/design/persistence-ractor-connections.md`), so a per-request read
    inside a worker Ractor is the same class of bug ADR 0003 exists to
    catch, just not yet caught.
 4. **`test/test_helper.rb`'s forced default becomes `MONK_ENV=test`**,
@@ -44,7 +46,7 @@ up front rather than discovered mid-implementation.
    "z" }`. Mirrors `Auth.configure`'s "several related declarations, one
    block" shape.
 8. **Flat keys, no namespacing. String values only, no type coercion.**
-   Both are deliberate v1 scope cuts, not oversights — see "Explicitly
+   Both are deliberate scope cuts of the initial core, not oversights — see "Explicitly
    out of scope" below.
 9. **Required keys fail fast at `Boot`** (ADR 0003's posture), not at
    `configure` time — `config/settings.rb` runs very early (every entry
@@ -58,7 +60,7 @@ up front rather than discovered mid-implementation.
     global code) and `Context#settings` (per-request, mirroring
     `Context#params`/`#env`).
 12. **`monk` the gem never depends on `dotenv`.** Adoption is a
-    scaffold/docs concern only — consistent with `docs/deploying.md`,
+    scaffold/docs concern only — consistent with `docs/guides/deploying.md`,
     where hosting platforms inject env vars directly and dotenv is
     never mentioned.
 13. **A new `config/settings.rb` ships in the *base* scaffold skeleton**
@@ -75,7 +77,7 @@ up front rather than discovered mid-implementation.
 - **Seam B — `Boot` integration**: required-key fail-fast validation and
   `Ractor.make_shareable` on the frozen values, wired through the
   existing `Monk.freeze_hooks` mechanism (`Base#freeze!`), the same seam
-  `Assets` and (per `PLAN-AUTH.md` Phase 5) `Auth` use.
+  `Assets` and (per `docs/history/plan-auth.md` Phase 5) `Auth` use.
 - **Seam C — `Monk.env`**: built on `Settings` (the `:monk_env` key), the
   four-value set, the `development` default, and the predicate methods.
 - **Seam D — existing consumers migrate**: `base.rb#log_request` and
@@ -83,13 +85,13 @@ up front rather than discovered mid-implementation.
   "production"` checks to `Monk.env`-based ones; `test_helper.rb`'s
   default flips to `"test"`.
 - **Seam E — `Context#settings`**: per-request read access, exercised as
-  observable HTTP behavior the way `PLAN.md` Seam A tests routes.
+  observable HTTP behavior the way `docs/history/core-plan.md` Seam A tests routes.
 - **Seam F — scaffold**: `config/settings.rb` in the base skeleton,
   `require_relative`'d by every generated entry point.
 - **Seam G — real Ractor integration**: `Settings`/`Monk.env` read
   correctly from a real worker Ractor after `Boot` — the recurring
   hazard this codebase keeps re-discovering
-  (`docs/persistence-ractor-connections.md`), so it needs its own proof
+  (`docs/design/persistence-ractor-connections.md`), so it needs its own proof
   here rather than an assumption carried over from Assets/Persistence.
 - **Seam H — `monk-consumer-test` end-to-end proof**: the gem consumed
   from outside the repo, a generated app reading its own `Settings` and
@@ -118,11 +120,11 @@ up front rather than discovered mid-implementation.
    `Monk.freeze_hooks`, mirroring `Assets`): every declared `required`
    key is checked present in `ENV` and a missing one raises a precise
    error naming it (ADR 0003's fail-fast spirit, and the same shape as
-   `PLAN-AUTH.md` step 5's `Auth.configure` validation).
+   `docs/history/plan-auth.md` step 5's `Auth.configure` validation).
 6. The frozen value hash is `Ractor.make_shareable`'d at that point —
    assert a real worker Ractor can read a previously-declared key after
    `Boot` without `Ractor::IsolationError` (this phase's version of the
-   bug `docs/persistence-ractor-connections.md` keeps naming).
+   bug `docs/design/persistence-ractor-connections.md` keeps naming).
 7. Calling `Monk::Settings.configure` again after `Boot` raises — the
    registry is closed the same moment routes and views are.
 
@@ -153,7 +155,7 @@ up front rather than discovered mid-implementation.
 12. `base.rb`'s `log_request` reads `Monk.env` once at `Boot` (stored in
     a class ivar alongside `routes`/`error_handlers`) instead of
     `ENV["MONK_ENV"]` per request — closes the inconsistency
-    `PLAN-AUTH.md` step 20 flagged, and makes `test/test_helper.rb`'s
+    `docs/history/plan-auth.md` step 20 flagged, and makes `test/test_helper.rb`'s
     existing comment ("Monk reads MONK_ENV once, at boot, never per
     request") true for the first time.
 13. `test/test_helper.rb` line 2 becomes `ENV["MONK_ENV"] ||= "test"`.
@@ -161,7 +163,7 @@ up front rather than discovered mid-implementation.
     `with_monk_env("development") { ... }` still passes unchanged.
 14. Real-Ractor regression: assert `log_request`'s suppression under
     `MONK_ENV=production` still holds under a real `kino`-style worker
-    pool — this is the exact scenario `PLAN-AUTH.md` step 20 said could
+    pool — this is the exact scenario `docs/history/plan-auth.md` step 20 said could
     be silently broken and explicitly punted on.
 
 ## Phase 5 — `Context#settings` (Seam E)
@@ -200,10 +202,10 @@ up front rather than discovered mid-implementation.
 21. A `DemoApp`-style app (mirroring `config.ru`'s existing demo)
     declares a `Settings` key, boots, and is served under a real worker
     Ractor pool; concurrent requests each read the same frozen value
-    correctly — the analogue of `PLAN.md` Seam D and `PLAN-AUTH.md`
+    correctly — the analogue of `docs/history/core-plan.md` Seam D and `docs/history/plan-auth.md`
     Phase 7.
 22. Same proof for `Monk.env`'s predicates specifically, since Phase 4's
-    migration is exactly the code path `PLAN-AUTH.md` step 20 worried
+    migration is exactly the code path `docs/history/plan-auth.md` step 20 worried
     about.
 
 ## Phase 8 — `monk-consumer-test` end-to-end proof (Seam H)
@@ -211,8 +213,8 @@ up front rather than discovered mid-implementation.
 23. A generated app (via `monk new`, no flags) has a working
     `config/settings.rb`, declares one custom setting alongside
     `MONK_ENV`, and serves a route reading both under a real `kino`
-    pool — the same shape as `PLAN-AUTH.md` Phase 10 and
-    `PLAN-WEBSOCKET.md` Phase 8.
+    pool — the same shape as `docs/history/plan-auth.md` Phase 10 and
+    `docs/history/plan-websocket.md` Phase 8.
 
 ## Open questions
 
@@ -234,9 +236,9 @@ up front rather than discovered mid-implementation.
 
 ## Explicitly out of scope for this plan
 
-- **Type coercion** (Integer/Boolean settings) — string-only for v1; see
+- **Type coercion** (Integer/Boolean settings) — string-only for now; see
   `CONTEXT.md`'s **Settings** entry. Revisit only if a real need shows
   up.
-- **Namespaced/nested keys** — flat only for v1.
+- **Namespaced/nested keys** — flat only for now.
 - **Retrofitting `Persistence.register`/`Auth.configure`** to route
   through `Settings` — see ADR 0006. Not planned, not a deferred phase.

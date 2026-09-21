@@ -1,10 +1,12 @@
 # Monk::Live — implementation plan (first draft)
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: not yet created — nothing in this plan is implemented. Companion
-doc: `docs/reactive-partials.md` (the why, prior art, and the sketch this
+doc: `docs/history/reactive-partials.md` (the why, prior art, and the sketch this
 plan turns into steps).
 
-Same posture as `PLAN-WEBSOCKET.md`: small red → green slices, one failing
+Same posture as `docs/history/plan-websocket.md`: small red → green slices, one failing
 test per seam, minimum code to pass. Every phase runs on Ruby 4.0.6 and
 Ractor behavior is measured, not assumed. This is a *tentative* plan: the
 decisions below are recommendations to be confirmed (or ADR'd) before the
@@ -15,7 +17,7 @@ phase that depends on them.
 `Monk::Live`, in `lib/monk/live.rb` + `lib/monk/live/` like every other Monk
 module. Opt-in like `Monk::WebSocket` and `Monk::Auth`: `require "monk/live"`
 explicitly, `require "monk"` alone never loads it (mirrors
-PLAN-WEBSOCKET.md Decision 7). It depends on `Monk::WebSocket` and
+docs/history/plan-websocket.md Decision 7). It depends on `Monk::WebSocket` and
 `Monk::Views`; neither depends on it. Starts in this gem; the one-way
 dependency keeps extraction into a separate gem cheap. (An earlier draft
 had a top-level `MonkLive`; dropped, see ADR 0008.) JS-side names stay
@@ -135,7 +137,7 @@ the client refetches the page over HTTP (Phase 5). Nothing else.
     `layout: false` returned `<html><body>…`). Monk::Live's renderer must
     force `layout: false`; never trust the caller to remember.
   - **Locals are read as `locals[:contact]` in templates, not bare
-    `contact`.** This is existing Monk behavior (README/`docs/views.md`),
+    `contact`.** This is existing Monk behavior (README/`docs/design/views.md`),
     and the "keyword locals" publish syntax maps onto it directly. Live
     partials must document it.
   - **Locals crossing into another Ractor** work either as a shareable
@@ -601,9 +603,9 @@ event fired. It isn't an automated test because it needs `bundle install` of a
 generated app, a network and two servers; the scaffold tests plus the
 cross-process tests from Phase 7 cover its parts.
 
-**Docs:** `docs/live.md` (the usage guide), a README section and status line,
+**Docs:** `docs/guides/live.md` (the usage guide), a README section and status line,
 `CHANGELOG.md` (*Unreleased* / Added), CONTEXT.md glossary terms (Live, Topic,
-Patch, Live partial, Resync), and `docs/reactive-partials.md` now points at what
+Patch, Live partial, Resync), and `docs/history/reactive-partials.md` now points at what
 was built. ADRs 0007-0011 were written up front.
 
 **Not done: the monk_talk integration** (a contact list with live statuses, the
