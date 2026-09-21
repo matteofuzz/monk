@@ -2,6 +2,8 @@
 
 A light Ruby web framework designed to be fully `Ractor`-safe: every app it produces is a valid Rack 3 app that is also `Ractor.shareable?`, so it can be served in parallel across Ractor worker pools without silently losing that safety property. Named after Thelonious Sphere Monk, great and unique Jazz piano player and composer.
 
+**Built in** (loaded by `require "monk"`): routing, context and error handling, boot-time Ractor-shareability checks, `Monk::StateRactor` for shared state, settings, ERB views, static assets and logging. **Opt-in** (each needs its own `require`): Postgres persistence and migrations, passwordless auth and sessions, a WebSocket server with Redis fan-out, and `Monk::Live` server-pushed HTML updates. Details for each are in the [Features](#features) table below.
+
 Monk is Kino-agnostic — it's built on stdlib `Ractor` primitives only, with no runtime dependency on any particular server. [Kino](https://github.com/yaroslav/kino) is the reference/development server (see `bin/server`), but any Ractor-aware Rack server, or a conventional one, can run a Monk app.
 
 Requires **Ruby 4.0+**. Runtime dependencies: `rack` and `base64`.
@@ -15,6 +17,12 @@ bin/server           # -> http://localhost:9292/hello
 ```
 
 `monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, Redis and live updates: see [`docs/scaffolding.md`](docs/scaffolding.md).
+
+All `monk` commands and flags are listed by:
+
+```
+monk --help
+```
 
 ## A taste
 
@@ -36,19 +44,19 @@ Routes can't close over mutable state: `Monk.boot` raises `Monk::UnshareableRout
 
 Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 
-| Feature | What it is | Guide |
-|---|---|---|
-| Routing, context, errors | `get`/`post`/…, path params, `halt`, `json`, `error`, experimental `resources` | [`routing.md`](docs/routing.md) |
-| Boot and shared state | `Monk.boot`, Ractor-shareability checks, `Monk::StateRactor` | [`boot-and-shared-state.md`](docs/boot-and-shared-state.md) |
-| Settings | `Monk::Settings`, `MONK_ENV`, env-var config validated at boot | [`settings.md`](docs/settings.md) |
-| Views and static assets | ERB compiled at boot, escaped by default, layouts/partials, frozen asset manifest | [`views-and-assets.md`](docs/views-and-assets.md) |
-| Logging | request log per environment, `Monk::Log.debug`/`info`/`warn`/`error` | [`logging.md`](docs/logging.md) |
-| Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | [`persistence.md`](docs/persistence.md) |
-| Migrations | plain `.sql` up/down pairs, `Migrator` | [`migrations.md`](docs/migrations.md) |
-| Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | [`auth.md`](docs/auth.md) |
-| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis fan-out | [`websocket-server.md`](docs/websocket-server.md) |
-| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | [`live.md`](docs/live.md) |
-| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | [`scaffolding.md`](docs/scaffolding.md) |
+| Feature | What it is | Opt-in | Guide |
+|---|---|---|---|
+| Routing, context, errors | `get`/`post`/…, path params, `halt`, `json`, `error`, experimental `resources` | — | [`routing.md`](docs/routing.md) |
+| Boot and shared state | `Monk.boot`, Ractor-shareability checks, `Monk::StateRactor` | — | [`boot-and-shared-state.md`](docs/boot-and-shared-state.md) |
+| Settings | `Monk::Settings`, `MONK_ENV`, env-var config validated at boot | — | [`settings.md`](docs/settings.md) |
+| Views and static assets | ERB compiled at boot, escaped by default, layouts/partials, frozen asset manifest | — | [`views-and-assets.md`](docs/views-and-assets.md) |
+| Logging | request log per environment, `Monk::Log.debug`/`info`/`warn`/`error` | — | [`logging.md`](docs/logging.md) |
+| Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/persistence.md) |
+| Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/migrations.md) |
+| Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/auth.md) |
+| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis fan-out | `require "monk/websocket"`; Redis fan-out: `require "monk/websocket/redis_fanout"` and the `redis` gem | [`websocket-server.md`](docs/websocket-server.md) |
+| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis | [`live.md`](docs/live.md) |
+| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | — (the `monk` command; flags `--postgres`, `--auth`, `--redis`, `--live`) | [`scaffolding.md`](docs/scaffolding.md) |
 
 ## More documentation
 
