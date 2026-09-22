@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.15.0 - 2026-09-22
+
+### Changed
+
+- **Published to RubyGems as `monkrb`**: the `monk` name on rubygems.org
+  belongs to an unrelated, long-abandoned gem, so the gemspec is renamed
+  `monk.gemspec` -> `monkrb.gemspec` with `spec.name = "monkrb"` — the code
+  namespace and `require "monk"` are unchanged. Added `source_code_uri`,
+  `changelog_uri`, `bug_tracker_uri`, and `rubygems_mfa_required` gemspec
+  metadata. `monk new`'s scaffolded `Gemfile` now declares `gem "monkrb",
+  require: "monk"` instead of `gem "monk"`. `docs/guides/deploying.md` and
+  the README's Quick Start (`gem install monkrb`) updated to match.
+- README's Status paragraph no longer points at issue #19 as the living
+  roadmap (closed, empty backlog) and now lists deployment support and the
+  RubyGems release among what's done.
+
 ## 0.14.0 - 2026-09-22
 
 ### Added

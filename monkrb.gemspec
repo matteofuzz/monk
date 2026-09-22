@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.authors = ["Matteo Folin"]
   spec.email = ["matteo.folin@gmail.com"]
 
-  spec.summary = "A minimalistic, Sinatra-style Ruby web framework, fully Ractor-safe."
+  spec.summary = "A light Ruby web framework designed to be fully Ractor-safe."
   spec.description = "Monk produces Rack 3 apps that are also Ractor.shareable?, so they can be " \
     "served in parallel across Ractor worker pools without silently losing that safety property."
   spec.homepage = "https://github.com/matteofuzz/monk"
