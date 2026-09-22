@@ -8,10 +8,23 @@ require_relative "settings"
 require "monk/live"
 require "monk/websocket/redis_fanout"
 
+# Where the browser opens its WebSocket (read by the layout). In
+# development there's no reverse proxy in front, so this is the direct WS
+# port; outside development it defaults to a /ws path under public_url
+# (config/settings.rb) -- matching the path-based proxy routing
+# docs/guides/deploying.md's "Adding Monk::WebSocket" section sets up, so
+# setting PUBLIC_URL alone keeps this in sync instead of two env vars
+# drifting apart. Override with LIVE_WS_URL directly if your setup doesn't
+# fit that shape.
+default_live_ws_url =
+  if Monk.env.development?
+    "ws://localhost:9293"
+  else
+    Monk::Settings[:public_url].sub(/\Ahttps:\/\//, "wss://").sub(/\Ahttp:\/\//, "ws://") + "/ws"
+  end
+
 Monk::Settings.configure do
-  # Where the browser opens its WebSocket (read by the layout). Use wss:// in
-  # production.
-  optional :live_ws_url, default: "ws://localhost:9293"
+  optional :live_ws_url, default: default_live_ws_url
 end
 
 redis_url = ENV["REDIS_URL"] or raise "Monk::Live needs REDIS_URL: bin/server and bin/websocket_server " \

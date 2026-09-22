@@ -50,7 +50,11 @@ end
 
 authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
 port = ENV.fetch("WS_PORT", "9293").to_i
-allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", "http://localhost:9292").split(",")
+# Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
+# keeps this in sync with the app's actual origin instead of two vars
+# drifting apart; set WS_ALLOWED_ORIGINS directly for anything more, e.g.
+# more than one origin (comma-separated).
+allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
 
 server = Monk::WebSocket::Server.new(port: port, authenticate: authenticate, allowed_origins: allowed_origins)
 puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \

@@ -102,14 +102,24 @@ handling of forwarded headers.
 - `log_dev_link` stays as the development fallback.
 - The link's scheme and host come from a configured public URL (the same
   setting as #4), never from `Host` or `X-Forwarded-*` request headers (see
-  step 0). Open question: does Monk build the full link, or hand the app the
-  token and the public URL?
+  step 0).
+- **Resolved:** Monk hands the app the token and the public URL, not the
+  full link -- Monk doesn't own routing, so it can't know the callback
+  path (`/auth/callback/:token` is the app's own route).
 - The callable must be Ractor-shareable, which fits the existing
   freeze-at-boot rules.
+- **Result (2026-09-22):** implemented. `Monk::Auth.configure(deliver:)` +
+  `Monk::Auth.deliver_link(email:, link:, token:)`; falls back to
+  `log_dev_link` in development, raises `Monk::MissingAuthDeliveryError`
+  otherwise. `public_url` declared in `config/settings.rb` (moved there in
+  #4, so `--live` apps get it too, not just `--auth`).
 - Tests: the hook is called with the right arguments, and unconfigured
-  behavior doesn't change.
+  behavior doesn't change. Done -- `test/auth_deliver_test.rb`,
+  `test/auth_boot_test.rb` (Ractor-shareability, both directions).
 - Docs: replace the "No mailer yet?" section with the hook as the production
-  path.
+  path. Done -- `docs/guides/auth.md` "Sending the magic link";
+  `docs/design/auth-sessions.md`'s old section marked superseded, not
+  rewritten (historical record).
 
 ## 4. Two-port WebSocket
 
@@ -117,11 +127,25 @@ handling of forwarded headers.
   (`docs/design/websocket.md`). So this is docs and templates, not code in the
   socket layer.
 - Add a reverse-proxy snippet (nginx or Caddy) to `deploying.md` that routes
-  `/ws` to `:9293` under one public origin.
+  `/ws` to `:9293` under one public origin. **Already existed** (section 3)
+  before this point was started -- written in a prior session/edit; nothing
+  to add here, just wired PUBLIC_URL into its explanation.
 - Derive `live_ws_url` and `WS_ALLOWED_ORIGINS` from a single public-URL
   setting, also used for the magic link in #3. Keep the localhost defaults for
   development.
-- Tests: check the scaffolded config defaults.
+- **Result (2026-09-22):** implemented. Moved `public_url` from
+  `config/auth.rb` (#3) to `config/settings.rb` (every app, not just
+  `--auth`). `live/config/live.rb`'s `live_ws_url` default: direct
+  `ws://localhost:9293` in development (no proxy locally), else a
+  `wss://`/`/ws` path under `public_url` -- matching section 3's existing
+  proxy routing. Both `bin/websocket_server` templates default
+  `WS_ALLOWED_ORIGINS` to `public_url` itself. Verified: dev vs production
+  derivation, and `--auth --live` together don't double-declare
+  `public_url` (`Monk::DuplicateSettingError`) -- confirmed by a real
+  `require`-based boot of the generated files, not just template-content
+  comparison.
+- Tests: check the scaffolded config defaults. Done --
+  `test/scaffold_live_test.rb` (4 new tests).
 
 ## Delivery
 
@@ -129,7 +153,4 @@ handling of forwarded headers.
   One branch for all four points, no per-point branches.
 - Push the branch, but don't open a PR or merge (the maintainer does that
   manually).
-- Order: 0, then 1, 3, 2, 4.
-- Open questions:
-  1. Run the step 0 spike now?
-  2. For point 2, one image with two commands, or a supervisor?
+- Order: 0, then 1, 3, 2, 4 -- **all four done** (2026-09-22).

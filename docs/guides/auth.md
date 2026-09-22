@@ -63,8 +63,10 @@ end
 ```
 
 Build `link` from a configured origin — `Monk::Settings[:public_url]` above,
-declared once in `config/auth.rb` (`monk new --auth` scaffolds this) — never
-from request headers like `X-Forwarded-Proto` or `Host`. Those come from
+declared in `config/settings.rb` (every `monk new` app has this, not just
+`--auth` — `Monk::Live`'s `live_ws_url` and `WS_ALLOWED_ORIGINS` read the
+same setting, see `docs/guides/live.md`) — never from request headers like
+`X-Forwarded-Proto` or `Host`. Those come from
 whoever is making the request, so a direct client (not just a trusted proxy)
 can set them; harmless while the only thing reading them is a dev-only
 console log, but not once a real delivery goes out to whatever address they

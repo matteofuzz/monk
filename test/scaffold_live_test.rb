@@ -97,6 +97,72 @@ class ScaffoldLiveTest < Minitest::Test
     end
   end
 
+  # config/auth.rb used to declare its own public_url Setting (added for
+  # the magic link, see docs/guides/auth.md) -- now that config/settings.rb
+  # declares it unconditionally for every app (live_ws_url and
+  # WS_ALLOWED_ORIGINS read it too), a --live --auth app loading both
+  # files in the order config.ru actually uses them must not double-declare
+  # it and raise Monk::DuplicateSettingError.
+  def test_live_and_auth_together_share_one_public_url_setting_without_conflict
+    require "monk/auth"
+
+    in_app(auth: true) do |dest|
+      with_settings do
+        with_env("AUTH_SECRET", "s3cr3t") do
+          with_env("REDIS_URL", "redis://localhost:6379/0") do
+            require File.join(dest, "config/settings")
+            require File.join(dest, "config/auth")
+            require File.join(dest, "config/live")
+
+            assert_equal "http://localhost:9292", Monk::Settings[:public_url]
+          end
+        end
+      end
+    end
+  ensure
+    Monk::Auth.reset!
+  end
+
+  def test_live_ws_url_defaults_to_the_direct_port_in_development
+    in_app do |dest|
+      with_settings do
+        with_monk_env("development") do
+          with_env("REDIS_URL", "redis://localhost:6379/0") do
+            require File.join(dest, "config/settings")
+            require File.join(dest, "config/live")
+
+            assert_equal "ws://localhost:9293", Monk::Settings[:live_ws_url]
+          end
+        end
+      end
+    end
+  end
+
+  def test_live_ws_url_defaults_to_a_wss_path_under_public_url_outside_development
+    in_app do |dest|
+      with_settings do
+        with_monk_env("production") do
+          with_env("REDIS_URL", "redis://localhost:6379/0") do
+            with_env("PUBLIC_URL", "https://chat.example.com") do
+              require File.join(dest, "config/settings")
+              require File.join(dest, "config/live")
+
+              assert_equal "wss://chat.example.com/ws", Monk::Settings[:live_ws_url]
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def test_websocket_server_defaults_ws_allowed_origins_to_public_url
+    in_app do |dest|
+      script = read(dest, "bin/websocket_server")
+
+      assert_includes script, %(ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]))
+    end
+  end
+
   def test_the_cli_accepts_live_and_the_help_documents_it
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")

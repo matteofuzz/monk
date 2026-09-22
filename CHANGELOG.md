@@ -26,6 +26,29 @@ in `lib/monk/version.rb`.
   runs `bin/server --bind 0.0.0.0` on port 9292; run the same image with
   `bin/websocket_server` as the command for the WebSocket process. See
   `docs/guides/deploying.md`.
+- `config/settings.rb` (every `monk new` app) declares a `public_url`
+  setting, this app's own trusted origin (`PUBLIC_URL` env var, default
+  `http://localhost:9292`). `--auth`'s magic link, `--live`'s `live_ws_url`,
+  and `bin/websocket_server`'s `WS_ALLOWED_ORIGINS` now all default from it
+  instead of three separately hardcoded values that could drift out of
+  sync — setting `PUBLIC_URL` alone keeps them consistent. `live_ws_url`
+  defaults to the direct `ws://localhost:9293` port in development, or a
+  `wss://`/`/ws` path under `public_url` outside it, matching the
+  reverse-proxy routing `docs/guides/deploying.md` section 3 sets up. See
+  `docs/guides/live.md`, "Running it".
+
+### Fixed
+
+- `docs/guides/deploying.md`'s Fly.io Dockerfile snippet ran the app's HTTP
+  server on port 9293 — colliding with `WS_PORT`'s own default of 9293 for
+  the separate WebSocket process. Corrected to 9292, matching `bin/server`'s
+  actual default.
+- `docs/guides/deploying.md`'s "Before the first build" claimed a
+  Mac-generated `Gemfile.lock` only lists `arm64-darwin` and needs
+  `bundle lock --add-platform` before a Linux build. Verified false for
+  this project's pinned toolchain (Ruby 4.0.6/Bundler 4.0.16): a plain
+  `bundle install` already resolves and locks every compatible platform.
+  Removed the now-incorrect instruction.
 
 ## 0.13.0 - 2026-09-21
 

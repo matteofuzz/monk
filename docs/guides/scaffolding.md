@@ -1,10 +1,12 @@
 # Scaffolding a new project — `monk new`
 
 ```
-monk new my_app              # Gemfile, config.ru, .ruby-version, bin/server,
-                              #   bin/websocket_server, views/, public/, SETUP.md
+monk new my_app              # Gemfile, config.ru, .ruby-version, Dockerfile, .dockerignore, bin/server,
+                              #   bin/websocket_server, views/, public/, SETUP.md -- config/settings.rb
+                              #   declares public_url (this app's own origin, read by auth/live below)
 monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_db, bin/migrate, db/migrate/,
-                              #   config.ru wired to require it, .env/.env.test/.env.example
+                              #   config.ru wired to require it, .env/.env.test/.env.example,
+                              #   Dockerfile swapped for a variant that adds libpq (the pg gem's native ext)
 monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a migration for
                               #   login_tokens/sessions (config.ru requires config/auth instead of
                               #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET)
@@ -118,9 +120,10 @@ written, by hand:
      secure: !Monk.env.development?,  # see auth.md, "Secure cookies"
    )
    ```
-   Add a `deliver:` callable once you have real mail delivery, and declare
-   `public_url` via `Monk::Settings.configure` — see auth.md, "Sending the
-   magic link".
+   Add a `deliver:` callable once you have real mail delivery — see
+   auth.md, "Sending the magic link". It builds the link from
+   `Monk::Settings[:public_url]`, already declared in every app's
+   `config/settings.rb` (not auth-specific), nothing to add here.
 2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.
 3. Add a migration creating `login_tokens`/`sessions` — schema in
    [`design/auth-sessions.md`](../design/auth-sessions.md). Give it a version that sorts after any migrations you

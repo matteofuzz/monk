@@ -2,13 +2,10 @@ require "monk"
 require "monk/auth"
 require_relative "persistence"
 
-Monk::Settings.configure do
-  # Trusted origin for the magic link your own login route builds (e.g.
-  # "#{Monk::Settings[:public_url]}/auth/callback/#{token}") -- never build
-  # it from request headers like X-Forwarded-Proto/Host, which any direct
-  # client can spoof. Set to your real https:// origin outside development.
-  optional :public_url, default: "http://localhost:9292"
-end
+# config/settings.rb already declares public_url -- the trusted origin for
+# the magic link your own login route builds (e.g.
+# "#{Monk::Settings[:public_url]}/auth/callback/#{token}"), see its comment
+# there and auth.md's "Sending the magic link".
 
 # Sends the magic link once you have real delivery (email, SMS, ...) --
 # a module constant, not a lambda inline in Auth.configure below, since
