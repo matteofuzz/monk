@@ -1,17 +1,29 @@
 require_relative "lib/monk/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "monk"
+  # Published as "monkrb", not "monk": that name has belonged since 2009 to
+  # an unrelated, long-dead Sinatra-glue gem on rubygems.org. The code
+  # itself keeps the Monk:: namespace and `require "monk"` -- an app's
+  # Gemfile needs `gem "monkrb", require: "monk"`.
+  spec.name = "monkrb"
   spec.version = Monk::VERSION
   spec.authors = ["Matteo Folin"]
   spec.email = ["matteo.folin@gmail.com"]
 
-  spec.summary = "A minimalistic, Sinatra-style Ruby web framework, fully Ractor-safe."
+  spec.summary = "A light Ruby web framework designed to be fully Ractor-safe."
   spec.description = "Monk produces Rack 3 apps that are also Ractor.shareable?, so they can be " \
     "served in parallel across Ractor worker pools without silently losing that safety property."
   spec.homepage = "https://github.com/matteofuzz/monk"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 4.0"
+
+  spec.metadata = {
+    "homepage_uri" => spec.homepage,
+    "source_code_uri" => spec.homepage,
+    "changelog_uri" => "#{spec.homepage}/blob/main/CHANGELOG.md",
+    "bug_tracker_uri" => "#{spec.homepage}/issues",
+    "rubygems_mfa_required" => "true",
+  }
 
   spec.files = Dir.chdir(__dir__) { `git ls-files -z lib exe LICENSE.txt README.md CHANGELOG.md`.split("\x0") }
   spec.require_paths = ["lib"]

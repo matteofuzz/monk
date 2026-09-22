@@ -94,7 +94,7 @@ Deploy Hook. `bin/setup_db` is idempotent (applied versions are tracked in
 
 **Caveat**: this repo's own `Dockerfile` (the one at the root of the `monk`
 gem's own source) is not what a scaffolded app uses — it bakes in *this*
-repo's gemspec/git-based install path (`monk.gemspec` shells out to
+repo's gemspec/git-based install path (`monkrb.gemspec` shells out to
 `git ls-files`), not a generated app's plain `Gemfile`. That's not a gap
 you need to work around, though: `monk new` scaffolds its own `Dockerfile`
 into every app, built for exactly that plain-`Gemfile` case — see the
@@ -104,8 +104,8 @@ Fly.io case below for what it contains.
 
 **Dockerfile**: already there — `monk new --postgres` (this case implies
 it) writes this exact file, no `git` runtime dependency needed since a
-scaffolded app's `Gemfile` pulls in `monk` as a normal gem, not via the
-local gemspec:
+scaffolded app's `Gemfile` pulls in `monkrb` as a normal gem (published on
+rubygems.org, `require: "monk"`), not via the local gemspec:
 
 ```dockerfile
 FROM ruby:4.0-slim AS builder

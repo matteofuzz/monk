@@ -56,7 +56,7 @@ Layout/LineEndStringConcatenationIndentation:
     - 'lib/monk/persistence/pg/model.rb'
     - 'lib/monk/scaffold.rb'
     - 'lib/monk/websocket/handshake.rb'
-    - 'monk.gemspec'
+    - 'monkrb.gemspec'
     - 'test/test_helper.rb'
 
 # Offense count: 11
