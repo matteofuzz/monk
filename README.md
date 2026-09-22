@@ -10,11 +10,17 @@ Requires **Ruby 4.0+**. Runtime dependencies: `rack` and `base64`.
 
 ## Quick start
 
+Install the gem — published as `monkrb` (the `monk` name on RubyGems belongs to an unrelated, long-abandoned project), the CLI and `require` stay `monk`:
+
 ```
+gem install monkrb
+
 monk new my_app && cd my_app
 bundle install
 bin/server           # -> http://localhost:9292/hello
 ```
+
+`monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", require: "monk"`.
 
 `monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md).
 
@@ -79,4 +85,4 @@ More (server modes, Docker) in [`docs/development.md`](docs/development.md).
 
 ## Status
 
-Monk is **pre-1.0** (see `lib/monk/version.rb` and the [changelog](CHANGELOG.md)): the API may still change between minor versions. The core is described in [`docs/history/core-plan.md`](docs/history/core-plan.md), and further work is taken one candidate at a time. The living list is [issue #19](https://github.com/matteofuzz/monk/issues/19) (seeded from [`docs/history/notes-post-core.md`](docs/history/notes-post-core.md)). Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, and live updates (`Monk::Live`, as of 2026-09-19).
+Monk is **pre-1.0** (see `lib/monk/version.rb` and the [changelog](CHANGELOG.md)): the API may still change between minor versions. The core is described in [`docs/history/core-plan.md`](docs/history/core-plan.md). There's no open roadmap issue at the moment; new work is proposed and tracked as it comes up. Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, live updates (`Monk::Live`, as of 2026-09-19), deployment support (Dockerfile scaffolding, `docs/guides/deploying.md`), and the RubyGems release as `monkrb` (both 2026-09-22).

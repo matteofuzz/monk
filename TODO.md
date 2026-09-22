@@ -11,12 +11,12 @@
 ## Remaining
 
 ### README updates
-- [ ] Update **Status** paragraph: [issue #19](https://github.com/matteofuzz/monk/issues/19) ("V2 - MONK plan") is now **closed** and the roadmap is empty — rewrite to stop pointing at it as the living list of pending work, and either drop the roadmap sentence or state that there's currently no open roadmap issue
-- [ ] Add/update install instructions to reference the published gem name: `gem "monkrb", require: "monk"` in a Gemfile (and/or `gem install monkrb`), distinct from the `require "monk"` code namespace
-- [ ] Sweep README for any other stale references to the old `monk` gem name vs. the `monkrb` package name
+- [x] Update **Status** paragraph: [issue #19](https://github.com/matteofuzz/monk/issues/19) ("V2 - MONK plan") is now **closed** and the roadmap is empty — rewrite to stop pointing at it as the living list of pending work, and either drop the roadmap sentence or state that there's currently no open roadmap issue
+- [x] Add/update install instructions to reference the published gem name: `gem "monkrb", require: "monk"` in a Gemfile (and/or `gem install monkrb`), distinct from the `require "monk"` code namespace
+- [x] Sweep README for any other stale references to the old `monk` gem name vs. the `monkrb` package name
 
 ### Publishing (requires manual/account action)
-- [ ] Create/confirm RubyGems account for matteo.folin@gmail.com, enable MFA
+- [x] Create/confirm RubyGems account for matteo.folin@gmail.com, enable MFA
 - [ ] Set up auth for publishing: `gem signin` + `gem push`, or Trusted Publishing (OIDC via GitHub Actions) — recommended
 - [ ] Decide first published version (currently `0.14.0` in `lib/monk/version.rb`)
 - [ ] `gem build monkrb.gemspec` and `gem push monkrb-<version>.gem`
