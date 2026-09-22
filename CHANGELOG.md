@@ -12,6 +12,13 @@ in `lib/monk/version.rb`.
   `Secure` flag from the session and CSRF cookies, so login works over plain
   `http://` (Safari drops `Secure` cookies there). The `monk new --auth`
   scaffold sets it to `!Monk.env.development?`.
+- `Monk::Auth.configure(deliver:)` and `Monk::Auth.deliver_link(email:,
+  link:, token:)`: a single call for an app's login route to send the magic
+  link, picking the configured `deliver:` callable when set, falling back to
+  `Monk::Auth.log_dev_link` in development, and raising
+  `Monk::MissingAuthDeliveryError` otherwise instead of silently doing
+  nothing. `deliver:` must be Ractor-shareable, same constraint as a route
+  block. See `docs/guides/auth.md`, "Sending the magic link".
 
 ## 0.13.0 - 2026-09-21
 

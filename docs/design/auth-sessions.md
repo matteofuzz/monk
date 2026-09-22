@@ -395,6 +395,16 @@ backend the app may not use.
 
 ### No mailer yet? `Monk::Auth.log_dev_link`
 
+> **Superseded** by `Monk::Auth.configure(deliver:)` / `.deliver_link` (see
+> [`guides/auth.md`](../guides/auth.md), "Sending the magic link") — a single
+> call an app makes once, that picks `deliver:` when configured, falls back
+> to `log_dev_link` in development, and raises rather than silently doing
+> nothing everywhere else. It also replaces preferring `X-Forwarded-Proto`
+> below with a configured `Monk::Settings[:public_url]`, since a header any
+> direct client can set was never a safe source for the link an app is
+> about to send someone, once delivery is real rather than dev-only. Kept
+> here for rationale; don't build new code against this section.
+
 `Mailer.magic_link(...)` above assumes the app already has mail
 delivery wired up. Until it does — every app, early on — call
 `Monk::Auth.log_dev_link(link)` from the same spot instead:

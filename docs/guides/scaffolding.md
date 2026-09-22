@@ -118,6 +118,9 @@ written, by hand:
      secure: !Monk.env.development?,  # see auth.md, "Secure cookies"
    )
    ```
+   Add a `deliver:` callable once you have real mail delivery, and declare
+   `public_url` via `Monk::Settings.configure` — see auth.md, "Sending the
+   magic link".
 2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.
 3. Add a migration creating `login_tokens`/`sessions` — schema in
    [`design/auth-sessions.md`](../design/auth-sessions.md). Give it a version that sorts after any migrations you
