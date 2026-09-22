@@ -115,6 +115,7 @@ written, by hand:
    Monk::Auth.configure(
      db_name: :primary, secret: ENV.fetch("AUTH_SECRET"),
      login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: [],
+     secure: !Monk.env.development?,  # see auth.md, "Secure cookies"
    )
    ```
 2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.

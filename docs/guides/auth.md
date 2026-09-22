@@ -44,3 +44,13 @@ requests, since a forged cross-origin request has no way to set that
 header. `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows. Full design and phase-by-phase
 build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/plan-auth.md`.
+
+### Secure cookies
+
+Both cookies carry the `Secure` flag by default, so browsers only send them
+over HTTPS. Over plain `http://` (a dev server, a second device on the LAN)
+Safari — Private Browsing especially — silently drops a `Secure` cookie, and
+login appears to do nothing. Pass `secure: false` to
+`Monk::Auth.configure` to omit the flag; the `monk new --auth` scaffold does
+this in development (`secure: !Monk.env.development?`) and keeps it on
+everywhere else. Don't set it to `false` in production.

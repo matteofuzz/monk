@@ -8,4 +8,5 @@ Monk::Auth.configure(
   login_ttl: 600,          # seconds a login token stays redeemable
   session_ttl: 1_209_600,  # seconds a session stays valid (14 days)
   redirect_allowlist: [],  # paths request_login(redirect_to:) is allowed to target
+  secure: !Monk.env.development?,  # Secure cookie flag; off in dev so plain-http testing works (Safari drops it)
 )

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Added
+
+- `Monk::Auth.configure(secure:)` (default `true`): set `false` to omit the
+  `Secure` flag from the session and CSRF cookies, so login works over plain
+  `http://` (Safari drops `Secure` cookies there). The `monk new --auth`
+  scaffold sets it to `!Monk.env.development?`.
+
 ## 0.13.0 - 2026-09-21
 
 ### Added

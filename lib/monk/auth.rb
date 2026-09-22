@@ -26,10 +26,10 @@ module Monk
         freeze_rqrcode!
       end
 
-      def configure(db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [])
+      def configure(db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true)
         config = {
           db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
-          redirect_allowlist: redirect_allowlist,
+          redirect_allowlist: redirect_allowlist, secure: secure,
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
