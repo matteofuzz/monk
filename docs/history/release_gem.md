@@ -17,11 +17,11 @@
 
 ### Publishing (requires manual/account action)
 - [x] Create/confirm RubyGems account for matteo.folin@gmail.com, enable MFA
-- [ ] Set up auth for publishing: `gem signin` + `gem push`, or Trusted Publishing (OIDC via GitHub Actions) — recommended
-- [ ] Decide first published version (currently `0.14.0` in `lib/monk/version.rb`)
+- [x] Set up auth for publishing: `gem signin` + `gem push`, or Trusted Publishing (OIDC via GitHub Actions) — recommended
+- [x] Decide first published version (currently `0.14.0` in `lib/monk/version.rb`) => 0.15.0
 - [ ] `gem build monkrb.gemspec` and `gem push monkrb-<version>.gem`
 - [ ] Commit and push the local gemspec/scaffold/docs/README changes
 
 ### Optional
-- [ ] Add a GitHub Actions release workflow (trusted publishing, triggered on a version tag)
-- [ ] Add a CHANGELOG entry noting the RubyGems release / gem name
+- NO Add a GitHub Actions release workflow (trusted publishing, triggered on a version tag)
+- [x] Add a CHANGELOG entry noting the RubyGems release / gem name
