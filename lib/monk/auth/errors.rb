@@ -7,4 +7,7 @@ module Monk
 
   class MissingAuthConfigError < StandardError
   end
+
+  class MissingAuthDeliveryError < StandardError
+  end
 end

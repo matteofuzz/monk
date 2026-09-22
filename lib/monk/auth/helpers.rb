@@ -53,7 +53,8 @@ module Monk
       end
 
       def add_response_cookie(name, value, http_only:, max_age:)
-        flags = ["Path=/", "Secure", "SameSite=Lax", "Max-Age=#{max_age}"]
+        flags = ["Path=/", "SameSite=Lax", "Max-Age=#{max_age}"]
+        flags << "Secure" if Monk::Auth.config[:secure]
         flags << "HttpOnly" if http_only
         headers["set-cookie"] = Array(headers["set-cookie"]) + ["#{name}=#{value}; #{flags.join("; ")}"]
       end

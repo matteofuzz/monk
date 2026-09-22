@@ -150,7 +150,14 @@ with recipient topics.
   `bin/websocket_server` (which runs `Monk::Live::HANDLER`) delivers.
 - `WS_ALLOWED_ORIGINS` must list the origin your pages are served from, or
   the browser's socket is refused. `LIVE_WS_URL` is what the layout gives the
-  client (`wss://` in production).
+  client (`wss://` in production). Both default from `PUBLIC_URL`
+  (`config/settings.rb`, every app has it) instead of a separate value to
+  keep in sync: `WS_ALLOWED_ORIGINS` defaults to `PUBLIC_URL` itself, and
+  `LIVE_WS_URL` defaults to `ws://localhost:9293` in development (a direct
+  port, no proxy locally) or a `wss://`/`/ws` path under `PUBLIC_URL`
+  outside it — the shape `docs/guides/deploying.md`'s reverse-proxy setup
+  expects. Set `WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` directly for anything
+  that default doesn't fit, e.g. more than one allowed origin.
 - The HTTP process must have booted (`Monk.boot`) before publishing, because
   views are frozen there; otherwise `Monk::Live::NotFrozenError` says so.
 - **If Redis is down, `Monk::Live.patch` raises** (`Redis::CannotConnectError`),

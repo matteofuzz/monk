@@ -14,6 +14,8 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/config/settings.rb"), read(dest, "config/settings.rb")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
       assert_equal template("base/.gitignore"), read(dest, ".gitignore")
+      assert_equal template("base/.dockerignore"), read(dest, ".dockerignore")
+      assert_equal template("base/Dockerfile"), read(dest, "Dockerfile")
       assert_equal template("base/bin/server"), read(dest, "bin/server")
       assert_equal template("base/bin/websocket_server"), read(dest, "bin/websocket_server")
       assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
@@ -133,6 +135,30 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("postgres/bin/migrate"), read(dest, "bin/migrate")
       assert File.directory?(File.join(dest, "db/migrate"))
       assert_empty Dir.children(File.join(dest, "db/migrate"))
+    end
+  end
+
+  # Dockerfile ships unconditionally (base skeleton, like config.ru) --
+  # --postgres overrides it with one that installs libpq for the pg gem's
+  # native extension, the same override mechanism --live uses for config.ru.
+  def test_write_bang_with_postgres_overrides_the_dockerfile_for_libpq
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      assert_equal template("postgres/Dockerfile"), read(dest, "Dockerfile")
+      refute_equal template("base/Dockerfile"), read(dest, "Dockerfile")
+    end
+  end
+
+  def test_write_bang_without_postgres_leaves_the_dockerfile_as_the_base_one
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      assert_equal template("base/Dockerfile"), read(dest, "Dockerfile")
     end
   end
 

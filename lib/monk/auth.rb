@@ -22,14 +22,25 @@ module Monk
       # regardless of its ivars, so freezing the module itself would do
       # nothing (docs/design/persistence-ractor-connections.md "Phase 4/5 finding").
       def freeze_registry!
-        @config = Ractor.make_shareable(@config)
+        begin
+          @config = Ractor.make_shareable(@config)
+        rescue ArgumentError, Ractor::IsolationError => e
+          raise Monk::UnshareableBlockError,
+            "Monk::Auth.configure(deliver:) is not Ractor-shareable: #{e.message} " \
+            "(build it where self is shareable, e.g. as a module constant at class/module-body " \
+            "scope -- self at a script's top level, e.g. config/auth.rb itself, is not shareable, " \
+            "same constraint as Monk::Live.authorize blocks)"
+        end
         freeze_rqrcode!
       end
 
-      def configure(db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [])
+      def configure(
+        db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
+        deliver: nil
+      )
         config = {
           db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
-          redirect_allowlist: redirect_allowlist,
+          redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -70,6 +81,41 @@ module Monk
         raw
       end
 
+      # The single place an app's login-request handler calls to get a
+      # magic link to its owner: uses the `deliver:` callable passed to
+      # `configure` (e.g. wrapping a mailer or a provider's HTTP API) when
+      # one is set, regardless of environment -- an app that wants to
+      # exercise real delivery in development is free to. With no
+      # `deliver:` configured, falls back to #log_dev_link in development
+      # (see below), and raises everywhere else: a silent no-op here would
+      # mean an app that forgot to wire delivery finds out only when a
+      # user reports never receiving their link, in production, which is
+      # the wrong place to fail (docs/design/auth-sessions.md's "Email
+      # delivery stays outside the framework" -- Monk still needs to know
+      # it was told to send *something*).
+      #
+      # `link` is the app's own job to build (Monk doesn't own routing, so
+      # it can't know the callback path) -- from a trusted origin, e.g.
+      # Monk::Settings[:public_url], never from request headers like
+      # X-Forwarded-Proto/Host, which any direct client can spoof.
+      # `token` is passed through for a deliver: that wants it (an SMS
+      # body instead of a link, say); most won't need it.
+      def deliver_link(email:, link:, token: nil)
+        ensure_configured!
+
+        if config[:deliver]
+          config[:deliver].call(email: email, link: link, token: token)
+        elsif Monk.env.development?
+          log_dev_link(link, subject: email)
+        else
+          raise MissingAuthDeliveryError,
+            "Monk::Auth.configure(deliver:) is not set, and this isn't development -- " \
+            "#{email.inspect}'s magic link would never be sent. Configure a deliver: " \
+            "callable (wrapping your mailer or provider's API), or call " \
+            "Monk::Auth.log_dev_link directly if that's truly intended here."
+        end
+      end
+
       # Convenience for an app's own login-request handler: prints a
       # magic link to the dev console (and log/development.log via
       # Monk::Log.info), plus a scannable QR code beneath it if the
@@ -77,7 +123,9 @@ module Monk
       # testing the login flow from a second device (another browser, a
       # phone) trivial without a mailer. A no-op outside development,
       # same posture as every other dev-only escape hatch in this
-      # framework (docs/history/secure-cookie-dev-http.md).
+      # framework (docs/history/secure-cookie-dev-http.md). #deliver_link
+      # above is what an app should call day to day; this is its
+      # development-only fallback and is still fine to call directly.
       #
       # subject: is optional context for the printed line only (e.g. the
       # email being logged in) -- useful once more than one login is in

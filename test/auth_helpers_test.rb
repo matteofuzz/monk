@@ -109,6 +109,28 @@ class AuthHelpersTest < Minitest::Test
     assert_includes csrf_cookie, "Secure"
   end
 
+  def test_set_session_cookie_omits_secure_when_configured_insecure
+    setup_auth_tables(DB_NAME)
+    Monk::Auth.configure(
+      db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600, secure: false,
+    )
+    app = Class.new(Monk::Base) do
+      get("/x") do |ctx|
+        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+        ctx.set_session_cookie(session)
+        ctx.json(ok: true)
+      end
+    end
+
+    _status, headers, = app.call(env_for("GET", "/x"))
+
+    assert_equal 2, headers["set-cookie"].size
+    headers["set-cookie"].each do |cookie|
+      refute_includes cookie, "Secure"
+      assert_includes cookie, "SameSite=Lax"
+    end
+  end
+
   def test_set_session_cookie_computes_the_csrf_cookie_as_hmac_sha256_of_the_session_token
     setup_auth_tables(DB_NAME)
     app = Class.new(Monk::Base) do

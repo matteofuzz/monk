@@ -16,6 +16,8 @@ module Monk
       "config/settings.rb" => "base/config/settings.rb",
       ".ruby-version" => "base/.ruby-version",
       ".gitignore" => "base/.gitignore",
+      ".dockerignore" => "base/.dockerignore",
+      "Dockerfile" => "base/Dockerfile",
       "bin/server" => "base/bin/server",
       "bin/websocket_server" => "base/bin/websocket_server",
       "views/layouts/app.erb" => "base/views/layouts/app.erb",
@@ -29,6 +31,14 @@ module Monk
       "bin/console" => "postgres/bin/console",
       "bin/setup_db" => "postgres/bin/setup_db",
       "bin/migrate" => "postgres/bin/migrate",
+    }.freeze
+
+    # The pg gem's native extension needs libpq -- the base Dockerfile has
+    # no system packages at all (kino is a precompiled platform gem), so
+    # --postgres/--auth swap in a Dockerfile that adds libpq-dev/libpq5
+    # instead of patching one image for every combination.
+    POSTGRES_OVERRIDES = {
+      "Dockerfile" => "postgres/Dockerfile",
     }.freeze
 
     AUTH_FILES = {
@@ -92,7 +102,9 @@ module Monk
       raise Monk::ScaffoldExistsError, "#{@dir} already exists" if File.exist?(@dir)
 
       FileUtils.mkdir_p(@dir)
-      base_files = @live ? BASE_FILES.merge(LIVE_OVERRIDES) : BASE_FILES
+      base_files = BASE_FILES
+      base_files = base_files.merge(LIVE_OVERRIDES) if @live
+      base_files = base_files.merge(POSTGRES_OVERRIDES) if @postgres
       base_files.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
       write_live! if @live
 

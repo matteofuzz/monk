@@ -4,6 +4,52 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.14.0 - 2026-09-22
+
+### Added
+
+- `Monk::Auth.configure(secure:)` (default `true`): set `false` to omit the
+  `Secure` flag from the session and CSRF cookies, so login works over plain
+  `http://` (Safari drops `Secure` cookies there). The `monk new --auth`
+  scaffold sets it to `!Monk.env.development?`.
+- `Monk::Auth.configure(deliver:)` and `Monk::Auth.deliver_link(email:,
+  link:, token:)`: a single call for an app's login route to send the magic
+  link, picking the configured `deliver:` callable when set, falling back to
+  `Monk::Auth.log_dev_link` in development, and raising
+  `Monk::MissingAuthDeliveryError` otherwise instead of silently doing
+  nothing. `deliver:` must be Ractor-shareable, same constraint as a route
+  block. See `docs/guides/auth.md`, "Sending the magic link".
+- `monk new` scaffolds a `Dockerfile` and `.dockerignore` into every app
+  (two-stage build, no compiler needed since `kino` ships as precompiled
+  platform gems). `--postgres`/`--auth` swap in a variant that adds
+  `libpq-dev`/`libpq5` for the `pg` gem's native extension. Default `CMD`
+  runs `bin/server --bind 0.0.0.0` on port 9292; run the same image with
+  `bin/websocket_server` as the command for the WebSocket process. See
+  `docs/guides/deploying.md`.
+- `config/settings.rb` (every `monk new` app) declares a `public_url`
+  setting, this app's own trusted origin (`PUBLIC_URL` env var, default
+  `http://localhost:9292`). `--auth`'s magic link, `--live`'s `live_ws_url`,
+  and `bin/websocket_server`'s `WS_ALLOWED_ORIGINS` now all default from it
+  instead of three separately hardcoded values that could drift out of
+  sync — setting `PUBLIC_URL` alone keeps them consistent. `live_ws_url`
+  defaults to the direct `ws://localhost:9293` port in development, or a
+  `wss://`/`/ws` path under `public_url` outside it, matching the
+  reverse-proxy routing `docs/guides/deploying.md` section 3 sets up. See
+  `docs/guides/live.md`, "Running it".
+
+### Fixed
+
+- `docs/guides/deploying.md`'s Fly.io Dockerfile snippet ran the app's HTTP
+  server on port 9293 — colliding with `WS_PORT`'s own default of 9293 for
+  the separate WebSocket process. Corrected to 9292, matching `bin/server`'s
+  actual default.
+- `docs/guides/deploying.md`'s "Before the first build" claimed a
+  Mac-generated `Gemfile.lock` only lists `arm64-darwin` and needs
+  `bundle lock --add-platform` before a Linux build. Verified false for
+  this project's pinned toolchain (Ruby 4.0.6/Bundler 4.0.16): a plain
+  `bundle install` already resolves and locks every compatible platform.
+  Removed the now-incorrect instruction.
+
 ## 0.13.0 - 2026-09-21
 
 ### Added

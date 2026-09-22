@@ -10,7 +10,18 @@ end
 
 require "monk"
 
-# Declare the app's own settings here, read anywhere via
+Monk::Settings.configure do
+  # This app's own public origin -- the one trusted source for building an
+  # absolute URL back to itself (a magic link, the WebSocket URL a browser
+  # should open), instead of request headers like X-Forwarded-Proto/Host,
+  # which any direct client can spoof. Declared here, not in config/auth.rb
+  # or config/live.rb, since both read it: auth.md's "Sending the magic
+  # link" and live.md's `live_ws_url`. Set to your real https:// origin
+  # outside development.
+  optional :public_url, default: "http://localhost:9292"
+end
+
+# Declare more of the app's own settings here, read anywhere via
 # Monk::Settings[:key] or, per-request, Context#settings[:key]:
 #
 # Monk::Settings.configure do
