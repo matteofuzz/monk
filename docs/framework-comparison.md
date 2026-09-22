@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase as of v0.13.0 (including `Monk::Live`).
+Complexity and weight comparison, based on the codebase as of v0.13.0 (the LOC breakdown below is not recomputed for v0.14.0's deploy-support additions — Dockerfile scaffolding, `Monk::Auth.deliver_link`, `public_url` — small relative to the totals here).
 
 ## Footprint
 
