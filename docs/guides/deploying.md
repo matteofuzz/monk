@@ -8,6 +8,14 @@ scaffold as the starting point.
 Neither case changes anything in this repo (`monk` itself) — they describe
 how a generated app deploys.
 
+Every scaffold also ships a `Dockerfile` and `.dockerignore` — `monk new`
+writes them unconditionally, and `--postgres`/`--auth` swap in a variant
+that adds `libpq` for the `pg` gem's native extension. Neither the Fly.io
+Dockerfile in section 2 nor the Compose setup in section 4 needs copying by
+hand any more; they're shown there because those sections still have to
+explain what the file does and how it's used, not because you write it
+yourself.
+
 ## What each scaffold needs
 
 `monk new` flags combine along two independent axes — database (none,
@@ -76,18 +84,20 @@ against the same Postgres instance — manually per deploy, or wired to a
 Deploy Hook. `bin/setup_db` is idempotent (applied versions are tracked in
 `schema_migrations`), so re-running it is safe.
 
-**Caveat**: this repo's own `Dockerfile` is not reusable as-is for a
-scaffolded app — it bakes in *this* repo's gemspec/git-based install path
-(`monk.gemspec` shells out to `git ls-files`), not a generated app's plain
-`Gemfile`. That only matters if you deploy via Docker instead of Render's
-native Ruby buildpack — see the Fly.io case below for a from-scratch
-Dockerfile.
+**Caveat**: this repo's own `Dockerfile` (the one at the root of the `monk`
+gem's own source) is not what a scaffolded app uses — it bakes in *this*
+repo's gemspec/git-based install path (`monk.gemspec` shells out to
+`git ls-files`), not a generated app's plain `Gemfile`. That's not a gap
+you need to work around, though: `monk new` scaffolds its own `Dockerfile`
+into every app, built for exactly that plain-`Gemfile` case — see the
+Fly.io case below for what it contains.
 
 ## 2. Fly.io (Docker + managed Postgres)
 
-**Dockerfile** (no `git` runtime dependency needed, since a scaffolded
-app's `Gemfile` pulls in `monk` as a normal gem, not via the local
-gemspec):
+**Dockerfile**: already there — `monk new --postgres` (this case implies
+it) writes this exact file, no `git` runtime dependency needed since a
+scaffolded app's `Gemfile` pulls in `monk` as a normal gem, not via the
+local gemspec:
 
 ```dockerfile
 FROM ruby:4.0-slim AS builder
@@ -110,12 +120,15 @@ RUN apt-get update -qq \
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY . .
 
-EXPOSE 9293
-CMD ["bundle", "exec", "kino", "-p", "9293", "--bind", "0.0.0.0", "config.ru"]
+EXPOSE 9292
+CMD ["bin/server", "--bind", "0.0.0.0"]
 ```
 
-(`libpq-dev` is needed at build time for the `pg` gem's native extension;
-`libpq5` — the runtime lib, no headers — is enough in the final stage.)
+`libpq-dev` is needed at build time for the `pg` gem's native extension;
+`libpq5` — the runtime lib, no headers — is enough in the final stage. Port
+9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
+default for the separate WebSocket process (section 3, below); running
+both on 9293 would collide them.
 
 **Fly resources**
 
@@ -220,19 +233,18 @@ above: it has no per-platform port or process limits, and `/ws` routing
 (section 3) is just a Caddy rule. The cost is operational — OS patching,
 backups and the firewall are yours.
 
-Build one image from the app's Dockerfile (the one in section 2 works; drop
-its `CMD`, since each service below sets its own) and run it twice with
-different commands. Drop the `postgres` service for combinations without
-`--postgres`/`--auth`, and the `redis` service for ones without
-`--redis`/`--live`. Keep the `ws` service for combinations that use
-WebSockets; it is mandatory under `--live`.
+Build one image from the app's own (scaffolded) Dockerfile and run it
+twice with different commands — `web` needs none, since its command is
+already the image's default `CMD`; `ws` overrides it. Drop the `postgres`
+service for combinations without `--postgres`/`--auth`, and the `redis`
+service for ones without `--redis`/`--live`. Keep the `ws` service for
+combinations that use WebSockets; it is mandatory under `--live`.
 
 ```yaml
 # compose.yaml
 services:
   web:
     build: .
-    command: bundle exec kino -p 9292 --bind 0.0.0.0 config.ru
     env_file: .env.production
     depends_on: [postgres, redis]
   ws:
@@ -287,9 +299,14 @@ then the migration command above.
 
 **Before the first build**
 
-- `Gemfile.lock` must list the server's platform. A lockfile generated on a
-  Mac only has `arm64-darwin` for native gems such as `kino`; run
-  `bundle lock --add-platform x86_64-linux aarch64-linux` and commit it.
+- Nothing to do for `Gemfile.lock`'s platform list: a plain `bundle install`
+  already resolves and locks every compatible platform (`arm64-darwin`,
+  `x86_64-linux`, `aarch64-linux`, the `-musl` variants), not just the
+  machine that ran it — verified by copying a Mac-generated lockfile
+  unmodified into a Linux container and building on both `aarch64-linux`
+  and emulated `x86_64-linux`; both resolved the right precompiled `kino`
+  gem with no extra step. (Older Bundler versions needed an explicit
+  `bundle lock --add-platform`; this project's pinned toolchain doesn't.)
 - A `Gemfile` that points `monk` at a local `path:` can't build inside the
   image; switch it to a git or gem source first.
 - Open only ports 22, 80 and 443 in the firewall, and schedule a nightly

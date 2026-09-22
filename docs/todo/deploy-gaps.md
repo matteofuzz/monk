@@ -75,10 +75,23 @@ handling of forwarded headers.
   `0.0.0.0`, honor `PORT`, and start `bin/server`.
 - `bin/websocket_server` is already in the base and live templates. The image
   should be able to run it as an alternate command.
-- Open decision: one image with two commands (simplest, one deploy unit per
-  process) or a supervisor.
-- Update `docs/guides/deploying.md` to match.
-- Tests: check that the scaffold output contains the files.
+- **Decision: one image, two commands, no supervisor.**
+  `docs/guides/deploying.md` section 4 had already assumed this shape; the
+  HTTP and WS processes are already separate deploy units by design
+  (`docs/design/websocket.md`), so `docker run <image> bin/websocket_server`
+  (or a compose `command:` override) is enough -- no process manager needed
+  in the image.
+- **Result (2026-09-22):** implemented. `templates/base/Dockerfile` +
+  `.dockerignore` (unconditional), `templates/postgres/Dockerfile` overrides
+  it with libpq for `--postgres`/`--auth`, wired via `scaffold.rb`'s
+  `POSTGRES_OVERRIDES` (same mechanism as `LIVE_OVERRIDES`). Verified with a
+  real `docker build`/`docker run` for both variants, not just file-copy
+  tests. Along the way, fixed a port-collision bug in `deploying.md`'s own
+  Fly.io Dockerfile snippet (hardcoded 9293, colliding with `WS_PORT`'s
+  default) and updated deploying.md to point at the generated file instead
+  of a hand-copied snippet.
+- Tests: check that the scaffold output contains the files. Done --
+  `test/scaffold_test.rb`.
 
 ## 3. Auth delivery hook (mailer)
 

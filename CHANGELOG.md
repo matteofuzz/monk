@@ -19,6 +19,13 @@ in `lib/monk/version.rb`.
   `Monk::MissingAuthDeliveryError` otherwise instead of silently doing
   nothing. `deliver:` must be Ractor-shareable, same constraint as a route
   block. See `docs/guides/auth.md`, "Sending the magic link".
+- `monk new` scaffolds a `Dockerfile` and `.dockerignore` into every app
+  (two-stage build, no compiler needed since `kino` ships as precompiled
+  platform gems). `--postgres`/`--auth` swap in a variant that adds
+  `libpq-dev`/`libpq5` for the `pg` gem's native extension. Default `CMD`
+  runs `bin/server --bind 0.0.0.0` on port 9292; run the same image with
+  `bin/websocket_server` as the command for the WebSocket process. See
+  `docs/guides/deploying.md`.
 
 ## 0.13.0 - 2026-09-21
 
