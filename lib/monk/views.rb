@@ -151,7 +151,18 @@ module Monk
         compiler.post_cmd = ["Monk::Views::Raw.new(_erbout)"]
         compiler.put_cmd = "_erbout.<<"
         compiler.insert_cmd = "_erbout.<< Monk::Views.h"
-        compiler.compile(source).first
+        script, encoding, = compiler.compile(source)
+        # ERB::Compiler#compile scans the source as ASCII-8BIT (see its
+        # own String#b) and hands that tag straight through to any code
+        # inside <%= %>/<% %> -- template TEXT is safe (put_cmd dumps it
+        # to ASCII escapes), but a non-ASCII literal written in Ruby code,
+        # e.g. <%= ok ? "✓" : "✗" %>, comes back mistagged
+        # ASCII-8BIT even though the bytes are valid UTF-8. #compile's
+        # second return value is the encoding to retag it with; dropping
+        # that (as this used to) is what broke non-ASCII Ruby literals --
+        # the mistagged string then downgrades whatever UTF-8 content it's
+        # concatenated with (layouts, other locals) to ASCII-8BIT too.
+        encoding ? script.dup.force_encoding(encoding) : script
       end
 
       def method_name_for(name)
