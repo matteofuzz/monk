@@ -14,16 +14,12 @@ module Monk
     # (persistence, Monk::Auth) and doesn't need Redis's higher throughput
     # or its lack of a payload cap (see the design doc's "Where this is
     # worse than Redis").
-    #
-    # Phase 3 (docs/history/plan-live-pg-fanout.md) adds the subscriber
-    # Ractor that makes this actually cross-process; through Phase 2,
-    # #broadcast only ever has itself to echo back to.
     class PgFanout
       # Postgres has no pattern LISTEN (unlike Redis's own
       # psubscribe("monk:ws:*")), so every key shares one fixed channel;
       # the key rides inside the notification payload instead of the
-      # channel name -- see Phase 3's subscriber for the other half of
-      # this.
+      # channel name -- see the subscriber Ractor in #initialize below
+      # for the other half of this.
       CHANNEL = "monk_live".freeze
 
       # Postgres's own hard limit on a single NOTIFY payload -- verified
@@ -36,7 +32,41 @@ module Monk
       # inside the query.
       MAX_NOTIFY_PAYLOAD_BYTES = 8000
 
+      # Inverse of #envelope_for. A class method, not a private instance
+      # method like its encode-side counterpart: the subscriber Ractor
+      # below has no `self` bound to a PgFanout instance to call an
+      # ordinary method on, only whatever it can reach off the class
+      # constant (mirrors Monk::WebSocket::Server.serve being a class
+      # method for the equivalent reason -- the Server instance itself
+      # never crosses into a connection's Ractor either).
+      def self.decode_envelope(raw)
+        bytes = raw.b
+        origin_len_str, rest = bytes.split(":", 2)
+        origin_len = origin_len_str.to_i
+        origin = rest[0, origin_len]
+        rest = rest[origin_len..]
+        key_len_str, rest = rest.split(":", 2)
+        key_len = key_len_str.to_i
+        key = rest[0, key_len]
+        payload = rest[key_len..]
+        [origin, key, payload]
+      end
+
       def initialize(registry, pg_opts:)
+        # Checked upfront, on the argument, before anything below opens a
+        # real Postgres connection -- RedisFanout has no equivalent check
+        # (freezing self never raises on its own, even when an ivar isn't
+        # itself shareable), so a bad registry there only surfaces later
+        # as an opaque Ractor::IsolationError. Checking here first, rather
+        # than after spawning the subscriber below, means a bad registry
+        # never leaves a live LISTEN connection running past a failed
+        # construction. Mirrors Monk::Live.configure's own check of its
+        # registry argument.
+        unless Ractor.shareable?(registry)
+          raise ArgumentError,
+            "Monk::WebSocket::PgFanout.new needs a Ractor-shareable registry, got #{registry.class}"
+        end
+
         @registry = registry
         # Ractor.make_shareable, not a plain #freeze: pg_opts's values
         # (host/user/password Strings from ENV.fetch, typically) aren't
@@ -48,25 +78,32 @@ module Monk
         # allowed_origins already avoids the same way.
         @pg_opts = Ractor.make_shareable(pg_opts.dup)
         # Frozen explicitly, not just a String literal: read from every
-        # calling Ractor's own #broadcast (Phase 2) and from the
-        # subscriber Ractor (Phase 3), both of which raise
-        # Ractor::IsolationError on an unfrozen value -- same reason
-        # RedisFanout freezes its own @origin.
+        # calling Ractor's own #broadcast and from the subscriber Ractor
+        # below, both of which raise Ractor::IsolationError on an
+        # unfrozen value -- same reason RedisFanout freezes its own
+        # @origin.
         @origin = SecureRandom.uuid.freeze
 
+        # Ractor.new's block args must be shareable: registry is
+        # (Registry freezes itself around a Ractor, which is inherently
+        # shareable), @pg_opts and @origin are already made so above. The
+        # PG::Connection itself is never passed in -- opened fresh inside
+        # the block, mirroring RedisFanout's subscriber and
+        # Monk::Persistence::Pg's per-Ractor connection pattern.
+        @subscriber = Ractor.new(registry, @pg_opts, @origin) do |registry, pg_opts, own_origin|
+          conn = PG.connect(**pg_opts)
+          conn.exec("LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}")
+          loop do
+            conn.wait_for_notify do |_channel, _pid, raw|
+              sender, key, payload = Monk::WebSocket::PgFanout.decode_envelope(raw)
+              next if sender == own_origin
+
+              registry.broadcast(key.to_sym, payload)
+            end
+          end
+        end
+
         freeze
-
-        # RedisFanout has no equivalent check -- freezing self never
-        # raises on its own, even when an ivar (here, a caller-supplied
-        # registry double) isn't itself shareable, so a bad registry
-        # would otherwise only surface later as an opaque
-        # Ractor::IsolationError the first time some other Ractor reads
-        # this object. Checked explicitly, mirroring
-        # Monk::Live.configure's own check of its registry argument.
-        return if Ractor.shareable?(self)
-
-        raise ArgumentError,
-          "Monk::WebSocket::PgFanout.new needs a Ractor-shareable registry, got #{registry.class}"
       end
 
       def register(key, port) = @registry.register(key, port)

@@ -4,15 +4,16 @@ require "monk/websocket/pg_fanout"
 
 # PgFanout wraps a Registry for cross-process fan-out, the Postgres
 # LISTEN/NOTIFY counterpart to RedisFanout (docs/design/live-pg-fanout.md,
-# docs/history/plan-live-pg-fanout.md). Phases 1-2: it has to be usable the
-# exact way Registry and RedisFanout already are -- held behind a module
-# constant, read from every connection's own Ractor -- with plain
-# delegation for #register/#unregister/#count, and #broadcast has to
-# deliver locally and publish via pg_notify while respecting Postgres's
-# own payload cap. Every test skips without a local Postgres: from Phase 3
-# onward, construction always opens a real connection (no lazy/offline
-# path, same as RedisFanout), so keeping the guard here too avoids two
-# different postures in one file.
+# docs/history/plan-live-pg-fanout.md). It has to be usable the exact way
+# Registry and RedisFanout already are -- held behind a module constant,
+# read from every connection's own Ractor -- with plain delegation for
+# #register/#unregister/#count, #broadcast has to deliver locally and
+# publish via pg_notify while respecting Postgres's own payload cap, and
+# its subscriber Ractor has to actually relay a sibling instance's
+# broadcast while dropping its own echo. Every test skips without a local
+# Postgres: construction always opens a real connection (no lazy/offline
+# path, same as RedisFanout), so every test here needs one regardless of
+# which part it's exercising.
 class WebSocketPgFanoutTest < Minitest::Test
   include PersistenceTestHelpers
 
@@ -100,6 +101,84 @@ class WebSocketPgFanoutTest < Minitest::Test
 
     assert_raises(Monk::WebSocket::PayloadTooLargeError) do
       fanout.broadcast(key, "#{at_cap}a")
+    end
+  end
+
+  def test_broadcast_from_one_instance_reaches_a_connection_registered_on_a_sibling_instance
+    skip_unless_postgres_available
+
+    registry_a = Monk::WebSocket::Registry.new
+    registry_b = Monk::WebSocket::Registry.new
+    fanout_a = Monk::WebSocket::PgFanout.new(registry_a, pg_opts: pg_test_opts)
+    Monk::WebSocket::PgFanout.new(registry_b, pg_opts: pg_test_opts)
+    wait_for_subscribers
+
+    port = Ractor::Port.new
+    registry_b.register(:room1, port)
+    received = []
+    reader = Thread.new { loop { received << port.receive } }
+
+    fanout_a.broadcast(:room1, "hello from A")
+
+    wait_until { received.any? }
+    assert_equal ["hello from A"], received
+  ensure
+    reader&.kill
+    port&.close
+  end
+
+  # Without the origin tag, A's own subscriber would relay A's own
+  # broadcast back into registry_a a second time -- a connection
+  # registered directly on registry_a would see it twice.
+  def test_a_fanouts_own_broadcast_is_not_delivered_twice_to_its_own_registry
+    skip_unless_postgres_available
+
+    registry_a = Monk::WebSocket::Registry.new
+    fanout_a = Monk::WebSocket::PgFanout.new(registry_a, pg_opts: pg_test_opts)
+    # A second instance on the same Postgres, standing in for a sibling
+    # process, so there's a live subscriber for A's notify to reach past
+    # -- without it, this test would pass even with the echo guard
+    # removed.
+    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
+    wait_for_subscribers
+
+    port = Ractor::Port.new
+    registry_a.register(:room1, port)
+    received = []
+    reader = Thread.new { loop { received << port.receive } }
+
+    fanout_a.broadcast(:room1, "only once")
+
+    wait_until { received.any? }
+    # Give a wrongly-undropped echo time to complete its round trip
+    # through Postgres and arrive -- if the origin-tag guard were removed,
+    # it would show up here as a second entry.
+    sleep 0.3
+    assert_equal ["only once"], received
+  ensure
+    reader&.kill
+    port&.close
+  end
+
+  private
+
+  # PgFanout#initialize spawns its subscriber Ractor and returns
+  # immediately -- it doesn't wait for that Ractor's own LISTEN to
+  # actually take effect on the Postgres server. A NOTIFY sent before this
+  # window closes can simply be missed (no queue/replay for a listener
+  # that isn't there yet), same as RedisFanout's own psubscribe race. A
+  # fixed wait here, not a retry loop, keeps each test's later single
+  # #broadcast call meaning exactly one message went out.
+  def wait_for_subscribers
+    sleep 0.3
+  end
+
+  def wait_until(timeout: 2.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    until yield
+      raise "condition not met within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.01
     end
   end
 end
