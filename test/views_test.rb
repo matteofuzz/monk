@@ -43,6 +43,33 @@ class ViewsTest < Minitest::Test
     end
   end
 
+  def test_non_ascii_literal_inside_ruby_code_renders_as_utf8
+    with_views("index.erb" => %(<%= true ? "✓" : "✗" %>)) do
+      app = boot_app { get("/") { render "index" } }
+
+      _status, _headers, body = app.call(env_for("GET", "/"))
+      rendered = body.join
+
+      assert_equal "✓", rendered
+      assert_equal Encoding::UTF_8, rendered.encoding
+    end
+  end
+
+  def test_non_ascii_literal_inside_ruby_code_concatenates_with_a_layout
+    templates = {
+      "layouts/app.erb" => "<body><%= yield %></body>",
+      "index.erb" => %(<%= true ? "✓" : "✗" %>),
+    }
+
+    with_views(templates) do
+      app = boot_app(layout: "layouts/app") { get("/") { render "index" } }
+
+      _status, _headers, body = app.call(env_for("GET", "/"))
+
+      assert_equal "<body>✓</body>", body.join
+    end
+  end
+
   def test_control_flow_and_newline_trimming
     with_views("index.erb" => "<% 2.times do |i| -%>\n<li><%= i %></li>\n<% end -%>\n") do
       app = boot_app { get("/") { render "index" } }

@@ -36,8 +36,18 @@ On the rubygems.org website (not the CLI):
 
 ## 3. Store the key, build, and push
 
+`gem signin` is interactive-only (email/password or `--otp`) — it has no
+`--key` flag. To use an API key directly, write it into
+`~/.gem/credentials` yourself:
+
 ```
-gem signin --key <the-temporary-key>
+ruby -ryaml -e '
+creds_path = File.expand_path("~/.gem/credentials")
+creds = File.exist?(creds_path) ? (YAML.load_file(creds_path) || {}) : {}
+creds[:rubygems_api_key] = "<the-temporary-key>"
+File.write(creds_path, creds.to_yaml)
+File.chmod(0600, creds_path)
+'
 gem build monkrb.gemspec
 gem push monkrb-0.15.0.gem
 ```
@@ -58,9 +68,16 @@ Now that `monkrb` exists under the account:
   now selectable).
 - Replace the stored credential with this one:
   ```
-  gem signin --key <the-new-scoped-key>
+  ruby -ryaml -e '
+  creds_path = File.expand_path("~/.gem/credentials")
+  creds = File.exist?(creds_path) ? (YAML.load_file(creds_path) || {}) : {}
+  creds[:rubygems_api_key] = "<the-new-scoped-key>"
+  File.write(creds_path, creds.to_yaml)
+  File.chmod(0600, creds_path)
+  '
   ```
-  This overwrites the rubygems.org entry in `~/.gem/credentials`.
+  This overwrites the `:rubygems_api_key` entry in `~/.gem/credentials`
+  without touching any other keys stored there.
 
 From then on, every future `gem push monkrb-<version>.gem` uses the
 properly scoped key, and the window where a broader key existed is
