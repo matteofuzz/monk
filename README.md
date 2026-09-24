@@ -2,7 +2,7 @@
 
 A light Ruby web framework designed to be fully `Ractor`-safe: every app it produces is a valid Rack 3 app that is also `Ractor.shareable?`, so it can be served in parallel across Ractor worker pools without silently losing that safety property. Named after Thelonious Sphere Monk, great and unique Jazz piano player and composer.
 
-**Built in** (loaded by `require "monk"`): routing, context and error handling, boot-time Ractor-shareability checks, `Monk::StateRactor` for shared state, settings, ERB views, static assets and logging. **Opt-in** (each needs its own `require`): Postgres persistence and migrations, passwordless auth and sessions, a WebSocket server with Redis fan-out, and `Monk::Live` server-pushed HTML updates. Details for each are in the [Features](#features) table below.
+**Built in** (loaded by `require "monk"`): routing, context and error handling, boot-time Ractor-shareability checks, `Monk::StateRactor` for shared state, settings, ERB views, static assets and logging. **Opt-in** (each needs its own `require`): Postgres persistence and migrations, passwordless auth and sessions, a WebSocket server with Redis or Postgres fan-out, and `Monk::Live` server-pushed HTML updates. Details for each are in the [Features](#features) table below.
 
 Monk is Kino-agnostic — it's built on stdlib `Ractor` primitives only, with no runtime dependency on any particular server. [Kino](https://github.com/yaroslav/kino) is the reference/development server (see `bin/server`), but any Ractor-aware Rack server, or a conventional one, can run a Monk app.
 
@@ -60,8 +60,8 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/guides/persistence.md) |
 | Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/guides/migrations.md) |
 | Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
-| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis fan-out | `require "monk/websocket"`; Redis fan-out: `require "monk/websocket/redis_fanout"` and the `redis` gem | [`websocket.md`](docs/guides/websocket.md) |
-| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis | [`live.md`](docs/guides/live.md) |
+| WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis or Postgres fan-out | `require "monk/websocket"`; fan-out: `require "monk/websocket/redis_fanout"` (+ the `redis` gem) or `require "monk/websocket/pg_fanout"` (+ the `pg` gem) | [`websocket.md`](docs/guides/websocket.md) |
+| Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis or Postgres | [`live.md`](docs/guides/live.md) |
 | Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | — (the `monk` command; flags `--postgres`, `--auth`, `--redis`, `--live`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 
 ## More documentation
@@ -70,7 +70,7 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 - [`docs/guides/deploying.md`](docs/guides/deploying.md): worked deployment examples.
 - [`docs/design/ractor.md`](docs/design/ractor.md): how Monk uses Ruby's `Ractor`.
 - [`docs/adr/`](docs/adr) and [`CONTEXT.md`](CONTEXT.md): architectural decisions and domain vocabulary.
-- Design docs and phase-by-phase plans behind each feature: [`docs/design/views.md`](docs/design/views.md), [`docs/design/auth-sessions.md`](docs/design/auth-sessions.md), [`docs/design/websocket.md`](docs/design/websocket.md), [`docs/design/persistence-ractor-connections.md`](docs/design/persistence-ractor-connections.md), and the phase-by-phase plans and archived notes in [`docs/history/`](docs/history).
+- Design docs and phase-by-phase plans behind each feature: [`docs/design/views.md`](docs/design/views.md), [`docs/design/auth-sessions.md`](docs/design/auth-sessions.md), [`docs/design/websocket.md`](docs/design/websocket.md), [`docs/design/persistence-ractor-connections.md`](docs/design/persistence-ractor-connections.md), [`docs/design/live-pg-fanout.md`](docs/design/live-pg-fanout.md), and the phase-by-phase plans and archived notes in [`docs/history/`](docs/history).
 - [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Working on this repo
@@ -85,6 +85,6 @@ More (server modes, Docker) in [`docs/development.md`](docs/development.md).
 
 ## Status
 
-Monk is **pre-1.0** (see `lib/monk/version.rb` and the [changelog](CHANGELOG.md)): the API may still change between minor versions. The core is described in [`docs/history/core-plan.md`](docs/history/core-plan.md). There's no open roadmap issue at the moment; new work is proposed and tracked as it comes up. Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, live updates (`Monk::Live`, as of 2026-09-19), deployment support (Dockerfile scaffolding, `docs/guides/deploying.md`), and the RubyGems release as `monkrb` (both 2026-09-22).
+Monk is **pre-1.0** (see `lib/monk/version.rb` and the [changelog](CHANGELOG.md)): the API may still change between minor versions. The core is described in [`docs/history/core-plan.md`](docs/history/core-plan.md). There's no open roadmap issue at the moment; new work is proposed and tracked as it comes up. Done so far, each with its own design doc and plan: persistence, migrations, HTML templating and static assets, auth and sessions, WebSocket with Redis fan-out, log levels, live updates (`Monk::Live`, as of 2026-09-19), deployment support (Dockerfile scaffolding, `docs/guides/deploying.md`), the RubyGems release as `monkrb` (both 2026-09-22), and `Monk::WebSocket::PgFanout`/`monk new --live --postgres` — the same cross-process fan-out over Postgres `LISTEN`/`NOTIFY` instead of Redis, for an app that doesn't want a second piece of infrastructure (`docs/design/live-pg-fanout.md`, 2026-09-24).
 
 [Made with Love ❤️, Ruby 💎 and AI 🤖](docs/ai_usage_disclaimer.md)

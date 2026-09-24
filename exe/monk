@@ -53,13 +53,21 @@ HELP = <<~TEXT.freeze
 
       --live          Also scaffold Monk::Live: a demo counter whose open tabs
                        update by themselves, pushed as HTML over a WebSocket.
-                       Implies --redis (bin/server and bin/websocket_server
-                       are separate processes, and Redis carries an update
-                       from one to the other). Adds config/live.rb,
-                       views/live/_hits.erb and the browser runtime under
-                       public/js/monk_live/, replaces config.ru, views/index.erb
-                       and bin/websocket_server with live versions, and adds
-                       the runtime's <meta>/<script> tags to the layout.
+                       Requires --redis or --postgres: bin/server and
+                       bin/websocket_server are always separate processes, so
+                       one of the two has to carry a publish between them --
+                       with --redis, the usual Redis wiring; with --postgres
+                       (and not --redis), Monk::WebSocket::PgFanout over
+                       LISTEN/NOTIFY instead, reusing --postgres's own DB_*
+                       settings, so there's no Redis to run. Passing both
+                       picks --redis; passing neither is an error, since
+                       there's no way to tell whether Postgres is available.
+                       Adds
+                       config/live.rb, views/live/_hits.erb and the browser
+                       runtime under public/js/monk_live/, replaces config.ru,
+                       views/index.erb and bin/websocket_server with live
+                       versions, and adds the runtime's <meta>/<script> tags
+                       to the layout.
 
   Commands:
       new APP_NAME    Create a new project (see Options above)
@@ -110,7 +118,13 @@ when "new"
   puts "  bundle install"
   puts "  see SETUP.md for the full dev-then-test walkthrough"
   puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
-  puts "  Monk::Live needs Redis running, bin/server and bin/websocket_server (see SETUP.md)" if live
+  if live
+    if redis
+      puts "  Monk::Live needs Redis running, bin/server and bin/websocket_server (see SETUP.md)"
+    else
+      puts "  Monk::Live needs bin/server and bin/websocket_server running, sharing Postgres (see SETUP.md)"
+    end
+  end
 else
   usage_error!
 end

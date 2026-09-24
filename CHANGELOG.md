@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.16.0 - 2026-09-24
+
+### Added
+
+- `Monk::WebSocket::PgFanout`: a Postgres `LISTEN`/`NOTIFY`-backed
+  alternative to `RedisFanout`, implementing the identical
+  `#register`/`#unregister`/`#count`/`#broadcast` interface, for an app
+  that already runs Postgres and doesn't need Redis as a second
+  dependency. Caps a single broadcast at just under 8000 bytes
+  (Postgres's own `NOTIFY` limit) and, unlike `RedisFanout`, has no
+  horizontal-scaling story for many WS processes or a hot topic.
+  `monk new --live --postgres` (without `--redis`) wires it automatically,
+  reusing the app's existing `DB_*` settings — no new configuration, no
+  Redis to run. See `docs/design/live-pg-fanout.md` and
+  `docs/history/plan-live-pg-fanout.md`.
+
+### Changed
+
+- **`monk new --live` no longer silently defaults to Redis.** It now
+  requires `--redis` or `--postgres` explicitly, raising
+  `Monk::AmbiguousLiveTransportError` with neither — there's no way to
+  tell which cross-process transport an app actually has available, so
+  guessing would be as likely to hand back a template that can't connect
+  as one that can. A script that ran `monk new my_app --live` needs
+  `--redis` added to keep the previous behavior.
+
 ## 0.15.1 - 2026-09-24
 
 ### Fixed

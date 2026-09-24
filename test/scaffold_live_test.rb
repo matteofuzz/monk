@@ -167,7 +167,7 @@ class ScaffoldLiveTest < Minitest::Test
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
-      _out, err, status = Open3.capture3("ruby", EXE, "new", dest, "--live")
+      _out, err, status = Open3.capture3("ruby", EXE, "new", dest, "--live", "--redis")
       help, = Open3.capture2("ruby", EXE, "help")
 
       assert status.success?, err
@@ -176,12 +176,64 @@ class ScaffoldLiveTest < Minitest::Test
     end
   end
 
+  # docs/history/plan-live-pg-fanout.md Phase 6: neither flag means there's
+  # no way to tell whether this app has Postgres available, so --live no
+  # longer silently defaults to Redis.
+  def test_live_without_redis_or_postgres_raises_a_clear_error
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      error = assert_raises(Monk::AmbiguousLiveTransportError) { Monk::Scaffold.new(dest, live: true).write! }
+
+      assert_match(/--redis or --postgres/, error.message)
+    end
+  end
+
+  def test_the_cli_reports_the_ambiguous_transport_error_and_exits_non_zero
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      _out, err, status = Open3.capture3("ruby", EXE, "new", dest, "--live")
+
+      refute status.success?
+      assert_match(/AmbiguousLiveTransportError/, err)
+      refute File.exist?(dest)
+    end
+  end
+
+  def test_live_with_postgres_and_not_redis_uses_pg_fanout
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest, live: true, postgres: true, redis: false).write!
+
+      assert_equal template("live/config/live_pg.rb"), read(dest, "config/live.rb")
+      refute_includes read(dest, "Gemfile"), %(gem "redis")
+      refute_includes read(dest, ".env"), "REDIS_URL"
+      assert_includes read(dest, "SETUP.md"), "PgFanout"
+      refute_includes read(dest, "SETUP.md"), "REDIS_URL"
+    end
+  end
+
+  def test_live_with_both_redis_and_postgres_uses_redis
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest, live: true, postgres: true, redis: true).write!
+
+      assert_equal template("live/config/live.rb"), read(dest, "config/live.rb")
+      assert_includes read(dest, "Gemfile"), %(gem "redis")
+    end
+  end
+
   private
 
+  # Defaults to --redis so every existing test below keeps exercising the
+  # Redis transport exactly as before --live required picking one
+  # explicitly (docs/history/plan-live-pg-fanout.md Phase 6); pass
+  # `redis: false, postgres: true` for the PgFanout path instead.
   def in_app(**flags)
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
-      Monk::Scaffold.new(dest, live: true, **flags).write!
+      Monk::Scaffold.new(dest, live: true, redis: true, **flags).write!
       yield dest
     end
   end

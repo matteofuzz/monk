@@ -13,10 +13,15 @@ monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a mi
 monk new my_app --redis      # + the redis gem, for bin/websocket_server's cross-process
                               #   fan-out; writes/extends .env/.env.example with a placeholder
                               #   REDIS_URL either way, whether or not --postgres is also set
-monk new my_app --live       # + --redis, above, plus a Monk::Live demo (a counter whose open tabs update
-                              #   together): config/live.rb, views/live/, the browser runtime under
-                              #   public/js/monk_live/, and live versions of config.ru, views/index.erb
-                              #   and bin/websocket_server
+monk new my_app --live --redis     # + a Monk::Live demo (a counter whose open tabs update together):
+                                    #   config/live.rb (Redis-based), views/live/, the browser runtime
+                                    #   under public/js/monk_live/, and live versions of config.ru,
+                                    #   views/index.erb and bin/websocket_server
+monk new my_app --live --postgres  # same demo, but config/live.rb uses Monk::WebSocket::PgFanout
+                                    #   (Postgres LISTEN/NOTIFY) instead -- no redis gem, no REDIS_URL.
+                                    #   --live requires --redis or --postgres explicitly (raises
+                                    #   Monk::AmbiguousLiveTransportError with neither -- see live.md,
+                                    #   "Without Redis"); passing both picks --redis
 ```
 
 Writes a fresh project directory from static templates (never overwrites
