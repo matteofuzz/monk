@@ -98,73 +98,137 @@ rest on it.
   `batch` delivered across the Seam C process boundary with the envelope
   intact.
 
-## Phase 1 — `PgFanout` core (Seam A)
+## Phase 1 — `PgFanout` core (Seam A) — DONE 2026-09-24
 
-1. `PgFanout.new(registry, pg_config:)` (exact keyword TBD at
-   implementation time — likely reusing whatever `Hash`/connection-string
-   shape `config/persistence.rb` already builds) stores the wrapped
-   registry, generates a frozen origin UUID, and freezes `self` once
-   construction completes.
-2. `#register`, `#unregister`, `#count` — pure delegation to the wrapped
-   registry, asserted directly (no Postgres involvement needed for these
-   three).
-3. Constructing with a non-shareable wrapped registry raises the same
-   class of error `RedisFanout`/`Monk::Live.configure` already raise for
-   an unshareable registry — checked at construction, not first broadcast.
+Built as `Monk::WebSocket::PgFanout` in `lib/monk/websocket/pg_fanout.rb`,
+tests in `test/websocket_pg_fanout_test.rb` (4 tests this phase).
 
-## Phase 2 — Channel, payload framing, and the size guard (Seam A continued)
+1. `PgFanout.new(registry, pg_opts:)` — `pg_opts:` is the same
+   `{host:, port:, user:, password:, dbname:}` Hash shape
+   `config/persistence.rb`/`PersistenceTestHelpers#pg_test_opts` already
+   use for `PG.connect`, not a connection-string keyword. Stores the
+   wrapped registry, generates a frozen origin UUID, and freezes `self`.
+2. `#register`, `#unregister`, `#count` — pure delegation, asserted
+   directly.
+3. Constructing with a non-shareable wrapped registry raises
+   `ArgumentError`, checked on the argument *before* anything opens a
+   Postgres connection (Phase 3 changed what "anything" means here — see
+   below).
+
+**Found along the way:** `pg_opts`'s String values (host/user/password,
+typically from `ENV.fetch`) aren't frozen just because the wrapping Hash
+is — `Hash#freeze` doesn't recurse. The shareability check needs
+`Ractor.make_shareable(pg_opts.dup)`, not a plain `.freeze`, or it fails
+on the connection options instead of the registry argument it's meant to
+guard — the same trap `Monk::WebSocket::Server#initialize` already
+sidesteps for `allowed_origins`.
+
+## Phase 2 — Channel, payload framing, and the size guard (Seam A continued) — DONE 2026-09-24
+
+Tests added to the same file (6 total after this phase).
 
 4. `#broadcast(key, payload)` delivers to the local wrapped registry
    directly first (same latency/reliability as a plain `Registry` if
    Postgres is briefly unavailable — mirrors `RedisFanout#broadcast`'s own
-   ordering), then builds the `"<origin>\0<key>\0<payload>"` envelope and
-   calls `pg_notify` via `exec_params` on the calling Ractor's memoized
-   connection.
-5. A payload whose `bytesize` exceeds 8000 raises before `exec_params` is
-   ever called — asserted with a payload built to be exactly one byte over
-   the cap, and asserted that exactly at the cap it does not raise.
+   ordering), then builds an envelope and calls `pg_notify` via
+   `exec_params` on the calling Ractor's memoized connection.
+5. A payload whose envelope `bytesize` reaches the cap raises before
+   `exec_params` is ever called — asserted with an envelope built to be
+   exactly one byte over, and asserted that exactly at the boundary it
+   does not raise.
 6. Publish connection is memoized per calling Ractor
-   (`Ractor.current[:monk_pg_fanout_publisher]`), asserted by publishing
-   twice from the same Ractor and confirming no second connection opens
-   (a counting stub or a `PG::Connection#object_id` check).
+   (`Ractor.current[:monk_pg_fanout_publisher]`).
 
-## Phase 3 — Subscriber Ractor and echo suppression (Seam A/B)
+**Found along the way, both corrections to this plan's original
+assumptions, not just implementation details:**
+
+- **A NUL byte can't ride in a Postgres `NOTIFY` payload at all.**
+  `exec_params` raises `ArgumentError: string contains null byte` for any
+  bound text parameter containing one — this isn't a `pg`-gem quirk, it's
+  that a `NOTIFY` payload is a `text` value and Postgres's `NOTIFY`
+  command doesn't support embedded NULs, full stop. Step 4's originally
+  planned `"<origin>\0<key>\0<payload>"` framing (`RedisFanout`'s own
+  shape) is impossible here. Replaced with a Netstring-style length
+  prefix (`"<bytesize>:"` then that many bytes) for origin and key, immune
+  to whatever bytes the key or payload contain, since the header's
+  delimiter is always the *first* `:` in the whole string by
+  construction. Forced through `.b` throughout so byte-length slicing
+  lines up for non-ASCII content too — the same class of fix
+  `Frame.encode` needed (`docs/history/plan-live.md` Phase 7).
+- **The real cap is exclusive, not inclusive, and it's 8000, not
+  "≤8000."** Verified directly against a real server (`psql` loop, not
+  documentation): 7999 bytes succeeds, exactly 8000 fails with "payload
+  string too long." `MAX_NOTIFY_PAYLOAD_BYTES = 8000` and the guard checks
+  `>= MAX_NOTIFY_PAYLOAD_BYTES`, not `>` — this plan's step 5 wording
+  ("exceeds 8000") would have let a 8000-byte envelope through the guard
+  and straight into a raw `PG::Error`, the exact failure mode the guard
+  exists to prevent.
+- Confirmed via a second `psql` check: multi-byte UTF-8 text survives a
+  `pg_notify`/bound-parameter round trip byte-for-byte (see Phase 4's
+  fidelity test) — not assumed just because the framing is byte-safe.
+
+## Phase 3 — Subscriber Ractor and echo suppression (Seam A/B) — DONE 2026-09-24
+
+Tests added to the same file (8 total after this phase).
 
 7. The subscriber Ractor opens its own dedicated `PG::Connection`, issues
    `LISTEN monk_live`, and loops on `wait_for_notify`, dispatching each
    notification to the wrapped registry's `#broadcast(key.to_sym,
-   payload)` after splitting the envelope and dropping the process's own
+   payload)` after decoding the envelope and dropping the process's own
    origin.
 8. **Seam B test**: two `PgFanout`s sharing one test-Postgres connection
    config, each wrapping its own real `Registry` with a registered
    `Ractor::Port`; broadcasting from instance A's `#broadcast` is observed
    exactly once on B's registered port and **zero** times on A's own
-   registered port via the round trip (the origin-echo assertion
-   `RedisFanout`'s own test suite already makes, reproduced here).
-9. Symbol/String key handling matches `RedisFanout` exactly: the channel
-   payload's key segment is always a String on the wire, converted with
-   `.to_sym` before reaching `Registry#broadcast`, matching every existing
-   caller's Symbol-keyed usage.
+   registered port via the round trip.
+9. Symbol/String key handling matches `RedisFanout` exactly: the wire
+   key is always a String, converted with `.to_sym` before reaching
+   `Registry#broadcast`.
 
-## Phase 4 — Real cross-process (Seam C)
+**Deviation from this plan's original ordering:** the registry
+shareability check (Phase 1, step 3) now runs *before* the subscriber
+Ractor is spawned, not just before `freeze`. Construction from this phase
+on always opens a real `LISTEN` connection (no lazy/offline path, matching
+`RedisFanout`); checking the argument first means a non-shareable registry
+never leaves a live Postgres connection running past a failed
+construction. Full suite green (481 runs, 0 failures, 0 skips) after this
+phase.
+
+## Phase 4 — Real cross-process (Seam C) — DONE 2026-09-24
+
+`test/support/live_ws_process_pg.rb`, `test/live_multiprocess_helpers_pg.rb`,
+`test/live_pg_test.rb` (4 tests).
 
 10. A `PgFanout`-based counterpart to `test/support/live_ws_process.rb`:
     a genuinely separate OS process running `Monk::Live::HANDLER` on a
     `PgFanout`-wrapped registry, sharing only the test Postgres database
-    with the test process.
+    with the test process. Its readiness probe couldn't mirror Redis's
+    `CLIENT LIST` `psub=` count (Postgres has no per-channel subscriber
+    count) — uses `pg_stat_activity` instead: a backend that issued
+    `LISTEN monk_live` and is now blocked in `wait_for_notify` shows up
+    `state = 'idle'` with `query = 'LISTEN monk_live'` (Postgres keeps an
+    idle backend's last query text), which is exactly the observable
+    signal needed.
 11. A fragment rendered and broadcast in the test process reaches a real
     WS client connected to the child process, through Postgres only —
-    the direct analogue of `plan-live.md` Phase 7's Redis proof, this time
-    with `PgFanout`.
+    the direct analogue of `plan-live.md` Phase 7's Redis proof, with
+    `PgFanout`.
 12. Non-ASCII/multi-line payload byte-fidelity, re-run here rather than
-    assumed: `plan-live.md` Phase 7 found and fixed a real encoding bug in
-    the WS frame layer (`Frame.encode`, non-ASCII UTF-8) that had nothing
-    to do with the fanout transport — confirming it doesn't regress
-    through a different transport is cheap insurance, not busywork.
-13. Killing the Postgres connection mid-session is observed as the
-    subscriber Ractor dying (no retry, per Decision 8) — asserted
-    explicitly so this is documented behavior, not a silent gap discovered
-    later.
+    assumed — **scaled down from `live_redis_test.rb`'s ~130KB fixture**,
+    which would trip `PgFanout`'s own payload cap outright rather than
+    testing fidelity; 40 repetitions (comfortably under the cap) of the
+    same quotes/backslash/tab/multi-byte-Unicode line survives the
+    length-prefixed envelope and the Postgres hop byte-for-byte.
+13. **Killing the Postgres connection mid-session — checked with a
+    one-off probe (not a permanent test), same posture `plan-live.md`
+    Phase 7 took for "if Redis is down."** Terminating a subscriber's
+    backend (`pg_terminate_backend`) kills that Ractor with a reported,
+    uncaught `PG::ConnectionBad` (`PQconsumeInput() server closed the
+    connection unexpectedly`) — Ruby prints it as a terminated-Ractor
+    warning, the process keeps running, and there is no retry, exactly
+    `RedisFanout`'s existing posture for a dead connection. A sibling
+    fanout's own publish leg (a separate connection) is unaffected and
+    keeps succeeding.
 
 ## Phase 5 — `Monk::Live` wiring, config template, docs (Seam D)
 
