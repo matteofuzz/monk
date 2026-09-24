@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Added
+
+- `Monk::WebSocket::PgFanout`: a Postgres `LISTEN`/`NOTIFY`-backed
+  alternative to `RedisFanout`, implementing the identical
+  `#register`/`#unregister`/`#count`/`#broadcast` interface, for an app
+  that already runs Postgres and doesn't need Redis as a second
+  dependency. Caps a single broadcast at just under 8000 bytes
+  (Postgres's own `NOTIFY` limit) and, unlike `RedisFanout`, has no
+  horizontal-scaling story for many WS processes or a hot topic. See
+  `docs/design/live-pg-fanout.md` and
+  `docs/history/plan-live-pg-fanout.md`. Not yet wired into `monk new
+  --live`'s scaffold (`lib/monk/templates/live/config/live_pg.rb` is a
+  manual-swap template; `docs/guides/live.md`'s "Without Redis" section
+  has the usage).
+
 ## 0.15.1 - 2026-09-24
 
 ### Fixed

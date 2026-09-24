@@ -78,3 +78,11 @@ unavailable — and additionally publishes to Redis so sibling processes'
 subscriber Ractors deliver it to their own local connections. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it
 needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
+
+`Monk::WebSocket::PgFanout` implements the identical interface over Postgres
+`LISTEN`/`NOTIFY` instead — for an app that already runs Postgres and would
+rather not add Redis as a second dependency (`docs/guides/live.md`'s "Without
+Redis" section has the worked example). It caps a single broadcast at just
+under 8000 bytes (`PgFanout::MAX_NOTIFY_PAYLOAD_BYTES`, Postgres's own
+`NOTIFY` limit) and has no higher-throughput story for many processes/hot
+topics — reach for `RedisFanout` instead once either of those matters.

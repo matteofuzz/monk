@@ -30,6 +30,10 @@ carry sockets):
 Redis (`Monk::WebSocket::RedisFanout`) is what carries an update between the
 two, which is why `--live` implies `--redis`.
 
+**If your app already runs Postgres and doesn't need Redis**, swap the
+registry for `Monk::WebSocket::PgFanout` instead — same interface, no
+second piece of infrastructure to run. See "Without Redis" below.
+
 ## Publishing (server side)
 
 ```ruby
@@ -166,6 +170,48 @@ with recipient topics.
   `rescue` if a missed push should not fail the request.
 - If delivering to a connection fails unexpectedly, the server closes that
   connection (code 1011), and the client reconnects and re-syncs.
+
+## Without Redis: Postgres LISTEN/NOTIFY instead
+
+`--live` implies `--redis` because `bin/server` and `bin/websocket_server` are
+always two processes, and *something* has to carry a publish between them —
+not because of horizontal scaling (that's still a separate, unbuilt feature;
+see `docs/design/ws-horizontal-scaling-considerations.md` in the monk gem's
+own repo). If your app already runs Postgres (`--postgres`) for persistence
+or `Monk::Auth`, `Monk::WebSocket::PgFanout` carries the same publish over
+`LISTEN`/`NOTIFY` instead, so there's no Redis to run at all:
+
+```ruby
+# config/live.rb, required by both processes
+Monk::Live.configure(
+  registry: Monk::WebSocket::PgFanout.new(
+    Monk::WebSocket::Registry.new,
+    pg_opts: { host: ENV.fetch("DB_HOST", "127.0.0.1"), port: ENV.fetch("DB_PORT", "5432").to_i,
+               user: ENV.fetch("DB_USER", "postgres"), password: ENV.fetch("DB_PASSWORD", "postgres"),
+               dbname: ENV.fetch("DB_NAME", "app_development") },
+  ),
+)
+```
+
+Reuses the same `DB_*` env vars `config/persistence.rb` already reads — no
+new configuration. A scaffolded app's full version of this file is
+`lib/monk/templates/live/config/live_pg.rb` in the monk gem itself (not yet
+wired into `monk new --live` — copy it over `config/live.rb` and drop
+`REDIS_URL` to use it today; see
+`docs/design/live-pg-fanout.md`/`docs/history/plan-live-pg-fanout.md` there
+for the full design and what's still open).
+
+Two real tradeoffs, not just a syntax swap:
+
+- **`Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES` (8000, exclusive)
+  is a hard Postgres limit on a single `NOTIFY` payload.** `RedisFanout` has
+  no such cap. `#broadcast` raises `Monk::WebSocket::PayloadTooLargeError`
+  before ever hitting Postgres if a rendered fragment (plus a small amount of
+  internal framing) is too big — shrink the fragment, or use `RedisFanout` if
+  your partials can be large.
+- **Neither transport retries a dropped connection.** If Postgres is
+  unreachable, `Monk::Live.patch` raises the same way it does when Redis is
+  down (above) — after delivering to subscribers in its own process.
 
 ## Cost and limits
 

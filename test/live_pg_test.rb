@@ -92,6 +92,41 @@ class LivePgTest < Minitest::Test
     end
   end
 
+  # Step 14: Monk::Live.configure(registry: PgFanout.new(...)) end to end
+  # through every publish verb, not just #patch (already covered above via
+  # @publisher directly) -- append/prepend/remove/batch each cross the
+  # same process boundary through Postgres only.
+  def test_every_publish_verb_reaches_the_other_process_through_monk_live
+    with_frozen_views({ "row.erb" => ROW }) do
+      topic = unique_topic
+      client = connect_and_subscribe(topic)
+      Monk::Live.configure(registry: @fanout)
+
+      Monk::Live.append(topic, to: "#list", partial: "row", id: 1, text: "appended")
+      assert_equal(
+        { "op" => "patch", "mode" => "append", "target" => "#list" }, next_frame(client).slice("op", "mode", "target"),
+      )
+
+      Monk::Live.prepend(topic, to: "#list", partial: "row", id: 2, text: "prepended")
+      assert_equal(
+        { "op" => "patch", "mode" => "prepend", "target" => "#list" },
+        next_frame(client).slice("op", "mode", "target"),
+      )
+
+      Monk::Live.remove(topic, to: "#c-1")
+      assert_equal(
+        { "op" => "patch", "mode" => "remove", "target" => "#c-1" },
+        next_frame(client).slice("op", "mode", "target"),
+      )
+
+      Monk::Live.batch(topic) do |b|
+        b.remove(to: "#c-2")
+        b.remove(to: "#c-3")
+      end
+      assert_equal "batch", next_frame(client)["op"]
+    end
+  end
+
   private
 
   def connect_and_subscribe(topic)
