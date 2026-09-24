@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.15.1 - 2026-09-24
+
+### Fixed
+
+- ERB templates with a non-ASCII string literal inside Ruby code (e.g.
+  `<%= ok ? "✓" : "✗" %>`) no longer render as `ASCII-8BIT` and drag the
+  whole page — layout and other locals included — down with them. The
+  compiled template source is now retagged with the encoding
+  `ERB::Compiler#compile` returns instead of dropping it.
+
+### Added
+
+- `docs/ai_usage_disclaimer.md`, linked from the README.
+- `docs/deployment-options.md`: analysis of hosting options for Postgres,
+  Redis, and SMTP.
+
 ## 0.15.0 - 2026-09-22
 
 ### Changed
