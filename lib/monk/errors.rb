@@ -34,4 +34,7 @@ module Monk
 
   class ScaffoldExistsError < StandardError
   end
+
+  class AmbiguousLiveTransportError < StandardError
+  end
 end

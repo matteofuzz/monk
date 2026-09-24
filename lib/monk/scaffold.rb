@@ -58,9 +58,16 @@ module Monk
       "views/index.erb" => "live/views/index.erb",
     }.freeze
 
+    # config/live.rb itself isn't here -- #write_live! picks between
+    # LIVE_CONFIG_TEMPLATES[@live_transport] instead, since which one gets
+    # written depends on --redis vs --postgres, not a fixed mapping.
     LIVE_FILES = {
-      "config/live.rb" => "live/config/live.rb",
       "views/live/_hits.erb" => "live/views/live/_hits.erb",
+    }.freeze
+
+    LIVE_CONFIG_TEMPLATES = {
+      redis: "live/config/live.rb",
+      postgres: "live/config/live_pg.rb",
     }.freeze
 
     # Where the client runtime lands in the app's public root (an app serves
@@ -87,15 +94,41 @@ module Monk
     # and only then requires "redis", so the gem has to already be in the
     # bundle for that to work.
     #
-    # live: implies redis: -- bin/server and bin/websocket_server are separate
-    # processes, so an update published by one only reaches a socket held by
-    # the other through Redis.
+    # live: bin/server and bin/websocket_server are always separate
+    # processes, so *something* has to carry a publish between them --
+    # --redis (Monk::WebSocket::RedisFanout) or --postgres
+    # (Monk::WebSocket::PgFanout, reusing --postgres's own DB_* settings,
+    # no Redis to run). --live no longer silently defaults to one: with
+    # neither flag, there's no way to tell whether this app has Postgres
+    # available at all, so guessing would be as likely to hand back a
+    # template that can't connect as one that can. --live --redis wins
+    # over --postgres if both are passed (an explicit ask beats an
+    # implied default); --live --postgres alone (or via --auth, which
+    # implies --postgres) picks PgFanout; --live with neither raises.
+    # See docs/design/live-pg-fanout.md / docs/history/plan-live-pg-fanout.md
+    # for the design this decision comes from.
     def initialize(dir, postgres: false, auth: false, redis: false, live: false)
       @dir = dir
       @auth = auth
       @postgres = postgres || auth
       @live = live
-      @redis = redis || live
+
+      if @live
+        @redis = redis || false
+        @live_transport = if redis
+          :redis
+        elsif @postgres
+          :postgres
+        else
+          raise Monk::AmbiguousLiveTransportError,
+            "monk new --live needs --redis or --postgres to pick Monk::Live's cross-process " \
+            "transport (bin/server and bin/websocket_server are always separate processes) -- " \
+            "pass one explicitly, e.g. `--live --postgres` (docs/guides/live.md's " \
+            "\"Without Redis\" section has the tradeoffs)"
+        end
+      else
+        @redis = redis
+      end
     end
 
     def write!
@@ -136,6 +169,7 @@ module Monk
     private
 
     def write_live!
+      write_file("config/live.rb", LIVE_CONFIG_TEMPLATES.fetch(@live_transport))
       LIVE_FILES.each { |relative, template| write_file(relative, template) }
       copy_live_client!
       add_live_to_layout!
@@ -253,12 +287,17 @@ module Monk
     end
 
     def live_setup_md_content
+      @live_transport == :postgres ? live_setup_md_content_postgres : live_setup_md_content_redis
+    end
+
+    def live_setup_md_content_redis
       <<~MARKDOWN
 
         ## Live updates (Monk::Live)
 
-        `monk new --live` wired a demo: a counter whose open tabs update by
-        themselves. It needs three things running, each in its own terminal:
+        `monk new --live --redis` wired a demo: a counter whose open tabs
+        update by themselves. It needs three things running, each in its own
+        terminal:
 
         ```bash
         docker run --rm -d -p 6379:6379 --name #{File.basename(@dir)}_redis redis:7   # skip if one is already up
@@ -272,8 +311,8 @@ module Monk
         (`REDIS_URL`, already in `.env`) is what carries an update from one to
         the other. Where things are:
 
-        - `config/live.rb` -- the Redis wiring and the subscribe rules (nothing
-          is allowed unless a rule says so).
+        - `config/live.rb` -- the Redis wiring (`Monk::WebSocket::RedisFanout`)
+          and the subscribe rules (nothing is allowed unless a rule says so).
         - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
         - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
         - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
@@ -285,6 +324,49 @@ module Monk
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
+      MARKDOWN
+    end
+
+    def live_setup_md_content_postgres
+      <<~MARKDOWN
+
+        ## Live updates (Monk::Live)
+
+        `monk new --live --postgres` wired a demo: a counter whose open tabs
+        update by themselves. It needs two things running, each in its own
+        terminal -- no Redis, since Postgres `LISTEN`/`NOTIFY` carries the
+        update instead:
+
+        ```bash
+        bin/server              # the HTTP app on :9292, which publishes updates
+        bin/websocket_server    # the sockets on :9293, which deliver them
+        ```
+
+        Open http://localhost:9292 in two tabs and press the button in one.
+
+        `bin/server` and `bin/websocket_server` are separate processes, so
+        Postgres `LISTEN`/`NOTIFY` (the same `DB_*` settings already in `.env`)
+        is what carries an update from one to the other. Where things are:
+
+        - `config/live.rb` -- the Postgres wiring (`Monk::WebSocket::PgFanout`)
+          and the subscribe rules (nothing is allowed unless a rule says so).
+        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+          used this way see only their locals (`locals[:hits]`), never
+          `params` or the session.
+        - `public/js/monk_live/` -- the browser runtime, copied from the gem.
+          The layout points at it and at `LIVE_WS_URL` (default
+          `ws://localhost:9293`; use `wss://` in production).
+
+        `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
+        origin your pages are served from, or the browser's socket is refused.
+
+        A single broadcast is capped at just under 8000 bytes
+        (`Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES`, Postgres's own
+        `NOTIFY` limit) -- far more than this demo ever sends, but worth
+        knowing before pushing much larger partials this way. Regenerate with
+        `--redis` instead of `--postgres` if that becomes a real constraint.
       MARKDOWN
     end
 

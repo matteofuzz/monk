@@ -9,11 +9,14 @@ your own. Design rationale is in `docs/history/reactive-partials.md` and ADRs
 it.
 
 ```
-monk new my_app --live
+monk new my_app --live --redis
 ```
 
 scaffolds a working demo (a counter whose tabs update together); everything
-below is what that demo is made of.
+below is what that demo is made of. `--live` needs `--redis` or `--postgres`
+(see "Without Redis" below) — there's no default, since guessing which one
+your app has available would be as likely to hand back a template that can't
+connect as one that can.
 
 ## The shape
 
@@ -28,11 +31,12 @@ carry sockets):
 ```
 
 Redis (`Monk::WebSocket::RedisFanout`) is what carries an update between the
-two, which is why `--live` implies `--redis`.
+two by default (`--redis`).
 
-**If your app already runs Postgres and doesn't need Redis**, swap the
-registry for `Monk::WebSocket::PgFanout` instead — same interface, no
-second piece of infrastructure to run. See "Without Redis" below.
+**If your app already runs Postgres and doesn't need Redis**, `--postgres`
+(without `--redis`) wires `Monk::WebSocket::PgFanout` instead — same
+interface, no second piece of infrastructure to run. See "Without Redis"
+below.
 
 ## Publishing (server side)
 
@@ -173,13 +177,17 @@ with recipient topics.
 
 ## Without Redis: Postgres LISTEN/NOTIFY instead
 
-`--live` implies `--redis` because `bin/server` and `bin/websocket_server` are
-always two processes, and *something* has to carry a publish between them —
-not because of horizontal scaling (that's still a separate, unbuilt feature;
-see `docs/design/ws-horizontal-scaling-considerations.md` in the monk gem's
-own repo). If your app already runs Postgres (`--postgres`) for persistence
-or `Monk::Auth`, `Monk::WebSocket::PgFanout` carries the same publish over
-`LISTEN`/`NOTIFY` instead, so there's no Redis to run at all:
+`--live` needs `--redis` or `--postgres` because `bin/server` and
+`bin/websocket_server` are always two processes, and *something* has to
+carry a publish between them — not because of horizontal scaling (that's
+still a separate, unbuilt feature; see
+`docs/design/ws-horizontal-scaling-considerations.md` in the monk gem's own
+repo). Neither flag is a silent default: passing neither raises
+`Monk::AmbiguousLiveTransportError` rather than guessing.
+
+`monk new my_app --live --postgres` (and not `--redis`) wires
+`Monk::WebSocket::PgFanout` instead, carrying the publish over
+`LISTEN`/`NOTIFY`, so there's no Redis to run at all:
 
 ```ruby
 # config/live.rb, required by both processes
@@ -194,12 +202,12 @@ Monk::Live.configure(
 ```
 
 Reuses the same `DB_*` env vars `config/persistence.rb` already reads — no
-new configuration. A scaffolded app's full version of this file is
-`lib/monk/templates/live/config/live_pg.rb` in the monk gem itself (not yet
-wired into `monk new --live` — copy it over `config/live.rb` and drop
-`REDIS_URL` to use it today; see
-`docs/design/live-pg-fanout.md`/`docs/history/plan-live-pg-fanout.md` there
-for the full design and what's still open).
+new configuration, no `REDIS_URL`. Passing both `--redis` and `--postgres`
+picks `--redis` (an explicit ask beats an implied default); `--auth` implies
+`--postgres` the same way it always has, so `--live --auth` alone also picks
+PgFanout. See `docs/design/live-pg-fanout.md`/
+`docs/history/plan-live-pg-fanout.md` in the monk gem's own repo for the full
+design.
 
 Two real tradeoffs, not just a syntax swap:
 

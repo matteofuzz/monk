@@ -3,18 +3,14 @@
 # sockets terminate there and are handed the updates).
 #
 # They are separate processes, so *something* has to carry a publish from
-# one to the other. This variant uses Postgres LISTEN/NOTIFY instead of
-# Redis (config/live.rb's default) -- for an app that already runs
-# Postgres (--postgres) and doesn't need Redis's higher throughput or its
-# lack of a NOTIFY payload cap (~8000 bytes; see
-# Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES and the monk gem's
-# own docs/design/live-pg-fanout.md for the tradeoff). Reuses the exact
-# DB_* env vars config/persistence.rb already reads -- swapping in this
-# file needs no new configuration, and no Redis to run.
-#
-# To use this instead of the default: replace config/live.rb's contents
-# with this file's, and drop REDIS_URL from .env/.env.test (bin/server and
-# bin/websocket_server no longer need it).
+# one to the other. `monk new --live --postgres` (and not --redis) wired
+# this file instead of the Redis-based default -- Postgres LISTEN/NOTIFY
+# carries the publish instead, reusing the exact DB_* env vars
+# config/persistence.rb already reads, so there's no Redis to run. The
+# tradeoff: a single broadcast is capped at just under 8000 bytes
+# (Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES, Postgres's own
+# NOTIFY limit) -- regenerate with --redis instead if that becomes a real
+# constraint. Full design in the monk gem's own docs/design/live-pg-fanout.md.
 require_relative "settings"
 require "monk/live"
 require "monk/websocket/pg_fanout"
