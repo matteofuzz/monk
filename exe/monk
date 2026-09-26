@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require_relative "../lib/monk/scaffold"
 
-USAGE = "Usage: monk new APP_NAME [--postgres] [--auth] [--redis] [--live]".freeze
+USAGE = "Usage: monk new APP_NAME [--postgres] [--auth] [--mail] [--redis] [--live]".freeze
 
 HELP = <<~TEXT.freeze
   #{USAGE}
@@ -41,7 +41,18 @@ HELP = <<~TEXT.freeze
                        requires config/auth instead of config/persistence
                        (config/auth.rb itself requires persistence), and
                        .env/.env.test/.env.example get an AUTH_SECRET line.
-      --redis         Add the redis gem to the Gemfile, for
+                       Also implies --mail, below: config/auth.rb sends the
+                       magic link through Monk::Mail, with an HTML part in
+                       views/mail/magic_link.erb.
+      --mail          Also scaffold Monk::Mail (text/HTML email over SMTP),
+                       no Postgres needed: config/mail.rb, required by
+                       config.ru, plus gem "net-smtp" in the Gemfile.
+                       .env/.env.test/.env.example get MAIL_FROM, and
+                       MAIL_URL where it matters: log:// in .env.test, an
+                       smtp:// placeholder in .env.example. Unset in
+                       development, MAIL_URL means log:// (messages printed,
+                       not sent); anywhere else it must be set.
+      --redis        Add the redis gem to the Gemfile, for
                        bin/websocket_server's cross-process fan-out. Fully
                        independent -- doesn't imply, and isn't implied by,
                        --postgres or --auth. Writes/extends .env and
@@ -109,15 +120,19 @@ when "new"
   usage_error! if app_name.nil?
 
   auth = rest.include?("--auth")
+  mail = rest.include?("--mail") || auth
   redis = rest.include?("--redis")
   live = rest.include?("--live")
-  Monk::Scaffold.new(app_name, postgres: rest.include?("--postgres"), auth: auth, redis: redis, live: live).write!
+  Monk::Scaffold.new(
+    app_name, postgres: rest.include?("--postgres"), auth: auth, mail: mail, redis: redis, live: live,
+  ).write!
 
   puts "Created #{app_name}. Next steps:"
   puts "  cd #{app_name}"
   puts "  bundle install"
   puts "  see SETUP.md for the full dev-then-test walkthrough"
   puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
+  puts "  set MAIL_URL and MAIL_FROM outside development (see config/mail.rb)" if mail
   if live
     if redis
       puts "  Monk::Live needs Redis running, bin/server and bin/websocket_server (see SETUP.md)"

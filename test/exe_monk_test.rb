@@ -44,6 +44,19 @@ class ExeMonkTest < Minitest::Test
     end
   end
 
+  def test_new_with_mail_adds_the_mail_scaffold_without_auth
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      stdout, _stderr, status = run_monk("new", dest, "--mail")
+
+      assert status.success?
+      assert File.exist?(File.join(dest, "config/mail.rb"))
+      refute File.exist?(File.join(dest, "config/auth.rb"))
+      assert_match(/MAIL_URL/, stdout)
+    end
+  end
+
   def test_missing_app_name_prints_usage_and_exits_non_zero
     _stdout, stderr, status = run_monk("new")
 
@@ -66,6 +79,7 @@ class ExeMonkTest < Minitest::Test
       assert_match(/Usage: monk new APP_NAME/, stdout)
       assert_match(/--postgres/, stdout)
       assert_match(/--auth/, stdout)
+      assert_match(/--mail/, stdout)
       assert_match(/bin\/migrate/, stdout)
     end
   end

@@ -1,0 +1,1 @@
+gem "net-smtp" # Monk::Mail's smtp:// transport (config/mail.rb)

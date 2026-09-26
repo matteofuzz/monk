@@ -45,6 +45,15 @@ module Monk
       "config/auth.rb" => "auth/config/auth.rb",
       "db/migrate/00000000000001_create_auth_tables.up.sql" => "auth/db/migrate/00000000000001_create_auth_tables.up.sql",
       "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
+      # The magic link's HTML part -- config/auth.rb's AppMailer::DELIVER
+      # renders it and sends through Monk::Mail (MAIL_FILES, implied by --auth).
+      "views/mail/magic_link.erb" => "auth/views/mail/magic_link.erb",
+    }.freeze
+
+    # --mail, or implied by --auth: Monk::Mail's config. Its Gemfile line
+    # (net-smtp) and MAIL_* env vars are added by #write! / #write_env_files!.
+    MAIL_FILES = {
+      "config/mail.rb" => "mail/config/mail.rb",
     }.freeze
 
     # --live: Monk::Live's demo (a counter whose open tabs update when
@@ -107,10 +116,14 @@ module Monk
     # implies --postgres) picks PgFanout; --live with neither raises.
     # See docs/design/live-pg-fanout.md / docs/history/plan-live-pg-fanout.md
     # for the design this decision comes from.
-    def initialize(dir, postgres: false, auth: false, redis: false, live: false)
+    #
+    # mail: Monk::Mail on its own, no Postgres needed. auth: implies it, the
+    # same way it implies postgres: a magic link has to reach someone.
+    def initialize(dir, postgres: false, auth: false, redis: false, live: false, mail: false)
       @dir = dir
       @auth = auth
       @postgres = postgres || auth
+      @mail = mail || auth
       @live = live
 
       if @live
@@ -145,15 +158,20 @@ module Monk
         POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
         FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
         append_gemfile_extra("postgres/Gemfile.extra")
-        wire_config_ru!
       end
 
+      if @mail
+        MAIL_FILES.each { |relative, template| write_file(relative, template) }
+        append_gemfile_extra("mail/Gemfile.extra")
+      end
+
+      wire_config_ru! if @postgres || @mail
       append_gemfile_extra("redis/Gemfile.extra") if @redis
 
-      # --postgres and --redis are the two flags with anything worth
-      # putting in an env file (a database, a REDIS_URL) -- the base
-      # skeleton alone has nothing to configure this way.
-      if @postgres || @redis
+      # --postgres, --redis and --mail are the flags with anything worth
+      # putting in an env file (a database, a REDIS_URL, MAIL_*) -- the
+      # base skeleton alone has nothing to configure this way.
+      if @postgres || @redis || @mail
         write_env_files!
         uncomment_dotenv!
       end
@@ -224,12 +242,20 @@ module Monk
     def wire_config_ru!
       path = File.join(@dir, "config.ru")
       settings_require = %(require_relative "config/settings"\n)
-      target = @auth ? "config/auth" : "config/persistence" # config/auth.rb itself require_relative "persistence"
+      requires = +""
+      if @postgres
+        target = @auth ? "config/auth" : "config/persistence" # config/auth.rb itself require_relative "persistence"
+        requires << "require_relative \"#{target}\"\n"
+      end
+      # config/mail.rb from config.ru only, never from config/auth.rb:
+      # bin/websocket_server loads config/auth.rb too and never sends mail,
+      # so it shouldn't need MAIL_URL to boot.
+      requires << "require_relative \"config/mail\"\n" if @mail
 
       content = File.read(path)
       raise "config.ru wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
 
-      File.write(path, content.sub(settings_require, "#{settings_require}require_relative \"#{target}\"\n"))
+      File.write(path, content.sub(settings_require, "#{settings_require}#{requires}"))
     end
 
     # .env/.env.test/.env.example are the other deliberate exception to
@@ -250,6 +276,17 @@ module Monk
         dev << "AUTH_SECRET=change-me-dev-secret"
         test << "AUTH_SECRET=change-me-test-secret"
         example << "AUTH_SECRET=change-me"
+      end
+
+      if @mail
+        # MAIL_URL is left out of .env on purpose: unset in development
+        # means log://, the message printed to the console. Tests boot
+        # outside development, where an unset one raises, hence log:// there.
+        dev << %(MAIL_FROM="#{app_name} <no-reply@localhost>")
+        test << "MAIL_URL=log://"
+        test << %(MAIL_FROM="#{app_name} <no-reply@localhost>")
+        example << "MAIL_URL=smtp://user:password@smtp.example.com:587"
+        example << %(MAIL_FROM="#{app_name} <no-reply@example.com>")
       end
 
       # REDIS_URL is deliberately absent from .env.test -- only a test that
@@ -393,7 +430,7 @@ module Monk
         bin/server              # HTTP app on :9292 -> http://localhost:9292/hello
         bin/websocket_server    # WS chat process on :9293, in another terminal
         ```
-        #{redis_only_note}
+        #{redis_only_note}#{mail_setup_note}
         ## Test environment
 
         `monk new` scaffolds no test framework at all -- this is the minimum to
@@ -415,9 +452,9 @@ module Monk
         $LOAD_PATH.unshift(File.expand_path("..", __dir__))
 
         ENV["MONK_ENV"] ||= "test"
-
+        #{base_test_dotenv_lines}
         require "minitest/autorun"
-        require_relative "../config/settings"
+        require_relative "../config/settings"#{%(\nrequire_relative "../config/mail") if @mail}
         ```
 
         **Rakefile**:
@@ -553,7 +590,7 @@ module Monk
         bin/server              # HTTP app on :9292
         bin/websocket_server    # WS chat process on :9293, in another terminal
         ```
-        #{auth_or_redis_confirmation_note}
+        #{auth_or_redis_confirmation_note}#{mail_setup_note}
         ## Test environment
 
         ### 1. Create the test database
@@ -600,7 +637,7 @@ module Monk
 
         require "minitest/autorun"
         require_relative "../config/settings"
-        require_relative "../config/#{@auth ? "auth" : "persistence"}"
+        require_relative "../config/#{@auth ? "auth" : "persistence"}"#{%(\nrequire_relative "../config/mail") if @mail}
         ```
 
         **Rakefile**:
@@ -655,6 +692,43 @@ module Monk
 
       "\n`bin/websocket_server`'s startup line should print `#{flags}` once " \
         "#{visible} visible to it -- that confirms everything's actually wired up.\n"
+    end
+
+    # Interpolated into a squiggly heredoc, so no leading indentation of
+    # its own (interpolated text isn't dedented).
+    def mail_setup_note
+      return "" unless @mail
+
+      <<~MARKDOWN
+
+        ### Email
+
+        `config/mail.rb` configures `Monk::Mail`; send with
+        `Monk::Mail.deliver(to:, subject:, text:, html:)`.#{auth_mail_sentence} In
+        development `MAIL_URL` is unset, so messages are printed to the
+        console instead of sent. Outside
+        development set `MAIL_URL` (e.g. `smtp://user:pass@smtp.provider.com:587`)
+        and `MAIL_FROM` to a sender on a domain you've verified with your
+        provider -- an unset `MAIL_URL` fails the boot there. Provider
+        examples: `docs/guides/mail.md` in the monk repo.
+      MARKDOWN
+    end
+
+    # The no-Postgres test helper normally has nothing to load from
+    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need:
+    # they boot outside development, where an unset MAIL_URL raises.
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def base_test_dotenv_lines
+      return "" unless @mail
+
+      %(\nrequire "dotenv"\nDotenv.load(File.expand_path(".env.test", __dir__ + "/.."))\n)
+    end
+
+    def auth_mail_sentence
+      return "" unless @auth
+
+      " `config/auth.rb`'s `AppMailer::DELIVER` sends each login link through it " \
+        "(HTML part: `views/mail/magic_link.erb`)."
     end
 
     def sample_test_body

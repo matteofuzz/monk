@@ -384,6 +384,205 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
+  # --mail on its own: Monk::Mail without Auth or Postgres.
+  def test_write_bang_with_mail_adds_config_mail_and_net_smtp_only
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, mail: true).write!
+
+      assert_equal template("mail/config/mail.rb"), read(dest, "config/mail.rb")
+      assert_includes read(dest, "Gemfile"), template("mail/Gemfile.extra")
+      refute File.exist?(File.join(dest, "views/mail/magic_link.erb"))
+      refute File.exist?(File.join(dest, "config/auth.rb"))
+      refute File.exist?(File.join(dest, "config/persistence.rb"))
+      refute_includes read(dest, "Gemfile"), %(gem "pg")
+    end
+  end
+
+  def test_write_bang_with_mail_wires_config_ru_right_after_settings
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, mail: true).write!
+
+      assert_includes read(dest, "config.ru"), %(require_relative "config/settings"\nrequire_relative "config/mail"\n)
+    end
+  end
+
+  # No Postgres, but MAIL_* are still worth an env file -- and without
+  # dotenv uncommented, nothing would load it.
+  def test_write_bang_with_mail_writes_env_files_and_uncomments_dotenv
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, mail: true).write!
+
+      assert_includes read(dest, ".env"), "MAIL_FROM="
+      refute_includes read(dest, ".env"), "DB_NAME"
+      assert_includes read(dest, ".env.test"), "MAIL_URL=log://"
+      assert_includes read(dest, ".env.example"), "MAIL_URL=smtp://"
+      assert_includes read(dest, "Gemfile"), %(gem "dotenv" # loads)
+    end
+  end
+
+  def test_write_bang_with_mail_mentions_mail_in_setup_md_without_auth
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, mail: true).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "MAIL_URL"
+      assert_includes setup_md, %(require_relative "../config/mail")
+      refute_includes setup_md, "AppMailer"
+      # Tests boot outside development, where an unset MAIL_URL raises --
+      # so the test helper has to load .env.test (MAIL_URL=log://) before
+      # config/mail.rb, as the --postgres variant already does for DB_NAME.
+      dotenv_at = setup_md.index('Dotenv.load(File.expand_path(".env.test"')
+      refute_nil dotenv_at, "expected the test helper to load .env.test"
+      assert_operator dotenv_at, :<, setup_md.index('require_relative "../config/mail"')
+    end
+  end
+
+  # --auth sends magic links, so it implies --mail, plus the HTML template
+  # for the link.
+  def test_write_bang_with_auth_adds_the_mail_scaffold
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_equal template("mail/config/mail.rb"), read(dest, "config/mail.rb")
+      assert_equal template("auth/views/mail/magic_link.erb"), read(dest, "views/mail/magic_link.erb")
+      assert_includes read(dest, "Gemfile"), template("mail/Gemfile.extra")
+      assert_equal 1, read(dest, "Gemfile").scan("net-smtp").size
+    end
+  end
+
+  def test_write_bang_with_auth_and_mail_writes_mail_once
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true, mail: true).write!
+
+      assert_equal 1, read(dest, "Gemfile").scan("net-smtp").size
+      assert_equal 1, read(dest, "config.ru").scan("config/mail").size
+      assert_equal 1, read(dest, ".env.test").scan("MAIL_URL").size
+    end
+  end
+
+  # config/mail.rb is required by config.ru only, not by config/auth.rb:
+  # bin/websocket_server loads config/auth.rb as well, and never sends mail,
+  # so it shouldn't need MAIL_URL set to boot.
+  def test_write_bang_with_auth_wires_config_ru_to_require_mail_after_auth
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_includes read(dest, "config.ru"),
+        %(require_relative "config/settings"\nrequire_relative "config/auth"\nrequire_relative "config/mail"\n)
+      refute_includes read(dest, "config/auth.rb"), %(require_relative "mail")
+    end
+  end
+
+  def test_write_bang_without_auth_scaffolds_no_mail
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, postgres: true).write!
+
+      refute File.exist?(File.join(dest, "config/mail.rb"))
+      refute_includes read(dest, "Gemfile"), "net-smtp"
+      refute_includes read(dest, "config.ru"), "config/mail"
+    end
+  end
+
+  # Unset MAIL_URL means log:// in development, so .env leaves it out; tests
+  # boot outside development, where an unset one raises, so .env.test sets
+  # log://; .env.example shows the production shape.
+  def test_write_bang_with_auth_adds_mail_settings_to_env_files
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_includes read(dest, ".env"), "MAIL_FROM="
+      refute_includes read(dest, ".env"), "MAIL_URL="
+      assert_includes read(dest, ".env.test"), "MAIL_URL=log://"
+      assert_includes read(dest, ".env.example"), "MAIL_URL=smtp://"
+      assert_includes read(dest, ".env.example"), "MAIL_FROM="
+    end
+  end
+
+  def test_write_bang_with_auth_mentions_mail_in_setup_md
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      setup_md = read(dest, "SETUP.md")
+      assert_includes setup_md, "MAIL_URL"
+      assert_includes setup_md, %(require_relative "../config/mail")
+    end
+  end
+
+  # The scaffolded pieces working together, as a generated app would load
+  # them: settings, then mail, then auth (config.ru's order), views frozen,
+  # then Monk::Auth's deliver: called from a worker Ractor under log://.
+  def test_scaffolded_auth_delivers_the_magic_link_through_monk_mail
+    require "monk/auth"
+    require "monk/mail"
+
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      log = with_log do |log_dir|
+        with_settings do
+          with_env("AUTH_SECRET", "s3cr3t") do
+            with_env("MAIL_URL", "log://") do
+              with_env("MAIL_FROM", "Demo <no-reply@demo.test>") do
+                require File.join(dest, "config/settings")
+                require File.join(dest, "config/mail")
+                # config/auth.rb loads the scaffolded config/persistence.rb,
+                # which registers :primary -- into a registry an earlier
+                # test's boot may have left frozen.
+                Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+                require File.join(dest, "config/auth")
+                Monk::Views.reset!
+                Monk::Views.root = File.join(dest, "views")
+                # Only what the call below reads from a worker Ractor --
+                # not Monk.freeze!, which would also seal the Pg registry
+                # and Auth's models for every test that runs after this one.
+                [Monk::Settings, Monk::Views, Monk::Log, Monk::Mail, Monk::Auth].each(&:freeze_registry!)
+
+                Ractor.new do
+                  Monk::Auth.config[:deliver].call(
+                    email: "ann@example.test", link: "http://localhost:9292/auth/callback/abc", token: "abc",
+                  )
+                end.value
+                File.read(File.join(log_dir, "test.log"))
+              end
+            end
+          end
+        end
+      ensure
+        Monk::Views.reset!
+      end
+
+      assert_includes log, %(to="ann@example.test")
+      assert_includes log, %(from="Demo <no-reply@demo.test>")
+      assert_includes log, "http://localhost:9292/auth/callback/abc"
+      assert_match(/html=\d+ bytes/, log)
+    end
+  ensure
+    Monk::Auth.reset!
+    Monk::Mail.reset!
+    Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+  end
+
   # redis: true is fully independent -- doesn't imply, and isn't implied
   # by, postgres or auth. There's no config/redis.rb, since there's
   # nothing to register a name against (REGISTRY is a plain module
