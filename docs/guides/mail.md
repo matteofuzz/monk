@@ -50,6 +50,45 @@ gem "net-smtp"
 `from:` is the default sender (`"App <no-reply@app.example>"` or a bare
 address). It's optional, since every `deliver` can pass its own.
 
+### Provider examples
+
+Every transactional provider offers an SMTP relay, so no provider-specific
+code is needed. The first three are the ones recommended in
+[`../mail-providers.md`](../mail-providers.md) (EU-hosted Brevo and
+Lettermint, worldwide Resend); hosts and credential formats were checked
+against each provider's docs on 2026-09-26.
+
+```sh
+# Brevo (FR, EU-hosted). The login looks like an address: encode its @ as %40.
+# The password is an SMTP key from the SMTP & API page, not the API key.
+MAIL_URL=smtp://8f1a2b001%40smtp-brevo.com:SMTP_KEY@smtp-relay.brevo.com:587
+
+# Lettermint (NL, own EU infrastructure). The user is literally "lettermint".
+MAIL_URL=smtp://lettermint:PROJECT_API_TOKEN@smtp.lettermint.co:587
+
+# Resend (US, not EU-resident). The user is literally "resend".
+MAIL_URL=smtp://resend:RESEND_API_KEY@smtp.resend.com:587
+
+# Postmark (US). The server API token is both user and password.
+MAIL_URL=smtp://SERVER_TOKEN:SERVER_TOKEN@smtp.postmarkapp.com:587
+
+# Scaleway TEM (FR). The user is the project ID.
+MAIL_URL=smtp://PROJECT_ID:API_SECRET_KEY@smtp.tem.scaleway.com:587
+
+# Amazon SES, EU region. Use SES SMTP credentials, not IAM access keys;
+# an SES password can contain "/", which must be encoded as %2F.
+MAIL_URL=smtp://SES_SMTP_USER:SES_SMTP_PASSWORD@email-smtp.eu-west-1.amazonaws.com:587
+
+# Mailgun, EU region. Per-domain SMTP credentials; encode the login's @.
+MAIL_URL=smtp://postmaster%40mg.example.com:SMTP_PASSWORD@smtp.eu.mailgun.org:587
+```
+
+All of these accept 587 with STARTTLS, which the URL requires by default
+because credentials are set. Most also listen on 2525 (Brevo, Lettermint,
+Postmark, Mailgun; Resend uses 2587), useful when a network blocks 587:
+change only the port. Verify your sending domain with the provider
+(SPF, DKIM) before going live.
+
 ## `Monk::Mail.deliver`
 
 ```ruby
@@ -122,9 +161,9 @@ development fails the boot on purpose.
   provider works. Hetzner blocks 25 and 465 for new accounts, which
   doesn't matter for a relay on 587.
 - **On a PaaS**, outbound SMTP is often blocked (Railway below Pro,
-  Render's free tier, Fly by default). HTTPS provider presets
-  (`brevo://`, `lettermint://`, `resend://`) are planned for exactly that
-  case; the provider comparison behind them is in
+  Render's free tier, Fly by default). `Monk::Mail` only speaks SMTP, so
+  there you need a plan that allows it, a support request, or a different
+  host. The provider comparison, including their HTTPS APIs, is in
   [`../mail-providers.md`](../mail-providers.md).
 - **Deliverability** is set up at your provider and in DNS, not in Monk:
   verify the sending domain with SPF, DKIM and DMARC. For a magic link, a

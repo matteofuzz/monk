@@ -21,7 +21,7 @@ constraints any host has to satisfy.
 | R5 | **Postgres connections ≈ (Ractor pool size × instances) + 1 per bin/* script** | one memoized `PG::Connection` per Ractor, never shared (`lib/monk/persistence/pg.rb:8-15`) |
 | R6 | **A migration step that is not the start command** | `bin/setup_db` is a separate script; nothing runs it on boot |
 | R7 | **`REDIS_URL`, only if WebSocket fan-out crosses processes** | `bin/websocket_server` requires `monk/websocket/redis_fanout` only when the var is set; unset = in-process fan-out, which is correct for a single-instance deploy |
-| R8 | **Outbound SMTP, or HTTPS to a mail provider** | *Updated 2026-09-26:* Monk now ships `Monk::Mail` (`docs/adr/0012-minimal-built-in-mailer.md`), sending over `smtp://`/`smtps://`, so the host must allow outbound SMTP; HTTPS provider presets are planned for hosts that don't. When this doc was written, Monk had no mailer by design |
+| R8 | **Outbound SMTP to a relay** | *Updated 2026-09-26:* Monk now ships `Monk::Mail` (`docs/adr/0012-minimal-built-in-mailer.md`), sending over `smtp://`/`smtps://`, so the host must allow outbound SMTP (every provider's relay works, see `docs/guides/mail.md`). When this doc was written, Monk had no mailer by design |
 | R9 | **A writable `log/` directory** | `Monk::Log` appends to `log/<env>.log` in every environment (`lib/monk/log.rb:39-49`) — a read-only root filesystem breaks boot |
 | R10 | **Env vars present in the main Ractor at boot** | `Monk::Settings` reads `ENV` at boot and seals the result shareable (`lib/monk/settings.rb`); platform-injected vars are fine, `.env` files are a dev-only convenience |
 
