@@ -37,6 +37,8 @@ module Monk
       # the value, not the module, same as Monk::Auth.freeze_registry! --
       # an unfrozen config Hash can't be read from a worker Ractor at all.
       def freeze_registry!
+        transport = @config&.fetch(:transport)
+        transport.class.prepare! if transport.class.respond_to?(:prepare!)
         @config = Ractor.make_shareable(@config)
       end
 

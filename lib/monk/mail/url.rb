@@ -27,6 +27,7 @@ module Monk
       def smtp(uri, url, tls:)
         invalid!(url, "missing host") if uri.host.nil? || uri.host.empty?
 
+        Transports::SMTP.require_library!
         user = decode(uri.user)
         Transports::SMTP.new(
           host: uri.host,

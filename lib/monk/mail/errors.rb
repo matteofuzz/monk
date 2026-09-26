@@ -10,5 +10,13 @@ module Monk
 
     class MissingMailUrlError < StandardError
     end
+
+    class MissingDependencyError < StandardError
+    end
+
+    # A send that failed on the way out -- network, TLS, or the server
+    # refusing it. The transport's own exception is the #cause.
+    class DeliveryError < StandardError
+    end
   end
 end

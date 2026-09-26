@@ -10,7 +10,52 @@ module Monk
       # starttls: :always (fail if the server doesn't offer it), :auto (use
       # it if offered) or :never. tls: true is implicit TLS from the first
       # byte (smtps://, usually port 465), where STARTTLS doesn't apply.
-      SMTP = Data.define(:host, :port, :user, :password, :tls, :starttls) do
+      #
+      # net-smtp is the app's dependency, not Monk's (a bundled gem since
+      # Ruby 3.1, like pg/redis are opt-in): required when an smtp:// URL
+      # is configured, so a missing gem fails the boot, not the first send.
+      SMTP = Data.define(:host, :port, :user, :password, :tls, :starttls, :open_timeout, :read_timeout) do
+        def self.require_library!
+          require "net/smtp"
+        rescue LoadError
+          raise MissingDependencyError,
+            "MAIL_URL is smtp:// or smtps://, which needs the net-smtp gem -- a bundled, not default, " \
+            "gem since Ruby 3.1. Add `gem \"net-smtp\"` to your Gemfile."
+        end
+
+        # Called at boot, in the main Ractor, from Monk::Mail.freeze_registry!.
+        # Net::SMTP keeps its AUTH mechanisms ({PLAIN: AuthPlain, ...}) in a
+        # class-level Hash, filled once when net/smtp is required; unfrozen,
+        # a worker Ractor reading it raises Ractor::IsolationError on every
+        # authenticated send. Sealing it is the same move as
+        # Monk::Auth.freeze_rqrcode!. The cost: an auth mechanism registered
+        # after boot would raise FrozenError -- nothing in net-smtp does that.
+        def self.prepare!
+          require_library!
+          Ractor.make_shareable(Net::SMTP::Authenticator.auth_classes)
+        end
+
+        def initialize(host:, port:, user: nil, password: nil, tls: false, starttls: :auto, open_timeout: 5,
+                       read_timeout: 10)
+          super
+        end
+
+        # One connection per message, built here, inside whichever Ractor
+        # is sending. Any network, TLS or SMTP-level failure becomes a
+        # Monk::Mail::DeliveryError (the original is its #cause), so a
+        # caller rescues one class whatever went wrong.
+        def deliver(message)
+          smtp = Net::SMTP.new(host, port, tls: tls, starttls: starttls == :never ? false : starttls)
+          smtp.open_timeout = open_timeout
+          smtp.read_timeout = read_timeout
+          smtp.start(helo: MIME.domain(message.envelope_from), user: user, secret: password) do |session|
+            session.send_message(message.to_mime, message.envelope_from, *message.envelope_to)
+          end
+          message
+        rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
+          raise DeliveryError, "SMTP delivery via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
+        end
+
         # Never print the password -- a transport ends up in logs and
         # exception messages more easily than anyone intends.
         def inspect
