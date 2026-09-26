@@ -1,6 +1,8 @@
 require_relative "freeze_hooks"
 require_relative "environment"
 require_relative "log"
+require_relative "views"
+require_relative "context"
 require_relative "mail/errors"
 require_relative "mail/address"
 require_relative "mail/mime"
@@ -53,6 +55,22 @@ module Monk
         config[:transport].deliver(message)
       end
 
+      # Renders a Monk::Views template to an HTML String for deliver's
+      # html: -- e.g. views/mail/magic_link.erb:
+      #
+      #   html: Monk::Mail.render("mail/magic_link", link: link)
+      #
+      # The same detached-Context render Monk::Live::Renderer does: no
+      # request behind it, so the template sees only its locals, never
+      # params or the session. The app's page layout is skipped (layout:
+      # false); pass layout: "mail/layout" for an email-specific one.
+      # `<%= %>` escapes as usual, which is right for HTML and wrong for a
+      # plain-text body -- build text: as a Ruby String instead.
+      def render(template, layout: false, **locals)
+        ensure_views_frozen!
+        String.new(Monk::Context.new({}).render(template, layout: layout, **locals)).freeze
+      end
+
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module, same as Monk::Auth.freeze_registry! --
       # an unfrozen config Hash can't be read from a worker Ractor at all.
@@ -68,6 +86,24 @@ module Monk
       end
 
       private
+
+      # Unfrozen, a render from a worker Ractor dies with an opaque
+      # Ractor::IsolationError inside Monk::Views, and one from the main
+      # Ractor works by accident and then fails in production -- so both
+      # fail here, naming the fix (same check as Monk::Live::Renderer).
+      def ensure_views_frozen!
+        return if Ractor.shareable?(Monk::Views.registry)
+
+        raise_views_not_frozen
+      rescue Ractor::IsolationError
+        raise_views_not_frozen
+      end
+
+      def raise_views_not_frozen
+        raise ViewsNotFrozenError,
+          "Monk::Mail.render can't render before views are compiled and frozen -- call Monk.boot(app) " \
+          "(or Monk.freeze!) in the main Ractor first"
+      end
 
       def transport_for(url)
         return URL.parse(url) unless url.nil? || url.empty?

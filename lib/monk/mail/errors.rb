@@ -14,6 +14,9 @@ module Monk
     class MissingDependencyError < StandardError
     end
 
+    class ViewsNotFrozenError < StandardError
+    end
+
     class NotConfiguredError < StandardError
     end
 
