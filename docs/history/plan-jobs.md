@@ -2,10 +2,13 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Branch: `main_dev/monk_jobs`. Nothing in this plan is implemented yet.
-Companion record: [`../adr/0013-jobs-queue-split-across-postgres-tables.md`](../adr/0013-jobs-queue-split-across-postgres-tables.md)
-(why the queue is split across several tables rather than kept in one,
-why workers poll, and why no existing gem fits).
+Branch: `main_dev/monk_jobs`. Phases 0 (spikes) and 1 (schema) done
+2026-09-26; nothing from Phase 2 on is implemented yet.
+Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
+(why the queue is a narrow state table plus a payload table, why workers
+poll, and why no existing gem fits). The ADR's first version chose
+Solid Queue's six-table split; Phase 0's measurements changed that, see
+the results below.
 
 Same approach as `plan-websocket.md`/`plan-live-pg-fanout.md`: small red →
 green slices, one failing test per seam, minimum code to pass. Ruby
@@ -28,9 +31,9 @@ Proposed layout (to be confirmed as phases land):
 lib/monk/jobs.rb                 # configure, enqueue, freeze_registry!
 lib/monk/jobs/job.rb             # Monk::Job base class + class registry
 lib/monk/jobs/errors.rb
-lib/monk/jobs/adapters/pg.rb     # the six-table queue
+lib/monk/jobs/adapters/pg.rb     # monk_jobs + monk_job_payloads + monk_processes
 lib/monk/jobs/adapters/memory.rb # same contract, a StateRactor-style queue
-lib/monk/jobs/runtime.rb         # supervisor (main Ractor), dispatcher and worker Ractors
+lib/monk/jobs/runtime.rb         # supervisor (main Ractor: stager, heartbeat, prune) and worker Ractors
 ```
 
 ## Decisions locked in before Phase 1
@@ -39,25 +42,38 @@ The storage design is ADR 0013. The rest are recommendations from the
 same analysis, turned into plan assumptions here. Reversing one
 invalidates the phases that depend on it.
 
-1. **Six tables** (ADR 0013): `monk_jobs` (payload: `job_class`,
-   `args jsonb`, `queue`, `priority`, `attempts`, `max_attempts`,
-   timestamps), `monk_ready_executions` (`job_id, queue, priority,
-   created_at`, index `(queue, priority, job_id)`),
-   `monk_scheduled_executions` (`job_id, run_at, queue, priority`),
-   `monk_claimed_executions` (`job_id, process_id, claimed_at`),
-   `monk_failed_executions` (`job_id, error, failed_at`), `monk_processes`
-   (`id, name, pid, hostname, last_heartbeat_at`). Every move between
-   state tables happens in one transaction.
-2. **Claiming a job** is a single `DELETE … FROM monk_ready_executions
-   WHERE job_id IN (SELECT … ORDER BY priority, job_id FOR UPDATE SKIP
-   LOCKED LIMIT $n) RETURNING …`, followed by an insert into claimed, in
-   the same transaction. Each worker claims as many jobs as it has free
-   slots (1 per worker Ractor in v1).
+1. **Three tables** (ADR 0013):
+   - `monk_jobs`, narrow: `id` (identity), `queue`, `priority` (smallint,
+     lower runs sooner), `state` (`available`/`scheduled`/`running`/`failed`,
+     with a CHECK), `run_at`, `attempts`, `max_attempts`, `locked_by`,
+     `locked_at`. Partial indexes: `(queue, priority, run_at, id) WHERE
+     state = 'available'`, `(run_at) WHERE state = 'scheduled'`,
+     `(locked_by) WHERE state = 'running'`.
+   - `monk_job_payloads`: `job_id` (PK, FK to `monk_jobs` `ON DELETE
+     CASCADE`), `job_class`, `args jsonb`, `last_error`, `created_at`.
+     Written once at enqueue, deleted with its job, updated only to record
+     an error.
+   - `monk_processes`: `id`, `hostname`, `pid`, `started_at`,
+     `last_heartbeat_at`, one row per `bin/jobs` process.
+   The migration also sets per-table autovacuum settings on `monk_jobs`
+   (e.g. `autovacuum_vacuum_scale_factor = 0.01`,
+   `autovacuum_vacuum_cost_delay = 0`). These follow Solid Queue guides'
+   advice and were not measured here.
+2. **Claiming a job** is one statement: `WITH c AS (UPDATE monk_jobs SET
+   state = 'running', locked_by = $1, locked_at = now(), attempts =
+   attempts + 1 WHERE id = (SELECT id … WHERE queue = $2 AND state =
+   'available' ORDER BY priority, run_at, id FOR UPDATE SKIP LOCKED LIMIT
+   1) RETURNING …) SELECT … FROM monk_job_payloads JOIN c`. A worker
+   serving several queues runs one claim per queue, in the configured
+   order (strict ordering across queues, as in Solid Queue); a single
+   `queue = ANY(...)` query can't use the index order across queues. One
+   job per worker Ractor in v1.
 3. **Workers poll by default**, with a short, configurable interval. `LISTEN`/`NOTIFY`
    is an opt-in wake-up only (Phase 7), never how jobs are delivered
    (ADR 0013).
-4. **Delivery is at-least-once.** Claims of a process whose heartbeat
-   has expired go back to ready. Jobs must be idempotent, and the guide
+4. **Delivery is at-least-once.** `running` jobs of a process whose
+   heartbeat has expired go back to `available`, with `attempts` already
+   counted. Jobs must be idempotent, and the guide
    says so first.
 5. **A finished job is deleted.** Optional retention of finished jobs is out of
    scope for v1.
@@ -74,8 +90,11 @@ invalidates the phases that depend on it.
    fails the job straight away (no retries) with a clear error.
 8. **The worker process is separate from the web server**: `bin/jobs`,
    the same model as `bin/websocket_server` (`plan-websocket.md` Decision
-   1). Its main Ractor is the supervisor (signals, heartbeat, pruning). It
-   runs one dispatcher Ractor and N worker Ractors, and each Ractor opens
+   1). Its main Ractor is the supervisor. It handles signals, and on a
+   ~1 s tick runs the stager (flips due `scheduled` jobs to `available`,
+   in batches with `SKIP LOCKED`, so several job processes can all run
+   it), the heartbeat and pruning. There's no dispatcher Ractor. It runs
+   N worker Ractors, and each Ractor, the supervisor included, opens
    its own `PG::Connection` through `Monk::Persistence::Pg`'s per-Ractor
    registry. Monk does not run job workers inside Kino's process.
 9. **Enqueueing is a plain insert on the caller's connection.** By
@@ -84,18 +103,28 @@ invalidates the phases that depend on it.
    already holds, inside that caller's transaction. That's required, not
    optional sugar: `checkout` is a `SizedQueue(1)` per Ractor, so a nested
    `checkout` inside an open one would wait until it timed out.
-10. **Retries are owned by the queue.** A job that raises is moved to
-    `monk_scheduled_executions` with backoff (`attempts ** 4 + 15` seconds, Sidekiq-shaped, to be
-    confirmed) until `max_attempts` (default 5). After that it moves to
-    `monk_failed_executions`. `Monk::Jobs.retry_failed(job_id)` moves it
-    back to ready.
-11. **Two adapters, one contract**: `enqueue`, `claim(queues, process_id,
-    limit)`, `finish`, `fail(retry_at:)`, `promote_due(limit)`,
-    `heartbeat`, `prune(threshold)`. Postgres for real use. In-memory for
+10. **Retries are owned by the queue.** A job that raises is set to
+    `state = 'scheduled'` with `run_at = now() + backoff` (`attempts ** 4
+    + 15` seconds, Sidekiq-shaped, to be confirmed), and its error goes in
+    `monk_job_payloads.last_error`, until `max_attempts` (default 5). After
+    that it's set to `state = 'failed'` and stays in `monk_jobs`, outside
+    every hot index. `Monk::Jobs.retry_failed(job_id)` sets it back to
+    `available`. `discard_failed` deletes it.
+11. **Two adapters, one contract**: `enqueue`, `claim(queue,
+    process_id)`, `finish`, `fail(error, retry_at:)`, `stage_due(limit)`,
+    `register_process`, `heartbeat`, `prune(threshold)`, `retry_failed`,
+    `discard_failed`. Postgres for real use. In-memory for
     tests and development, with a `drain!` that runs every ready job
     synchronously in the calling Ractor.
 12. **Scaffolding**: `monk new --jobs` implies `--postgres`, the same way
     `--auth` does (Phase 8).
+13. **The queue uses the app's database by default** (`db_name:
+    :primary`), so `enqueue(conn:)` can commit together with the app's own
+    writes. A separate database (`db_name: :queue`, registered like any
+    other) is documented as the step to take once the app has long
+    transactions or heavy load. It isolates the queue from the app's long
+    transactions (Phase 0), but enqueue then happens after the app's
+    commit, and a crash in between can lose the job.
 
 ## Seams
 
@@ -105,9 +134,9 @@ invalidates the phases that depend on it.
 - **Seam B — the adapter contract**, one shared test suite run against
   both adapters (Postgres against the real test database), no Ractor runtime
   involved.
-- **Seam C — the Ractor runtime in one process**: supervisor, dispatcher
-  and worker Ractors against the Postgres adapter; concurrency and
-  failure handling.
+- **Seam C — the Ractor runtime in one process**: the supervisor (with
+  the stager, heartbeat and pruning) and worker Ractors against the
+  Postgres adapter; concurrency and failure handling.
 - **Seam D — a real separate process**: `bin/jobs`-style child process,
   enqueue from the test process, kill -9 and graceful stop, mirroring
   `test/support/live_ws_process_pg.rb`.
@@ -138,16 +167,206 @@ above or changes it before Phase 1.
    Ractor dying from an uncaught exception looks like to the supervisor,
    so that it can respawn the worker.
 
-## Phase 1 — Schema
+### Phase 0 results — DONE 2026-09-26
 
-1. `create_jobs_tables.up.sql` / `.down.sql` with the six tables and their
-   indexes, as plain SQL for `Migrator` (`docs/history/plan-migrations.md`).
-   The canonical copy lives in `lib/monk/templates/jobs/db/migrate/`, so
-   the scaffold and the test suite apply the same file.
+Ran against a throwaway `postgres:16` (16.15) container on port 55432, not
+the shared development database. Ruby 4.0.6, `pg` 1.6.3, `timeout` 0.6.0,
+8 worker Ractors, each with its own `PG::Connection`. Scripts and raw
+output are not committed (throwaway).
+
+**0.1 — Claim latency. Three rounds, and they changed ADR 0013's
+decision** from Solid Queue's six tables to a narrow state table plus a
+payload table (2b below). First round, three schemas:
+`multi` (the six-table claim), `single_careful` (partial index on
+`(queue, priority, run_at, id) WHERE locked_at IS NULL`, `ORDER BY
+priority, run_at, id`, delete on finish) and `single_retain`
+(GoodJob-like: finished rows kept via `UPDATE finished_at`).
+
+*Draining a backlog, nothing arriving, small args, 40k claims.* Median
+claim time in ms, first 10% → last 10% of the run:
+
+| Backlog (+100k scheduled) | Long tx | multi | single_careful | single_retain |
+|---|---|---|---|---|
+| 10k | no | 0.95 → 0.96 | 0.97 → 0.93 | 0.87 → 0.91 |
+| 100k | no | 0.94 → 1.11 | 1.03 → 1.04 | 0.90 → 1.10 |
+| 1M | no | 0.91 → 0.96 | 0.88 → 1.06 | 0.89 → 1.05 |
+| 10k | yes | 1.11 → 1.34 | 1.00 → 1.55 | 0.93 → 2.16 |
+| 100k | yes | 1.06 → 3.93 | 1.08 → 4.87 | 1.20 → 4.86 |
+| 1M | yes | 1.08 → 3.66 | 1.18 → 5.01 | 1.14 → 4.90 |
+
+*Steady load, 150 s:* a producer enqueues about 1,200 jobs/s, 8 workers
+claim and finish, args ~1 KB, starting from 100k ready + 100k scheduled
+jobs:
+
+| | Long tx | Median claim, first → last 15 s (ms) | Jobs/s | WAL per job | Dead tuples, hot table | Hot indexes |
+|---|---|---|---|---|---|---|
+| multi | no | 1.02 → 1.08 | 1,979 | 0.99 KB | 2,928 | 8.5 MB |
+| single_careful | no | 1.16 → 1.01 | 1,954 | 1.46 KB | 98,750 | 25 MB |
+| multi | yes | 2.36 → 12.05 | 897 | 1.17 KB | 134,906 | 17 MB |
+| single_careful | yes | 3.49 → 25.79 | 545 | 1.60 KB | 162,818 | 38 MB |
+
+What this shows:
+
+- **A long backlog on its own costs nothing in either design.** Taking the
+  head of a B-tree is as fast at 1M rows as at 10k. Ordering by `run_at`
+  keeps scheduled rows out of the way in the single table too, as long as
+  there is only one priority (see 0.1c). The ADR's first version had
+  "dequeue cost grows with the whole table" and "scheduled rows pollute
+  the hot index" as the mechanism. Neither was reproduced for a carefully
+  built single table (the advisory-lock CTE, GoodJob's default and the
+  source of its 100k+ warning, was not benchmarked; it isn't an option
+  for Monk).
+- **The difference appears under sustained churn**, and most of all when
+  vacuum is held back. With a long transaction open, `single_careful` ended twice
+  as slow as `multi` (25.8 against 12.1 ms) and processed 40% fewer jobs.
+  Without one, latency and throughput matched, but `multi` wrote 32% less
+  WAL per job and left 34x fewer dead tuples in its hot table (dead-tuple
+  counts are a single snapshot that depends on when autovacuum last ran,
+  and varied a lot between sessions; later rounds leave them out). That's
+  the wide-row `UPDATE` on claim.
+- **Neither design is immune to a long transaction.** `multi`'s median also rose
+  about 5x in 150 s, because deleted rows pile up at the head of the ready
+  index and can't be vacuumed while an old snapshot is held. Consequence
+  for the guide (Phase 9): recommend `idle_in_transaction_session_timeout`,
+  and name long-running transactions on the same database as the main
+  operational risk for the queue.
+
+**0.1b — A separate database isolates the queue from long transactions.**
+Postgres only holds back cleanup of an ordinary table for transactions in
+that table's database. Same 150 s steady load, with the long transaction
+held in a second database (`app_other`) on the same server:
+
+| | Long tx in | Median claim, first → last 15 s (ms) | Jobs/s |
+|---|---|---|---|
+| multi | other DB | 1.02 → 1.14 | 1,923 |
+| single_careful | other DB | 1.16 → 0.97 | 1,931 |
+
+Both behave as if there were no long transaction. That's why Rails 8 gives
+Solid Queue its own database by default, and it's the basis for Decision 13.
+It doesn't help against a long transaction inside the queue's own
+database, or against holders that span the whole server (replication
+slots, `hot_standby_feedback`).
+
+**0.1c — A narrow table plus payloads (option 2), and why it needs a
+`state` column.** Two more candidates:
+- `narrow` (2a): `n_jobs` holds only scheduling columns, with a partial
+  index `(queue, priority, run_at, id) WHERE locked_at IS NULL`, and
+  `n_payloads` holds `job_class`/`args`.
+- `2b`: exactly Decision 1's tables and indexes, with a `state` column,
+  and a stager running its promotion query every second.
+
+Same 150 s steady load, all rows below from one session so they compare
+directly (WAL per job only compared in the healthy runs, where every
+schema processed about the same number of jobs):
+
+| | Long tx | Median claim, first → last 15 s (ms) | Jobs/s | WAL per job |
+|---|---|---|---|---|
+| 2b | no | 1.19 → 0.99 | 1,960 | 1.08 KB |
+| narrow (2a) | no | 1.09 → 0.91 | 1,970 | 0.90 KB |
+| multi | no | 1.05 → 0.97 | 1,990 | 1.12 KB |
+| single_careful | no | 1.09 → 0.89 | 1,951 | 1.39 KB |
+| 2b | same DB | 2.28 → 12.82 | 917 | — |
+| narrow (2a) | same DB | 2.51 → 14.48 | 852 | — |
+| multi | same DB | 2.21 → 11.20 | 927 | — |
+| single_careful | same DB | 3.26 → 26.61 | 547 | — |
+| 2b | other DB | 1.04 → 1.00 | 1,986 | 1.13 KB |
+| narrow (2a) | other DB | 1.08 → 0.90 | 1,967 | 1.06 KB |
+
+With vacuum keeping up, all four are the same apart from WAL. Narrow rows
+write less than a wide one; 2b writes a little more than 2a because a
+claim also adds an entry to the `running` index. With vacuum held back,
+2b stays within about 1% of multi's throughput and 15% of its latency, and
+does about twice as well as the wide single table.
+
+2a looked equally good with one priority, but it breaks with several.
+With 100k future jobs at priority 0 and 50k ready jobs at priority 10,
+2a claimed at 5.48 ms (p99 14.2 ms), reading 606 buffers per claim,
+because every claim stepped over the future rows sorted ahead of it in
+the index. 2b, with only `available` rows in its claim index, claimed
+the same data at 0.96 ms (p99 5.1 ms), reading 4 buffers.
+
+*2b draining a backlog* (the first round's test, rerun for 2b with multi
+alongside as a reference in the same container, since the first round's
+container was gone). Median claim time in ms, first 10% → last 10% of the
+claims, then over the whole run with throughput:
+
+| Backlog (+100k scheduled) | Long tx | 2b | multi | 2b, whole run | multi, whole run |
+|---|---|---|---|---|---|
+| 10k (8k claims) | no | 1.16 → 0.92 | 0.99 → 0.87 | 0.99 ms, 3,703/s | 0.92 ms, 3,963/s |
+| 100k (40k claims) | no | 0.92 → 1.04 | 0.93 → 0.99 | 1.01 ms, 3,809/s | 0.98 ms, 3,559/s |
+| 1M (40k claims) | no | 0.98 → 1.13 | 0.96 → 1.08 | 1.04 ms, 3,577/s | 1.07 ms, 3,279/s |
+| 10k | same DB | 0.91 → 1.54 | 0.96 → 1.42 | 1.31 ms, 2,991/s | 1.22 ms, 3,429/s |
+| 100k | same DB | 1.13 → 3.90 | 1.17 → 3.77 | 2.65 ms, 1,871/s | 2.59 ms, 1,724/s |
+| 1M | same DB | 1.20 → 4.21 | 1.08 → 3.78 | 2.71 ms, 1,528/s | 2.82 ms, 1,463/s |
+
+Backlog size doesn't matter for 2b either, and in these shorter runs it
+tracks multi closely in every row, including with the long transaction.
+
+**Decision (2026-09-26): 2b**, recorded in ADR 0013, which was rewritten
+from its first, six-table version. multi is the runner-up: slightly better
+only while vacuum is held back in the same database, at the price of a
+dispatcher, twice the tables and state moves spread across tables.
+
+**0.2 — No double claims, none lost.** Across every benchmark run (the
+first round's 22 runs, about 600k claims; 10 steady-load runs that
+logged every claimed id, about 2.3M claims; 2b's 13 draining runs, about
+430k claims; all with 8 concurrent Ractors), zero duplicate claims. In a full
+drain of 80,000 jobs, both `multi` and `single_careful` claimed exactly
+80,000 distinct ids, and so did `2b` in its own full drain. Afterwards
+`multi`'s ready and claimed tables were empty, and so were `2b`'s
+`monk_jobs` and `monk_job_payloads` (no job left `running`, no orphaned
+payload).
+
+**0.3 — `Timeout.timeout` works inside a worker Ractor, with one catch
+for database work.** It fires correctly on a sleeping job, a CPU-bound
+loop (0.41 s against a 0.3 s limit), a socket read that never returns,
+and in 4 Ractors at once. But when it interrupts a query, pg does not
+cancel the query on the server. The next query on that connection waited
+4.5 s for an abandoned `pg_sleep(5)` to finish. The connection was
+usable afterwards, including `ROLLBACK` of an interrupted transaction.
+`statement_timeout` raises `PG::QueryCanceled` and leaves the connection
+immediately usable. Consequence for Phase 6: per-job timeouts ship in v1.
+After a `Timeout::Error` the worker must `cancel` or `reset` its
+connection before claiming again. A per-connection `statement_timeout` is
+the recommended companion for database-heavy jobs.
+
+**0.4 — Supervisor, stop, respawn: works, with one correction to the
+expected API.** `Ractor#monitor(port)` delivers only a bare Symbol
+(`:exited` / `:aborted`) that doesn't say which Ractor it's about, so
+the supervisor needs **one monitor port per worker** (a Hash from port to
+worker). A worker that died from an uncaught exception reports
+`:aborted`, and its `#value` raises `Ractor::RemoteError` with the
+original exception as `#cause`. The supervisor respawned it and the new
+worker picked up jobs. On `TERM` (trapped in the main Ractor), each
+worker got `:stop` on its own control port, finished the job in flight,
+and exited; the supervisor exited cleanly. Ruby 4.0's `Ractor::Port` has
+no non-blocking receive, so "stop between jobs" is a `Ractor.select`
+over the control port and a timer port, one of which is what the worker
+loop waits on when idle.
+
+**Found along the way:** SQL kept in heredoc constants isn't shareable
+(`Ractor::IsolationError: can not access non-shareable objects in
+constant … by non-main Ractor`, from the benchmark's own producer
+Ractor). The Postgres adapter must `Ractor.make_shareable` every SQL
+constant, the same hazard `docs/design/ractor.md` records for
+`lib/monk/assets.rb`.
+
+## Phase 1 — Schema — DONE 2026-09-26
+
+`lib/monk/templates/jobs/db/migrate/00000000000002_create_jobs_tables.{up,down}.sql`,
+tests in `test/jobs_schema_test.rb` (7 tests), applied through the real
+`Migrator` straight from the template directory. Full suite green (605
+runs, 0 failures), RuboCop clean.
+
+1. `create_jobs_tables.up.sql` / `.down.sql` with Decision 1's three
+   tables, their partial indexes, the `state` CHECK and the per-table
+   autovacuum settings, as plain SQL for `Migrator`
+   (`docs/history/plan-migrations.md`). The canonical copy lives in
+   `lib/monk/templates/jobs/db/migrate/`, so the scaffold and the test
+   suite apply the same file.
 2. Test: `Migrator` applies and rolls back the pair cleanly against the
-   test database. The foreign keys from each execution table to
-   `monk_jobs` use `ON DELETE CASCADE`, so deleting a finished job cleans
-   up after itself.
+   test database. Deleting a job deletes its payload (`ON DELETE
+   CASCADE`), and an unknown `state` is rejected by the CHECK.
 
 ## Phase 2 — `Monk::Job` and the registry (Seam A)
 
@@ -164,22 +383,29 @@ above or changes it before Phase 1.
 
 ## Phase 3 — Postgres adapter: enqueue, claim, finish (Seam B)
 
-6. `enqueue`: inserts into `monk_jobs` plus `monk_ready_executions`, or
-   `monk_scheduled_executions` when `run_at`/`wait:` is in the future, in
-   one transaction. Takes `conn:` (Decision 9). Test: enqueue inside a
-   rolled-back app transaction leaves no job behind.
-7. `claim`: Decision 2's query. Test: two connections claiming at the
-   same time never get the same job.
-8. `finish`: deletes the claimed row and the job in one transaction.
+6. `enqueue`: one statement inserting into `monk_jobs` (`state =
+   'available'`, or `'scheduled'` with a future `run_at` for `wait:`/`at:`)
+   and `monk_job_payloads`. Takes `conn:` (Decision 9). Test: enqueue
+   inside a rolled-back app transaction leaves no job behind.
+7. `claim`: Decision 2's query, one queue at a time. Tests: two
+   connections claiming at the same time never get the same job; a lower
+   `priority` number is claimed first; `scheduled` and `failed` jobs are
+   never claimed.
+8. `finish`: `DELETE FROM monk_jobs` for the job; the payload goes by
+   cascade.
 
 ## Phase 4 — Failures, retries, scheduled jobs (Seam B)
 
-9. `fail(job_id, error, retry_at:)`: from claimed to scheduled, or to
-   failed once `attempts` reaches `max_attempts`. The error class, message
-   and the first lines of the backtrace are stored, truncated.
-10. `promote_due(limit)`: moves due scheduled rows to ready in one batch,
-    using `SKIP LOCKED` so two dispatchers can't collide.
-11. `retry_failed(job_id)`, `discard_failed(job_id)`.
+9. `fail(job_id, error, retry_at:)`: `running` to `scheduled`, or to
+   `failed` once `attempts` reaches `max_attempts`, clearing the lock
+   columns. The error class, message and the first lines of the backtrace
+   go in `monk_job_payloads.last_error`, truncated.
+10. `stage_due(limit)`: flips due `scheduled` rows to `available` in one
+    batch, using `SKIP LOCKED` so two job processes staging at once can't
+    collide. Test: a job enqueued with `wait:` becomes claimable only
+    after its `run_at` and a stage.
+11. `retry_failed(job_id)` (`failed` to `available`, `attempts` reset),
+    `discard_failed(job_id)` (delete).
 
 ## Phase 5 — In-memory adapter (Seam B, second implementation)
 
@@ -193,27 +419,29 @@ above or changes it before Phase 1.
 ## Phase 6 — Ractor runtime (Seams C and D)
 
 14. `Monk::Jobs::Runtime.new(queues:, workers:, poll_interval:,
-    dispatch_interval:).run`: the main Ractor registers a
-    `monk_processes` row, spawns the dispatcher and the workers, then
-    loops on heartbeat and prune.
+    tick_interval:).run`: the main Ractor registers a `monk_processes`
+    row, spawns the workers (one monitor port each, Phase 0.4), then
+    loops on its tick: stage due jobs, heartbeat, prune.
 15. Worker loop: claim → look up the class → `perform(*args)` →
     `finish`, or `fail` with backoff. Anything a job raises is rescued
     inside the worker, so one bad job never kills the Ractor. A Ractor
     that dies anyway is respawned by the supervisor (Phase 0.4).
 16. Pruning: processes whose heartbeat is older than the threshold have
-    their claims moved back to ready (Decision 4) and their row
-    deleted.
+    their `running` jobs set back to `available` (Decision 4) and their
+    row deleted.
 17. Graceful stop on `TERM`/`INT`: stop claiming, wait up to
-    `shutdown_timeout` for jobs in flight, release whatever is still
-    claimed back to ready, delete the process row.
-18. Seam D: a real child process. Enqueued jobs run. `kill -9` of the
+    `shutdown_timeout` for jobs in flight, set whatever is still
+    `running` back to `available`, delete the process row.
+18. Per-job timeout: `Timeout.timeout` around `perform`, then `cancel` or
+    `reset` of the worker's connection before its next claim (Phase 0.3).
+19. Seam D: a real child process. Enqueued jobs run. `kill -9` of the
     child, followed by a second process pruning it, re-runs the orphaned
     job exactly once. `TERM` finishes the job in flight and leaves nothing
     claimed.
 
 ## Phase 7 — Optional `NOTIFY` wake-up
 
-19. `Monk::Jobs.configure(notify: true)`: `enqueue` adds `pg_notify`
+20. `Monk::Jobs.configure(notify: true)`: `enqueue` adds `pg_notify`
     in the same transaction, and a listener Ractor in the job process
     (the `PgFanout` subscriber loop) wakes idle workers early. Polling
     keeps running regardless. Documented as for low-to-moderate write
@@ -221,38 +449,43 @@ above or changes it before Phase 1.
 
 ## Phase 8 — Scaffolding: `monk new --jobs` (Seam E)
 
-20. `--jobs` implies `--postgres` (`@postgres = postgres || auth ||
+21. `--jobs` implies `--postgres` (`@postgres = postgres || auth ||
     jobs`) and nothing else. It works with or without
     `--auth`/`--mail`/`--live`/`--redis`.
-21. Files:
+22. Files:
     - `config/jobs.rb`: `Monk::Jobs.configure(db_name: :primary, …)`
-      plus requires for `jobs/*.rb`.
+      (Decision 13), with a comment pointing to the guide's
+      separate-database section, plus requires for `jobs/*.rb`.
     - `jobs/hello_job.rb`: a demo job logging through `Monk::Log`.
     - `bin/jobs`: loads settings, persistence, the app's jobs and the
       views, calls `Monk.freeze!`, then `Monk::Jobs::Runtime.new(…).run`.
     - `db/migrate/00000000000002_create_jobs_tables.{up,down}.sql`.
       Version 2 so it sorts after auth's `…01` when both are present;
       it's harmless without auth.
-22. Wiring: `config.ru` requires `config/jobs`, so routes can enqueue.
+23. Wiring: `config.ru` requires `config/jobs`, so routes can enqueue.
     A demo route (e.g. `POST /hello/job`) enqueues `HelloJob` so the
     scaffold shows the round trip end to end.
-23. `.env`/`.env.test`: `JOBS_WORKERS`, `JOBS_QUEUES`. `SETUP.md` gains a
+24. `.env`/`.env.test`: `JOBS_WORKERS`, `JOBS_QUEUES`. `SETUP.md` gains a
     "Background jobs" section (run `bin/migrate`, then `bin/jobs` beside
     `bin/server`). `exe/monk` usage and help text mention `--jobs`.
-24. Dockerfile and `docs/guides/deploying.md`: the job process is a
+25. Dockerfile and `docs/guides/deploying.md`: the job process is a
     second command on the same image, like `bin/websocket_server`.
-25. Retrofitting an existing app: the guide lists the files to copy and
+26. Retrofitting an existing app: the guide lists the files to copy and
     the migration to add. Whether Monk should also ship a `monk jobs:install`-style
     command is out of scope (see below).
 
 ## Phase 9 — Docs
 
-26. `docs/guides/jobs.md`: defining a job, enqueueing it (with and
+27. `docs/guides/jobs.md`: defining a job, enqueueing it (with and
     without `conn:`), idempotency first, retries and failed jobs,
-    scheduling, running `bin/jobs`, sizing workers, the test adapter.
-27. README features table, `CONTEXT.md` vocabulary (**Job**, **Queue**,
-    **Ready / scheduled / claimed / failed execution**, **Dispatcher**,
-    **Job process**), CHANGELOG.
+    scheduling, running `bin/jobs`, sizing workers, the test adapter. A
+    "Keeping the queue healthy" section: long transactions as the main
+    risk, `idle_in_transaction_session_timeout`, the autovacuum settings,
+    and when and how to move the queue to its own database (Decision 13,
+    Phase 0.1b).
+28. README features table, `CONTEXT.md` vocabulary (**Job**, **Queue**,
+    **Job state** (available / scheduled / running / failed), **Payload**,
+    **Stager**, **Job process**), CHANGELOG.
 
 ## Phase 10 — `Monk::Mail` integration — DECISION NEEDED, analyzed together once Phases 1–9 ship
 
@@ -280,7 +513,7 @@ not decisions:
   Phase 8 already plans, and `args` stays small.
 - **Secrets in the job table.** A magic link carries a raw login token,
   and `Monk::Auth` stores only its hash precisely so the database never
-  holds a usable one. Putting the link in `monk_jobs.args` undoes that
+  holds a usable one. Putting the link in `monk_job_payloads.args` undoes that
   for the job's lifetime, and for longer in failed jobs. Options: accept
   it with delete-on-finish and a short `max_attempts`; encrypt args with
   `AUTH_SECRET`; or keep magic links synchronous and make everything else
@@ -300,7 +533,8 @@ not decisions:
 ## Explicitly out of scope for this plan
 
 - Recurring (cron) jobs, concurrency limits, pausing queues, batches.
-  Each is a later table that doesn't change the claim path (ADR 0013).
+  Each can be added later as its own table or column, without changing
+  the claim query.
 - Keeping finished jobs, and any dashboard or web UI.
 - A Redis adapter.
 - Threads inside a worker Ractor (more than one job at a time per Ractor
@@ -318,14 +552,14 @@ not decisions:
   because a job that works in `drain!` (main Ractor) can fail in
   `bin/jobs`. Worth deciding whether `drain!` should run jobs inside a
   throwaway Ractor so that tests catch it.
-- **No per-job timeout** if Phase 0.3 fails, so a hung job holds a
-  worker indefinitely. The heartbeat keeps its process alive, so pruning
-  won't rescue it either.
+- **A timed-out job leaves its query running on the server** (Phase
+  0.3): if the worker doesn't cancel or reset its connection, the next
+  claim waits for the abandoned query to finish.
+- **Long transactions on the same database** slow the queue in any
+  schema (Phase 0.1). This is the main operational risk to document.
 - **At-least-once delivery surprising apps** that send non-idempotent
   side effects (charges, emails). This is the main reason Phase 10's mail
   design needs care.
-- **Phase 0.1 contradicting ADR 0013.** If it does, the storage design
-  changes before Phase 1, not after.
 - **Postgres restart or failover** while `bin/jobs` runs. Like
   `PgFanout` (`plan-live-pg-fanout.md` Phase 4 step 13), v1 may simply
   let the affected Ractor die. The supervisor respawning it (Phase 6.15)
