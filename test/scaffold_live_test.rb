@@ -111,6 +111,10 @@ class ScaffoldLiveTest < Minitest::Test
         with_env("AUTH_SECRET", "s3cr3t") do
           with_env("REDIS_URL", "redis://localhost:6379/0") do
             require File.join(dest, "config/settings")
+            # config/auth.rb loads the scaffolded config/persistence.rb,
+            # which registers :primary -- into a registry an earlier test's
+            # boot may have left frozen (FrozenError, order-dependent).
+            Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
             require File.join(dest, "config/auth")
             require File.join(dest, "config/live")
 
@@ -121,6 +125,7 @@ class ScaffoldLiveTest < Minitest::Test
     end
   ensure
     Monk::Auth.reset!
+    Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
   end
 
   def test_live_ws_url_defaults_to_the_direct_port_in_development
