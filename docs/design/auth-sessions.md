@@ -318,7 +318,10 @@ equality + `AND` only, deliberately (`docs/history/plan-persistence.md` Phase 3,
   serving it, to decide whether to log. If a non-main Ractor on 4.0 sees
   a different answer than the main one does, request logging silently
   stops honoring `MONK_ENV=production` under a real `kino` pool.
-- **Email delivery stays outside the framework.** A mailer object
+- **Email delivery stays outside the framework.** *Superseded by
+  `docs/adr/0012-minimal-built-in-mailer.md`: the `mail` gem turned out
+  to be unusable inside a worker Ractor, so Monk now ships a minimal
+  `Monk::Mail`. `Monk::Auth`'s `deliver:` hook is unchanged.* A mailer object
   captured in a route closure fails `freeze!` with
   `UnshareableRouteError`, and rightly so. `Monk::Auth.request_login`
   should *return* the raw token and let the app deliver it; Monk taking
