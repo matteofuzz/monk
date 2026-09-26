@@ -91,6 +91,19 @@ class JobsPgFailuresTest < Minitest::Test
     assert_nil adapter.claim("default", PROCESS_ID)
   end
 
+  # The whole retry path by the clock rather than by moving run_at by hand.
+  def test_a_retried_job_comes_back_after_retry_in_with_its_attempts_counted
+    id = claimed_job
+    adapter.fail(id, PROCESS_ID, error: "boom", retry_in: 0.3)
+    assert_nil adapter.claim("default", PROCESS_ID)
+
+    sleep 0.4
+    adapter.stage_due
+
+    claim = adapter.claim("default", PROCESS_ID)
+    assert_equal [id, 2], [claim.id, claim.attempts]
+  end
+
   # --- stage_due ---
 
   def test_a_scheduled_job_is_claimable_only_once_due_and_staged
@@ -155,6 +168,15 @@ class JobsPgFailuresTest < Minitest::Test
     assert_equal "available", job["state"]
     assert_equal 0, job["attempts"]
     assert_equal id, adapter.claim("default", PROCESS_ID).id
+  end
+
+  def test_a_retried_failed_job_queues_behind_jobs_already_waiting
+    failed = failed_job
+    waiting = JobsPgFailuresJobs::Flaky.enqueue(2)
+
+    Monk::Jobs.retry_failed(failed)
+
+    assert_equal [waiting, failed], Array.new(2) { adapter.claim("default", PROCESS_ID).id }
   end
 
   def test_retry_failed_leaves_a_job_that_hasnt_failed_alone

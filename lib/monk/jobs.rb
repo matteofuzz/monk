@@ -13,6 +13,10 @@ module Monk
     MAX_ERROR_LENGTH = 4_000
     BACKTRACE_LINES = 10
 
+    # The process id drain! claims jobs as: never a monk_processes id, which
+    # starts at 1.
+    DRAIN_PROCESS_ID = 0
+
     class << self
       # Typically, in config/jobs.rb:
       #
@@ -22,6 +26,8 @@ module Monk
       # app's own database by default, so a job can be enqueued inside the
       # app's own transaction; a separate one isolates the queue from the
       # app's long transactions (docs/adr/0013-jobs-narrow-state-table-plus-payloads.md).
+      # Tests use the app's test database, the same way: enqueue, drain!,
+      # and clear! between tests.
       def configure(db_name:)
         require_relative "jobs/adapters/pg"
         @adapter = Adapters::Pg.new(db_name: db_name)
@@ -113,6 +119,47 @@ module Monk
         lines.join("\n")[0, MAX_ERROR_LENGTH]
       end
 
+      # Runs every job that's due, one after another, until none is left --
+      # including jobs those jobs enqueue -- and returns how many ran. For
+      # an app's tests: enqueue, drain!, then assert on what the jobs did.
+      # Nothing is retried: the first job that raises is marked failed and
+      # its error re-raised here.
+      #
+      # Each job runs in a throwaway Ractor, as it would in bin/jobs, so a
+      # job that only works in the main Ractor (a gem with module-level
+      # state, a non-shareable constant) fails in the test too.
+      # in_ractor: false runs jobs in the calling Ractor instead, for a test
+      # that needs to see a job's side effects there.
+      #
+      # Calls Monk.freeze! first, as bin/jobs does, so jobs can read the
+      # app's frozen configuration from their Ractor.
+      def drain!(in_ractor: true)
+        Monk.freeze!
+        queues = classes.map(&:queue) | [Job::DEFAULT_QUEUE]
+        ran = 0
+        loop do
+          nil while adapter.stage_due.positive?
+          claim = queues.lazy.filter_map { |queue| adapter.claim(queue, DRAIN_PROCESS_ID) }.first
+          break unless claim
+
+          run_drained(claim, in_ractor)
+          ran += 1
+        end
+        ran
+      end
+
+      # Empties the queue: every job, failed ones included, and every job
+      # process row. For an app's tests, between one test and the next --
+      # and so it refuses to run unless MONK_ENV is test.
+      def clear!
+        unless Monk.env.test?
+          raise ClearOutsideTestsError,
+            "Monk::Jobs.clear! empties the whole queue, so it only runs with MONK_ENV=test (this is #{Monk.env})"
+        end
+
+        adapter.clear!
+      end
+
       # Test-only: unfreezes the registry and forgets the configuration.
       # Recorded classes stay recorded, the same way a Ruby class can't be
       # undefined.
@@ -122,6 +169,33 @@ module Monk
       end
 
       private
+
+      def run_drained(claim, in_ractor)
+        begin
+          job = lookup(claim.job_class)
+          in_ractor ? perform_in_ractor(job, claim.args) : job.perform(*claim.args)
+        # NotImplementedError too, a job class with no self.perform: it's a
+        # ScriptError, not a StandardError, and would otherwise leave the job
+        # running.
+        rescue StandardError, NotImplementedError => e
+          adapter.fail(claim.id, DRAIN_PROCESS_ID, error: describe_error(e), retry_in: nil)
+          raise
+        end
+        adapter.finish(claim.id, DRAIN_PROCESS_ID)
+      end
+
+      def perform_in_ractor(job, args)
+        Ractor.new(job, args) do |job, args|
+          # The error is re-raised in the caller; don't also print it here.
+          Thread.current.report_on_exception = false
+          job.perform(*args)
+          nil
+        end.value
+      rescue Ractor::RemoteError => e
+        # The job's own error, as if it had run here. cause: nil, or Ruby
+        # would chain the RemoteError onto it -- whose cause it already is.
+        raise e.cause, cause: nil
+      end
 
       def check_enqueueable!(job_class)
         unless job_class.is_a?(Class) && job_class < Monk::Job

@@ -17,6 +17,10 @@ module Monk
     class NotConfiguredError < StandardError
     end
 
+    # Monk::Jobs.clear! outside MONK_ENV=test: it would empty a real queue.
+    class ClearOutsideTestsError < StandardError
+    end
+
     # An ArgumentError, like Monk::Mail::InvalidMessageError: it's always
     # the caller's input that's wrong.
     class InvalidArgumentsError < ArgumentError

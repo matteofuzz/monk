@@ -102,6 +102,11 @@ module Monk
           DELETE FROM monk_jobs WHERE id = $1 AND state = 'failed'
         SQL
 
+        CLEAR_SQL = <<~SQL.freeze
+          DELETE FROM monk_jobs;
+          DELETE FROM monk_processes;
+        SQL
+
         attr_reader :db_name
 
         def initialize(db_name:)
@@ -157,6 +162,13 @@ module Monk
         # Deletes a failed job and its payload. False if it isn't failed.
         def discard_failed(id)
           with_connection { |c| c.exec_params(DISCARD_FAILED_SQL, [id]).cmd_tuples == 1 }
+        end
+
+        # Every job (payloads by cascade) and every process row. Behind
+        # Monk::Jobs.clear!, which only runs in tests.
+        def clear!
+          with_connection { |c| c.exec(CLEAR_SQL) }
+          nil
         end
 
         private

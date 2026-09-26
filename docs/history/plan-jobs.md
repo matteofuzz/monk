@@ -3,9 +3,9 @@
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
-class and registry), 3 (Postgres enqueue/claim/finish) and 4 (failures,
-retries, scheduled jobs) done 2026-09-26; nothing from Phase 5 on is
-implemented yet.
+class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
+retries, scheduled jobs) and 5 (`drain!` and `clear!` for tests) done
+2026-09-26; nothing from Phase 6 on is implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -24,8 +24,8 @@ base class an app's jobs inherit from), in `lib/monk/jobs.rb` +
 `lib/monk/jobs/`. Opt-in like every other Monk feature: `require
 "monk/jobs"` explicitly, `require "monk"` alone never loads it. The
 Postgres adapter needs `pg` and a connection registered through
-`Monk::Persistence::Pg`, the same posture as `Monk::Auth`. The in-memory
-adapter needs nothing. Monk takes on no runtime dependency.
+`Monk::Persistence::Pg`, the same posture as `Monk::Auth`. Monk takes on
+no runtime dependency.
 
 Proposed layout (to be confirmed as phases land):
 
@@ -34,7 +34,6 @@ lib/monk/jobs.rb                 # configure, enqueue, freeze_registry!
 lib/monk/jobs/job.rb             # Monk::Job base class + class registry
 lib/monk/jobs/errors.rb
 lib/monk/jobs/adapters/pg.rb     # monk_jobs + monk_job_payloads + monk_processes
-lib/monk/jobs/adapters/memory.rb # same contract, a StateRactor-style queue
 lib/monk/jobs/runtime.rb         # supervisor (main Ractor: stager, heartbeat, prune) and worker Ractors
 ```
 
@@ -112,12 +111,16 @@ invalidates the phases that depend on it.
     that it's set to `state = 'failed'` and stays in `monk_jobs`, outside
     every hot index. `Monk::Jobs.retry_failed(job_id)` sets it back to
     `available`. `discard_failed` deletes it.
-11. **Two adapters, one contract**: `enqueue`, `claim(queue,
-    process_id)`, `finish`, `fail(error, retry_at:)`, `stage_due(limit)`,
+11. **One adapter, behind an interface**: `enqueue`, `claim(queue,
+    process_id)`, `finish`, `fail(error:, retry_in:)`, `stage_due(limit)`,
     `register_process`, `heartbeat`, `prune(threshold)`, `retry_failed`,
-    `discard_failed`. Postgres for real use. In-memory for
-    tests and development, with a `drain!` that runs every ready job
-    synchronously in the calling Ractor.
+    `discard_failed`, `clear!`. Postgres only, for real use and for tests
+    alike: an app's tests enqueue on its test database, run the jobs with
+    `Monk::Jobs.drain!` and empty the queue with `Monk::Jobs.clear!`.
+    `Monk::Jobs` only talks to the adapter through these operations, so
+    another adapter (Redis, in-memory) could still be added if a real
+    need appears. An in-memory adapter was built in Phase 5 and dropped;
+    see there for why.
 12. **Scaffolding**: `monk new --jobs` implies `--postgres`, the same way
     `--auth` does (Phase 8).
 13. **The queue uses the app's database by default** (`db_name:
@@ -133,9 +136,8 @@ invalidates the phases that depend on it.
 - **Seam A — `Monk::Job` and the class registry**, no database: arguments are
   checked when a job is enqueued, the registry is sealed at `Boot`, and a job class is reachable
   from a worker Ractor after `Monk.freeze!`.
-- **Seam B — the adapter contract**, one shared test suite run against
-  both adapters (Postgres against the real test database), no Ractor runtime
-  involved.
+- **Seam B — the adapter's operations**, against the real test
+  database, no Ractor runtime involved.
 - **Seam C — the Ractor runtime in one process**: the supervisor (with
   the stager, heartbeat and pruning) and worker Ractors against the
   Postgres adapter; concurrency and failure handling.
@@ -493,14 +495,71 @@ Postgres test setup moved into a shared `JobsTestHelpers` in
 11. `retry_failed(job_id)` (`failed` to `available`, `attempts` reset),
     `discard_failed(job_id)` (delete).
 
-## Phase 5 — In-memory adapter (Seam B, second implementation)
+## Phase 5 — Testing an app's jobs: `drain!` and `clear!` — DONE 2026-09-26
 
-12. The same contract, backed by one queue Ractor (the `StateRactor`
-    pattern). Passes the shared adapter suite.
+Originally "In-memory adapter (Seam B, second implementation)". Built as
+planned, then dropped before commit. `Monk::Jobs.drain!` and
+`Monk::Jobs.clear!` in `lib/monk/jobs.rb`, `clear!` in the Postgres
+adapter; tests in `test/jobs_drain_test.rb` (10), plus two timing and
+ordering tests added to `test/jobs_pg_failures_test.rb`.
+
+**Why the in-memory adapter was dropped.** It was meant for tests, and
+the Postgres queue turned out to be the better test double:
+
+- Every app with jobs already has Postgres (`--jobs` implies
+  `--postgres`), and its tests already run a test database.
+- The memory adapter ignores `conn:`, since it has no transaction to
+  join. A job enqueued inside a transaction that rolls back would still
+  exist and run in tests, but not in production. That's a behaviour gap
+  that can hide a real bug, and no shared contract can close it.
+- `drain!` works on Postgres, and a claim costs about 1 ms, so speed
+  isn't a reason.
+- It was about 150 lines, and a second implementation of every
+  operation, which Phase 6's process registration, heartbeat and pruning
+  would have had to extend too.
+
+While it existed, a shared contract suite ran the same 19 tests against
+both adapters. Postgres passed all of it apart from the then-new
+`drain!`. The tests that added coverage beyond Phases 3 and 4 were kept
+as Postgres tests: `drain!`, the retry path by the clock, and a retried
+job queueing behind jobs already waiting.
+
+**What was kept, and what was found building it:**
+
+- **`drain!` runs each job in a throwaway Ractor by default**, as
+  `bin/jobs` will, so an app's tests catch a job that only works in the
+  main Ractor. This resolves the risk listed below.
+  `drain!(in_ractor: false)` runs jobs in the calling Ractor, for tests
+  that need to see a job's side effects there. `drain!` calls
+  `Monk.freeze!` first, as `bin/jobs` will. Each job Ractor that touches
+  the database opens its own connection, which is closed when that
+  Ractor is garbage-collected.
+- `drain!` stages due jobs, then claims from the queues of every recorded
+  job class plus `"default"`, until none is left. That includes jobs
+  enqueued by the jobs it runs. Jobs not yet due are left. Nothing is
+  retried: the first job that raises is marked `failed` and its error
+  re-raised as the job's own error, not a `Ractor::RemoteError`.
+  Re-raising it needs `raise e.cause, cause: nil`; without `cause: nil`,
+  Ruby chains the `RemoteError` onto it and raises `ArgumentError:
+  circular causes`.
+- **`NotImplementedError` needs catching explicitly.** A job class
+  without `self.perform` raises it, and it is a `ScriptError`, not a
+  `StandardError`, so `rescue StandardError` misses it and the job would
+  stay `running`. `drain!` catches it, and Phase 6's worker loop must
+  too.
+- **`Monk::Jobs.clear!`** empties the queue (every job, failed ones
+  included, and every process row) between an app's tests. It raises
+  `ClearOutsideTestsError` unless `MONK_ENV=test`, since anywhere else it
+  would empty a real queue.
+
+12. ~~The same contract, backed by one queue Ractor (the `StateRactor`
+    pattern). Passes the shared adapter suite.~~ Built, then dropped (see
+    above).
 13. `Monk::Jobs.drain!`: runs ready jobs synchronously in the calling
     Ractor until the queue is empty, and fails loudly if a job raises. It
     is the default in `MONK_ENV=test`, so an app's tests can assert on the
-    effects of enqueued jobs without starting a worker process.
+    effects of enqueued jobs without starting a worker process. (Built on
+    the Postgres queue, running each job in a Ractor, see above.)
 
 ## Phase 6 — Ractor runtime (Seams C and D)
 
@@ -510,7 +569,7 @@ Postgres test setup moved into a shared `JobsTestHelpers` in
     loops on its tick: stage due jobs, heartbeat, prune.
 15. Worker loop: claim → look up the class → `perform(*args)` →
     `finish`, or `fail` with backoff. Anything a job raises is rescued
-    inside the worker, so one bad job never kills the Ractor. A Ractor
+    inside the worker, `NotImplementedError` included (Phase 5), so one bad job never kills the Ractor. A Ractor
     that dies anyway is respawned by the supervisor (Phase 0.4).
 16. Pruning: processes whose heartbeat is older than the threshold have
     their `running` jobs set back to `available` (Decision 4) and their
@@ -564,7 +623,8 @@ Postgres test setup moved into a shared `JobsTestHelpers` in
 
 27. `docs/guides/jobs.md`: defining a job, enqueueing it (with and
     without `conn:`), idempotency first, retries and failed jobs,
-    scheduling, running `bin/jobs`, sizing workers, the test adapter. A
+    scheduling, running `bin/jobs`, sizing workers, testing jobs
+    (`drain!`, `clear!`, `in_ractor: false`). A
     "Keeping the queue healthy" section: long transactions as the main
     risk, `idle_in_transaction_session_timeout`, the autovacuum settings,
     and when and how to move the queue to its own database (Decision 13,
@@ -634,10 +694,9 @@ not decisions:
 - **Gems that job code calls.** Job code runs in a worker Ractor, so
   every gem it touches has to survive there: module ivars, class
   variables and `define_method` blocks all fail (`docs/design/ractor.md`,
-  ADR 0012's `mail` gem finding). The guide has to say this plainly,
-  because a job that works in `drain!` (main Ractor) can fail in
-  `bin/jobs`. Worth deciding whether `drain!` should run jobs inside a
-  throwaway Ractor so that tests catch it.
+  ADR 0012's `mail` gem finding). The guide has to say this plainly.
+  `drain!` runs jobs in a Ractor by default (Phase 5), so an app's tests
+  catch it, unless they opt out with `in_ractor: false`.
 - **A timed-out job leaves its query running on the server** (Phase
   0.3): if the worker doesn't cancel or reset its connection, the next
   claim waits for the abandoned query to finish.
