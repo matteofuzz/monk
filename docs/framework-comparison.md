@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase after v0.16.0, unreleased (LOC recomputed for this version: it now includes v0.14.0's deploy support, v0.16.0's `Monk::WebSocket::PgFanout`, and `Monk::Mail` with `monk new --mail`).
+Complexity and weight comparison, based on the codebase at v0.17.0 (LOC recomputed for this version: it now includes v0.14.0's deploy support, v0.16.0's `Monk::WebSocket::PgFanout`, and v0.17.0's `Monk::Mail` with `monk new --mail`).
 
 ## Footprint
 
