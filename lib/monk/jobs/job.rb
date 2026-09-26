@@ -53,6 +53,11 @@ module Monk
         @max_attempts = checked_integer(:max_attempts, value, MAX_ATTEMPTS_RANGE)
       end
 
+      # SendReceipt.enqueue(order_id, wait: 60) -- see Monk::Jobs.enqueue.
+      def enqueue(*, **)
+        Monk::Jobs.enqueue(self, *, **)
+      end
+
       def perform(*)
         raise NotImplementedError, "#{name || "this job"} must define self.perform"
       end

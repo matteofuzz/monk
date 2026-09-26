@@ -2,9 +2,9 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema) and 2 (job
-class and registry) done 2026-09-26; nothing from Phase 3 on is
-implemented yet.
+Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
+class and registry) and 3 (Postgres enqueue/claim/finish) done
+2026-09-26; nothing from Phase 4 on is implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -406,7 +406,39 @@ runs, 0 failures), RuboCop clean.
    error naming the fix (ADR 0003 posture), not an opaque
    `Ractor::IsolationError`.
 
-## Phase 3 — Postgres adapter: enqueue, claim, finish (Seam B)
+## Phase 3 — Postgres adapter: enqueue, claim, finish (Seam B) — DONE 2026-09-26
+
+`lib/monk/jobs/adapters/pg.rb`, `lib/monk/jobs/claim.rb`,
+`Monk::Jobs.configure`/`.adapter`/`.enqueue` in `lib/monk/jobs.rb`,
+`Monk::Job.enqueue`; tests in `test/jobs_pg_adapter_test.rb` (23),
+including enqueue from a worker Ractor after `Monk.freeze!` and 8 worker
+Ractors draining 200 jobs with none claimed twice.
+
+**Differences from the steps below, found while building:**
+
+- `Monk::Jobs.configure(db_name:)` builds the adapter, which freezes
+  itself and holds only the Symbol, so it's shareable from the moment
+  it's created. Enqueue from a route handler needs no extra freezing
+  beyond `Monk::Persistence::Pg`'s own.
+- `enqueue` takes only `wait:`/`at:`/`conn:`. Queue, priority and
+  `max_attempts` come from the job class, with no per-call overrides in
+  v1. The database clock sets `run_at` and whether the job starts
+  `scheduled` or `available`, so an app server's clock can't make a job
+  due early.
+- `finish(id, process_id)` deletes only a job the process still holds
+  (`state = 'running' AND locked_by = process_id`), and returns whether
+  it did. A job pruned from a dead process and claimed again elsewhere
+  isn't deleted by its first worker finishing late.
+- **Found and fixed on the way: pg 1.6.3 couldn't decode `json`/`jsonb`
+  with json 3.0.2.** Its JSON decoder passes `quirks_mode:` to
+  `JSON.parse`, a keyword json 3 no longer accepts, so every
+  `json`/`jsonb` column read through a `Monk::Persistence::Pg`
+  connection raised `ArgumentError`, app models included. Fixed on its
+  own, outside this plan: `Monk::Persistence::Pg` now installs its own
+  JSON decoder (`test/persistence_pg_json_test.rb`, CHANGELOG
+  "Unreleased"). The adapter still selects `args::text` and parses it
+  itself, so a claim decodes the same on any connection an app passes
+  as `conn:`.
 
 6. `enqueue`: one statement inserting into `monk_jobs` (`state =
    'available'`, or `'scheduled'` with a future `run_at` for `wait:`/`at:`)

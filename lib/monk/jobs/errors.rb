@@ -12,6 +12,11 @@ module Monk
     class UnknownJobError < StandardError
     end
 
+    # Enqueueing (or claiming) before Monk::Jobs.configure has picked the
+    # database the queue lives in.
+    class NotConfiguredError < StandardError
+    end
+
     # An ArgumentError, like Monk::Mail::InvalidMessageError: it's always
     # the caller's input that's wrong.
     class InvalidArgumentsError < ArgumentError
