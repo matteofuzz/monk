@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
-## Unreleased
+## 0.17.0 - 2026-09-26
 
 ### Added
 
