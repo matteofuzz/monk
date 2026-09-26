@@ -47,11 +47,11 @@ build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/p
 
 ### Sending the magic link
 
-`Monk::Auth.request_login` returns a raw token and nothing else — Monk
-doesn't own SMTP or any provider's API, and stays out of routing, so it
-can't build the callback URL either (`docs/design/auth-sessions.md`, "Email
-delivery stays outside the framework"). Your login route builds the link
-and hands it, with the token, to `Monk::Auth.deliver_link`:
+`Monk::Auth.request_login` returns a raw token and nothing else. Monk
+stays out of routing, so it can't build the callback URL; sending is a
+separate concern, which `Monk::Mail` covers ([`mail.md`](mail.md)). Your
+login route builds the link and hands it, with the token, to
+`Monk::Auth.deliver_link`:
 
 ```ruby
 post("/auth/request") do
@@ -75,9 +75,10 @@ typed in.
 `deliver_link` picks, in order:
 
 1. **The configured `deliver:` callable**, if `Monk::Auth.configure` was
-   given one — `deliver.call(email:, link:, token:)`. This is where a real
-   mailer or provider (SMTP, SendGrid, Postmark, ...) plugs in; Monk never
-   ships one. Like a route block, it has to be `Ractor.shareable?`, so build
+   given one — `deliver.call(email:, link:, token:)`. This is where email
+   plugs in, usually a one-line call to `Monk::Mail.deliver` (example in
+   [`mail.md`](mail.md#with-monkauth)), or any other channel such as SMS.
+   Like a route block, it has to be `Ractor.shareable?`, so build
    it as a module constant (`AppMailer::DELIVER = ->(email:, link:, token:)
    { ... }`), not inline in `config/auth.rb` — self at a script's top level
    isn't shareable, the same rule `Monk::Live.authorize` blocks follow.

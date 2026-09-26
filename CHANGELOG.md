@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Added
+
+- `Monk::Mail` (`require "monk/mail"`): text and/or HTML email, sent
+  synchronously from inside whichever worker Ractor serves the request.
+  The `mail` gem, and so Action Mailer, raises `Ractor::IsolationError`
+  there, so Monk builds the MIME itself: multipart/alternative, UTF-8,
+  base64 bodies, RFC 2047 headers, and header-injection checks on every
+  address and subject. `Monk::Mail.configure(url:, from:)` takes one
+  `MAIL_URL` (`smtp://`, `smtps://` or `log://`), parsed and sealed at
+  boot; an unset one means `log://` in development and a boot error
+  elsewhere. `Monk::Mail.deliver(to:, subject:, text:, html:, ...)` sends.
+  SMTP needs the app's own `gem "net-smtp"`. No attachments, inline
+  images or bulk sending. See `docs/guides/mail.md` and ADR 0012, which
+  reverses the earlier "email stays outside the framework" decision.
+
 ## 0.16.0 - 2026-09-24
 
 ### Added

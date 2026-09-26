@@ -90,9 +90,9 @@ module Monk
       # (see below), and raises everywhere else: a silent no-op here would
       # mean an app that forgot to wire delivery finds out only when a
       # user reports never receiving their link, in production, which is
-      # the wrong place to fail (docs/design/auth-sessions.md's "Email
-      # delivery stays outside the framework" -- Monk still needs to know
-      # it was told to send *something*).
+      # the wrong place to fail. deliver: stays a plain callable even now
+      # that Monk::Mail exists (docs/adr/0012-minimal-built-in-mailer.md):
+      # it's usually a one-line Monk::Mail.deliver, but can be any channel.
       #
       # `link` is the app's own job to build (Monk doesn't own routing, so
       # it can't know the callback path) -- from a trusted origin, e.g.
