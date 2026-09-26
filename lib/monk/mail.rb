@@ -1,4 +1,6 @@
 require_relative "freeze_hooks"
+require_relative "environment"
+require_relative "log"
 require_relative "mail/errors"
 require_relative "mail/address"
 require_relative "mail/mime"

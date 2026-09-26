@@ -21,8 +21,50 @@ module Monk
       end
 
       # Writes each message to Monk::Log instead of sending it: the
-      # development default when MAIL_URL is unset.
-      Log = Data.define
+      # development default when MAIL_URL is unset, and an explicit
+      # log:// anywhere else. One line per message in log/<env>.log (the
+      # text body escaped with #inspect so it stays one line; the HTML
+      # only by size), plus, in development only, the whole readable
+      # message on $stdout -- where a developer is looking, and where a
+      # magic link gets clicked. Same stdout posture as Base#log_request
+      # and Monk::Auth.log_dev_link.
+      Log = Data.define do
+        def deliver(message)
+          Monk::Log.info("[mail] #{summary(message)}")
+          if Monk.env.development?
+            $stdout.puts(readable(message))
+            $stdout.flush
+          end
+          message
+        end
+
+        private
+
+        def summary(message)
+          fields = [
+            "from=#{message.from.inspect}",
+            "to=#{message.to.join(", ").inspect}",
+            ("reply_to=#{message.reply_to.inspect}" if message.reply_to),
+            "subject=#{message.subject.inspect}",
+            ("text=#{message.text.inspect}" if message.text),
+            ("html=#{message.html.bytesize} bytes" if message.html),
+          ]
+          fields.compact.join(" ")
+        end
+
+        def readable(message)
+          lines = [
+            "[mail] ----------------------------------------",
+            "From: #{message.from}",
+            "To: #{message.to.join(", ")}",
+            ("Reply-To: #{message.reply_to}" if message.reply_to),
+            "Subject: #{message.subject}",
+          ]
+          lines += ["", "--- text ---", message.text] if message.text
+          lines += ["", "--- html ---", message.html] if message.html
+          (lines.compact + ["[mail] ----------------------------------------"]).join("\n")
+        end
+      end
     end
   end
 end
