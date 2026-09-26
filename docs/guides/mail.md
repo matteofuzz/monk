@@ -8,7 +8,7 @@ Ractor serves the request: the `mail` gem, and so Action Mailer, raises
 attachments, no inline images, no BCC lists, no bulk sending.
 
 ```ruby
-# config/mail.rb
+# config/mail.rb -- `monk new my_app --mail` writes this (as Settings) for you
 require "monk/mail"
 
 Monk::Mail.configure(url: ENV["MAIL_URL"], from: ENV["MAIL_FROM"])
@@ -106,6 +106,28 @@ It returns the `Monk::Mail::Message` it sent. At least one of `text:` or
 `html:` is required. Non-ASCII subjects, names and bodies are fine; every
 part goes out as UTF-8.
 
+### HTML from a template
+
+`Monk::Mail.render` turns a view into the `html:` String:
+
+```erb
+<%# views/mail/magic_link.erb %>
+<p><a href="<%= locals[:link] %>">Log in</a></p>
+```
+
+```ruby
+Monk::Mail.deliver(to: email, subject: "Your login link",
+  text: "Log in: #{link}", html: Monk::Mail.render("mail/magic_link", link: link))
+```
+
+Templates are compiled at boot with the rest of `views/`, and rendered
+without a request behind them: they see only their `locals`, never
+`params` or the session, the same as `Monk::Live` partials. The app's
+page layout is skipped; pass `layout: "mail/layout"` for an email one.
+`<%= %>` HTML-escapes, which is right for the HTML part and wrong for
+plain text, so build `text:` as a Ruby String. Calling `render` before
+`Monk.boot` raises `Monk::Mail::ViewsNotFrozenError`.
+
 It raises:
 
 - **`Monk::Mail::InvalidMessageError`** (an `ArgumentError`) for bad input,
@@ -134,20 +156,28 @@ the whole SMTP conversation, and Monk has no job queue. SMTP timeouts are
 
 ## With `Monk::Auth`
 
-`Monk::Auth.deliver_link` calls a `deliver:` callable when one is
-configured. Point it at `Monk::Mail`, built as a module constant so it's
-`Ractor.shareable?` (see [`auth.md`](auth.md)):
+`monk new --auth` wires this for you: `config/mail.rb`,
+`views/mail/magic_link.erb`, `gem "net-smtp"`, and a `deliver:` in
+`config/auth.rb`. By hand, `Monk::Auth.deliver_link` calls a `deliver:`
+callable when one is configured; point it at `Monk::Mail`, built as a
+module constant so it's `Ractor.shareable?` (see [`auth.md`](auth.md)):
 
 ```ruby
 # config/auth.rb
 module AppMailer
   DELIVER = lambda do |email:, link:, token:|
-    Monk::Mail.deliver(to: email, subject: "Your login link", text: "Log in: #{link}")
+    Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
+    Monk::Mail.deliver(to: email, subject: "Your login link",
+      text: "Log in: #{link}", html: Monk::Mail.render("mail/magic_link", link: link))
   end
 end
 
 Monk::Auth.configure(..., deliver: AppMailer::DELIVER)
 ```
+
+Require `config/mail.rb` from `config.ru`, not from `config/auth.rb`:
+`bin/websocket_server` loads `config/auth.rb` too, never sends mail, and
+shouldn't need `MAIL_URL` to boot.
 
 ## In tests
 

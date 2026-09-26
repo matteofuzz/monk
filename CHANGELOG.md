@@ -20,6 +20,24 @@ in `lib/monk/version.rb`.
   SMTP needs the app's own `gem "net-smtp"`. No attachments, inline
   images or bulk sending. See `docs/guides/mail.md` and ADR 0012, which
   reverses the earlier "email stays outside the framework" decision.
+- `Monk::Mail.render(template, **locals)`: renders a view (e.g.
+  `views/mail/magic_link.erb`) to the `html:` String, locals only, no page
+  layout, callable from any worker Ractor after boot.
+
+- `monk new --mail`: scaffolds `Monk::Mail` on its own, no Postgres needed:
+  `config/mail.rb` (required by `config.ru`), `gem "net-smtp"`, `MAIL_FROM`
+  in the env files, `MAIL_URL=log://` in `.env.test`, and a SETUP.md whose
+  test helper loads `.env.test` before `config/mail`.
+
+### Changed
+
+- **`monk new --auth` now sends the magic link by email**, and implies
+  `--mail` the same way it implies `--postgres`. On top of `--mail` it
+  adds `views/mail/magic_link.erb` and a working `AppMailer::DELIVER` wired into
+  `config/auth.rb`'s `deliver:`. `.env.test` sets `MAIL_URL=log://`; in
+  development an unset `MAIL_URL` prints the message to the console
+  (`log_dev_link`'s line and QR code still appear); elsewhere it must be
+  set, or the boot fails.
 
 ## 0.16.0 - 2026-09-24
 
