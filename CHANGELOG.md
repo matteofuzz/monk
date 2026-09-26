@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Fixed
+
+- `json` and `jsonb` columns read through `Monk::Persistence::Pg` (raw
+  queries and `Model` alike) raised `ArgumentError: unknown keyword:
+  quirks_mode`. pg 1.6.3's JSON decoder passes that keyword to
+  `JSON.parse`, and json 3 removed it. Monk's connections now decode
+  `json`/`jsonb` with their own decoder, keeping pg's other default
+  types.
+
 ## 0.17.0 - 2026-09-26
 
 ### Added
