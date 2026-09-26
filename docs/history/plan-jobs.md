@@ -3,8 +3,9 @@
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
-class and registry) and 3 (Postgres enqueue/claim/finish) done
-2026-09-26; nothing from Phase 4 on is implemented yet.
+class and registry), 3 (Postgres enqueue/claim/finish) and 4 (failures,
+retries, scheduled jobs) done 2026-09-26; nothing from Phase 5 on is
+implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -451,7 +452,35 @@ Ractors draining 200 jobs with none claimed twice.
 8. `finish`: `DELETE FROM monk_jobs` for the job; the payload goes by
    cascade.
 
-## Phase 4 — Failures, retries, scheduled jobs (Seam B)
+## Phase 4 — Failures, retries, scheduled jobs (Seam B) — DONE 2026-09-26
+
+`fail`, `stage_due`, `retry_failed`, `discard_failed` in
+`lib/monk/jobs/adapters/pg.rb`; `Monk::Jobs.retry_failed`/`.discard_failed`,
+`.backoff`, `.describe_error` in `lib/monk/jobs.rb`; tests in
+`test/jobs_pg_failures_test.rb` (13, including 4 stager Ractors moving
+200 due jobs exactly once) and `test/jobs_retry_policy_test.rb` (4). The
+Postgres test setup moved into a shared `JobsTestHelpers` in
+`test/test_helper.rb`.
+
+**Differences from the steps below, found while building:**
+
+- `fail(id, process_id, error:, retry_in:)` is one statement, and like
+  `finish` only acts while the process still holds the job. The database
+  decides where the job goes (`scheduled`, or `failed` once `attempts`
+  has reached `max_attempts`), so the runtime doesn't need to know
+  `max_attempts`. `retry_in: nil` fails the job straight away, for errors
+  never worth retrying (Decision 7's unknown job class, Phase 10's
+  invalid messages). It returns `:scheduled`, `:failed`, or `nil` when
+  the process no longer held the job.
+- The retry policy lives in `Monk::Jobs`, shared by both adapters:
+  `backoff(attempts)` is `attempts ** 4 + 15` seconds, without Sidekiq's
+  random jitter. Open point: without jitter, a batch of jobs that failed
+  together (say the SMTP relay was down) all retry together.
+  `describe_error` keeps the class, message and first 10 backtrace lines,
+  capped at 4,000 characters.
+- A retried job keeps its `last_error` until it succeeds or is
+  discarded. `retry_failed` resets `attempts` and sets `run_at = now()`,
+  so it queues behind jobs that were already waiting.
 
 9. `fail(job_id, error, retry_at:)`: `running` to `scheduled`, or to
    `failed` once `attempts` reaches `max_attempts`, clearing the lock

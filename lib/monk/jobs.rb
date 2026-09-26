@@ -9,6 +9,10 @@ module Monk
   # docs/adr/0013-jobs-narrow-state-table-plus-payloads.md; plan:
   # docs/history/plan-jobs.md.
   module Jobs
+    # last_error keeps the first lines of a failure, not all of it.
+    MAX_ERROR_LENGTH = 4_000
+    BACKTRACE_LINES = 10
+
     class << self
       # Typically, in config/jobs.rb:
       #
@@ -82,6 +86,31 @@ module Monk
       # without a name a job can never be found again once enqueued.
       def freeze_registry!
         @registry = Ractor.make_shareable(classes.filter_map { |job| [job.name, job] if job.name }.to_h)
+      end
+
+      # A failed job back to available, with its attempts reset; true if it
+      # was failed. Failed jobs stay in monk_jobs until retried or discarded.
+      def retry_failed(id)
+        adapter.retry_failed(id)
+      end
+
+      # Deletes a failed job; true if it was failed.
+      def discard_failed(id)
+        adapter.discard_failed(id)
+      end
+
+      # Seconds to wait before retrying a job that has failed `attempts`
+      # times: 16, 31, 96, 271, 640, ... (Sidekiq's curve, without its
+      # random jitter).
+      def backoff(attempts)
+        (attempts**4) + 15
+      end
+
+      # What goes in last_error: the class and message, then the first
+      # BACKTRACE_LINES of the backtrace, capped at MAX_ERROR_LENGTH.
+      def describe_error(error)
+        lines = ["#{error.class}: #{error.message}", *Array(error.backtrace).first(BACKTRACE_LINES)]
+        lines.join("\n")[0, MAX_ERROR_LENGTH]
       end
 
       # Test-only: unfreezes the registry and forgets the configuration.

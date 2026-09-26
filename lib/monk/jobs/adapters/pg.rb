@@ -59,6 +59,49 @@ module Monk
           DELETE FROM monk_jobs WHERE id = $1 AND state = 'running' AND locked_by = $2
         SQL
 
+        # Only while this process still holds the job, like FINISH_SQL. The
+        # database decides where it goes: back to scheduled, due retry_in
+        # seconds from now, or to failed once it has used its last attempt
+        # (attempts was already counted when it was claimed) or when
+        # retry_in is NULL. The payload keeps the error either way; the
+        # payload update runs whether or not the final SELECT reads it.
+        FAIL_SQL = <<~SQL.freeze
+          WITH job AS (
+            UPDATE monk_jobs SET
+              state = CASE WHEN $3::float8 IS NULL OR attempts >= max_attempts THEN 'failed' ELSE 'scheduled' END,
+              run_at = CASE WHEN $3::float8 IS NULL OR attempts >= max_attempts THEN run_at
+                            ELSE now() + $3::float8 * interval '1 second' END,
+              locked_by = NULL, locked_at = NULL
+            WHERE id = $1 AND state = 'running' AND locked_by = $2
+            RETURNING id, state
+          ), payload AS (
+            UPDATE monk_job_payloads SET last_error = $4 FROM job WHERE monk_job_payloads.job_id = job.id
+          )
+          SELECT state FROM job
+        SQL
+
+        # The stager: due scheduled jobs become available, oldest first, at
+        # most $1 per call. SKIP LOCKED lets every job process stage at
+        # once without two of them moving the same job.
+        STAGE_SQL = <<~SQL.freeze
+          UPDATE monk_jobs SET state = 'available'
+          WHERE id IN (
+            SELECT id FROM monk_jobs
+            WHERE state = 'scheduled' AND run_at <= now()
+            ORDER BY run_at
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+          )
+        SQL
+
+        RETRY_FAILED_SQL = <<~SQL.freeze
+          UPDATE monk_jobs SET state = 'available', attempts = 0, run_at = now() WHERE id = $1 AND state = 'failed'
+        SQL
+
+        DISCARD_FAILED_SQL = <<~SQL.freeze
+          DELETE FROM monk_jobs WHERE id = $1 AND state = 'failed'
+        SQL
+
         attr_reader :db_name
 
         def initialize(db_name:)
@@ -90,6 +133,30 @@ module Monk
         # True if the job was deleted, false if process_id no longer held it.
         def finish(id, process_id)
           with_connection { |c| c.exec_params(FINISH_SQL, [id, process_id]).cmd_tuples == 1 }
+        end
+
+        # Records a failure of a job process_id holds: :scheduled when it will
+        # be retried in retry_in seconds, :failed when it won't (no attempts
+        # left, or retry_in nil), nil when process_id no longer held it.
+        def fail(id, process_id, error:, retry_in:)
+          row = with_connection { |c| c.exec_params(FAIL_SQL, [id, process_id, retry_in&.to_f, error]).first }
+          row && row["state"].to_sym
+        end
+
+        # Moves up to `limit` due scheduled jobs to available; returns how many.
+        def stage_due(limit = 500)
+          with_connection { |c| c.exec_params(STAGE_SQL, [limit]).cmd_tuples }
+        end
+
+        # A failed job back to available with fresh attempts. False if it
+        # isn't failed (or doesn't exist).
+        def retry_failed(id)
+          with_connection { |c| c.exec_params(RETRY_FAILED_SQL, [id]).cmd_tuples == 1 }
+        end
+
+        # Deletes a failed job and its payload. False if it isn't failed.
+        def discard_failed(id)
+          with_connection { |c| c.exec_params(DISCARD_FAILED_SQL, [id]).cmd_tuples == 1 }
         end
 
         private

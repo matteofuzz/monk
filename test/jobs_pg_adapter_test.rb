@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "json"
 require "monk/jobs"
-require "monk/persistence/pg/migrator"
+require "monk/persistence/pg"
 
 # The Postgres adapter's enqueue, claim and finish (docs/history/plan-jobs.md
 # Phase 3, Seam B), against the real schema from Phase 1's migration.
@@ -22,9 +22,9 @@ end
 
 class JobsPgAdapterTest < Minitest::Test
   include PersistenceTestHelpers
+  include JobsTestHelpers
 
   DB_NAME = :jobs_pg_adapter_test_db
-  MIGRATIONS_DIR = File.expand_path("../lib/monk/templates/jobs/db/migrate", __dir__)
   PROCESS_ID = 1
 
   def setup
@@ -32,9 +32,7 @@ class JobsPgAdapterTest < Minitest::Test
     Monk::Jobs.reset!
     skip_unless_postgres_available
 
-    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) }
-    Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: MIGRATIONS_DIR).migrate!
+    setup_jobs_tables(DB_NAME)
     Monk::Jobs.configure(db_name: DB_NAME)
   end
 
@@ -232,7 +230,7 @@ class JobsPgAdapterTest < Minitest::Test
     assert adapter.finish(id, PROCESS_ID)
 
     assert_equal 0, count_jobs
-    assert_equal 0, Monk::Persistence::Pg.checkout(DB_NAME) { |c| c.exec("SELECT count(*) FROM monk_job_payloads").getvalue(0, 0) }
+    assert_equal 0, count_rows(DB_NAME, "monk_job_payloads")
   end
 
   # A job pruned from a dead process and claimed again elsewhere must not
@@ -253,23 +251,10 @@ class JobsPgAdapterTest < Minitest::Test
   end
 
   def job_row(id)
-    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-      conn.exec_params(<<~SQL, [id]).first
-        SELECT j.*, p.job_class, p.args::text AS args,
-          extract(epoch FROM j.run_at - now())::float8 AS seconds_until_due
-        FROM monk_jobs j JOIN monk_job_payloads p ON p.job_id = j.id
-        WHERE j.id = $1
-      SQL
-    end
+    super(DB_NAME, id)
   end
 
   def count_jobs
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("SELECT count(*) FROM monk_jobs").getvalue(0, 0) }
-  end
-
-  def drop_jobs_tables(conn)
-    %w[monk_job_payloads monk_jobs monk_processes schema_migrations].each do |table|
-      drop_table_if_exists(conn, table, cascade: true)
-    end
+    count_rows(DB_NAME, "monk_jobs")
   end
 end
