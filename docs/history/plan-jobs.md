@@ -2,8 +2,9 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Branch: `main_dev/monk_jobs`. Phases 0 (spikes) and 1 (schema) done
-2026-09-26; nothing from Phase 2 on is implemented yet.
+Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema) and 2 (job
+class and registry) done 2026-09-26; nothing from Phase 3 on is
+implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -368,7 +369,31 @@ runs, 0 failures), RuboCop clean.
    test database. Deleting a job deletes its payload (`ON DELETE
    CASCADE`), and an unknown `state` is rejected by the CHECK.
 
-## Phase 2 — `Monk::Job` and the registry (Seam A)
+## Phase 2 — `Monk::Job` and the registry (Seam A) — DONE 2026-09-26
+
+`lib/monk/jobs.rb` (registry, freeze hook), `lib/monk/jobs/job.rb`,
+`lib/monk/jobs/args.rb`, `lib/monk/jobs/errors.rb`; tests in
+`test/jobs_job_test.rb` (17) and `test/jobs_args_test.rb` (8).
+
+**Differences from the steps below, found while building:**
+
+- `inherited` only *records* the subclass. Names are resolved when the
+  registry is frozen, so `Foo = Class.new(Monk::Job)` (named after it's
+  created) is still found. Anonymous classes are skipped, since a job
+  without a name can never be found again once enqueued. Phase 3's
+  `enqueue` should reject one up front.
+- `Monk::Jobs.lookup` reads nothing but the frozen registry, which is
+  `nil` before the first freeze. `nil` is shareable, so a worker Ractor
+  gets `NotFrozenError` naming the fix rather than a
+  `Ractor::IsolationError`, with no rescue needed.
+- Only recorded job classes are ever returned: `lookup("File")` or
+  `lookup("Monk::Job")` is `UnknownJobError`, never `Object.const_get`.
+- Settings are inherited from the superclass, so an app can put shared
+  ones on its own base class. `priority` and `max_attempts` are checked
+  against the SMALLINT columns when set.
+- `Args.check!` names the offending value by its full path
+  (`args[0]["user"]["joined"]`). Symbol keys and non-finite Floats are
+  rejected, because JSON would hand `#perform` back something different.
 
 3. `Monk::Job` base class. `inherited` records the subclass in
    `Monk::Jobs`' registry (main Ractor, at load time). Class-level
