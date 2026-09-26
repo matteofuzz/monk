@@ -73,6 +73,28 @@ class MailConfigTest < Minitest::Test
     assert_includes transport.inspect, "user:***@smtp.example.test:587"
   end
 
+  # net-smtp is installed for monk's own suite, so the missing-gem path is
+  # driven by making `require` raise, on the transport class only -- the
+  # receiver require_library! calls it on.
+  def test_smtp_url_without_net_smtp_fails_at_configure_with_a_gemfile_hint
+    SMTP.define_singleton_method(:require) { |_name| raise LoadError, "cannot load such file -- net/smtp" }
+
+    error = assert_raises(Monk::Mail::MissingDependencyError) { transport_for("smtp://localhost:25") }
+
+    assert_includes error.message, %(gem "net-smtp")
+    assert_nil Monk::Mail.config
+  ensure
+    SMTP.singleton_class.remove_method(:require)
+  end
+
+  def test_log_url_never_needs_net_smtp
+    SMTP.define_singleton_method(:require) { |_name| raise LoadError, "cannot load such file -- net/smtp" }
+
+    assert_equal LOG.new, transport_for("log://")
+  ensure
+    SMTP.singleton_class.remove_method(:require)
+  end
+
   def test_log_url
     assert_equal LOG.new, transport_for("log://")
   end
