@@ -1,4 +1,6 @@
 require_relative "mail/errors"
+require_relative "mail/address"
+require_relative "mail/mime"
 require_relative "mail/message"
 
 module Monk

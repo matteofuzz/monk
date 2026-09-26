@@ -27,6 +27,14 @@ module Monk
         ))
       end
 
+      # RFC 5322 wire format, ready for SMTP DATA or a raw-MIME API. date:,
+      # message_id: and boundary: are generated when omitted; tests pin them.
+      def to_mime(**) = MIME.build(self, **)
+
+      # The bare addresses, for the SMTP envelope (MAIL FROM / RCPT TO).
+      def envelope_from = Address.bare(from)
+      def envelope_to = to.map { |address| Address.bare(address) }
+
       private
 
       # A CR or LF in a header value would let whoever controls it (say, a
