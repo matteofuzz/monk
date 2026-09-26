@@ -54,6 +54,11 @@ Gem::Specification.new do |spec|
   # that wants the QR code declares it in its own Gemfile.
   spec.add_development_dependency "rqrcode", "~> 3.2"
 
+  # Same posture again: Monk::Mail's smtp:// transport requires it when
+  # configured, and it's been a bundled (not default) gem since Ruby 3.1,
+  # so an app that sends over SMTP declares "net-smtp" in its own Gemfile.
+  spec.add_development_dependency "net-smtp", "~> 0.5"
+
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "rubocop", "~> 1.90"

@@ -4,6 +4,41 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Added
+
+- `Monk::Mail` (`require "monk/mail"`): text and/or HTML email, sent
+  synchronously from inside whichever worker Ractor serves the request.
+  The `mail` gem, and so Action Mailer, raises `Ractor::IsolationError`
+  there, so Monk builds the MIME itself: multipart/alternative, UTF-8,
+  base64 bodies, RFC 2047 headers, and header-injection checks on every
+  address and subject. `Monk::Mail.configure(url:, from:)` takes one
+  `MAIL_URL` (`smtp://`, `smtps://` or `log://`), parsed and sealed at
+  boot; an unset one means `log://` in development and a boot error
+  elsewhere. `Monk::Mail.deliver(to:, subject:, text:, html:, ...)` sends.
+  SMTP needs the app's own `gem "net-smtp"`. No attachments, inline
+  images or bulk sending. See `docs/guides/mail.md` and ADR 0012, which
+  reverses the earlier "email stays outside the framework" decision.
+- `Monk::Mail.render(template, **locals)`: renders a view (e.g.
+  `views/mail/magic_link.erb`) to the `html:` String, locals only, no page
+  layout, callable from any worker Ractor after boot.
+
+- `monk new --mail`: scaffolds `Monk::Mail` on its own, no Postgres needed:
+  `config/mail.rb` (required by `config.ru`), `gem "net-smtp"`, `MAIL_FROM`
+  in the env files, `MAIL_URL=log://` in `.env.test`, and a SETUP.md whose
+  test helper loads `.env.test` before `config/mail`.
+
+### Changed
+
+- **`monk new --auth` now sends the magic link by email**, and implies
+  `--mail` the same way it implies `--postgres`. On top of `--mail` it
+  adds `views/mail/magic_link.erb` and a working `AppMailer::DELIVER` wired into
+  `config/auth.rb`'s `deliver:`. `.env.test` sets `MAIL_URL=log://`; in
+  development an unset `MAIL_URL` prints the message to the console
+  (`log_dev_link`'s line and QR code still appear); elsewhere it must be
+  set, or the boot fails.
+
 ## 0.16.0 - 2026-09-24
 
 ### Added

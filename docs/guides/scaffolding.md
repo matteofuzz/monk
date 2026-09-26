@@ -9,7 +9,10 @@ monk new my_app --postgres   # + config/persistence.rb, bin/console, bin/setup_d
                               #   Dockerfile swapped for a variant that adds libpq (the pg gem's native ext)
 monk new my_app --auth       # + --postgres, above, plus config/auth.rb and a migration for
                               #   login_tokens/sessions (config.ru requires config/auth instead of
-                              #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET)
+                              #   config/persistence; .env/.env.test/.env.example get a placeholder AUTH_SECRET),
+                              #   and --mail, below, to send the magic link (+ views/mail/magic_link.erb)
+monk new my_app --mail       # + Monk::Mail, no Postgres needed: config/mail.rb (config.ru requires it),
+                              #   the net-smtp gem, MAIL_FROM in .env files, MAIL_URL=log:// in .env.test
 monk new my_app --redis      # + the redis gem, for bin/websocket_server's cross-process
                               #   fan-out; writes/extends .env/.env.example with a placeholder
                               #   REDIS_URL either way, whether or not --postgres is also set
@@ -125,8 +128,9 @@ written, by hand:
      secure: !Monk.env.development?,  # see auth.md, "Secure cookies"
    )
    ```
-   Add a `deliver:` callable once you have real mail delivery — see
-   auth.md, "Sending the magic link". It builds the link from
+   Add a `deliver:` callable to send the link, usually through
+   `Monk::Mail` — see [`mail.md`](mail.md#with-monkauth) and auth.md,
+   "Sending the magic link". The link is built from
    `Monk::Settings[:public_url]`, already declared in every app's
    `config/settings.rb` (not auth-specific), nothing to add here.
 2. `require_relative "config/auth"` in `config.ru`, before `Monk.boot(App)`.

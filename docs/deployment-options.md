@@ -21,7 +21,7 @@ constraints any host has to satisfy.
 | R5 | **Postgres connections ≈ (Ractor pool size × instances) + 1 per bin/* script** | one memoized `PG::Connection` per Ractor, never shared (`lib/monk/persistence/pg.rb:8-15`) |
 | R6 | **A migration step that is not the start command** | `bin/setup_db` is a separate script; nothing runs it on boot |
 | R7 | **`REDIS_URL`, only if WebSocket fan-out crosses processes** | `bin/websocket_server` requires `monk/websocket/redis_fanout` only when the var is set; unset = in-process fan-out, which is correct for a single-instance deploy |
-| R8 | **Outbound mail is the app's own job** | Monk has no mailer, deliberately (`docs/design/auth-sessions.md`: "Email delivery stays outside the framework") |
+| R8 | **Outbound SMTP to a relay** | *Updated 2026-09-26:* Monk now ships `Monk::Mail` (`docs/adr/0012-minimal-built-in-mailer.md`), sending over `smtp://`/`smtps://`, so the host must allow outbound SMTP (every provider's relay works, see `docs/guides/mail.md`). When this doc was written, Monk had no mailer by design |
 | R9 | **A writable `log/` directory** | `Monk::Log` appends to `log/<env>.log` in every environment (`lib/monk/log.rb:39-49`) — a read-only root filesystem breaks boot |
 | R10 | **Env vars present in the main Ractor at boot** | `Monk::Settings` reads `ENV` at boot and seals the result shareable (`lib/monk/settings.rb`); platform-injected vars are fine, `.env` files are a dev-only convenience |
 
@@ -179,6 +179,16 @@ if the add-on marketplace is the deciding factor.
 
 ## 4. SMTP: the part with no framework support
 
+> **Update 2026-09-26:** this section predates `Monk::Mail`
+> (`docs/adr/0012-minimal-built-in-mailer.md`, `docs/guides/mail.md`),
+> which now does what it describes: MIME built by Monk, a `Net::SMTP`
+> client built per send inside the worker Ractor, credentials sealed at
+> boot from one `MAIL_URL`. Point 1 also turned out to understate the
+> problem: measured on Ruby 4.0.6, the `mail` gem (2.9.1) raises
+> `Ractor::IsolationError` on `Mail.new` in any worker Ractor, so it is
+> unusable there, not just a poor fit. The port policy below still
+> decides the host.
+
 Monk will not grow a mailer — `Monk::Auth.request_login` returns the raw
 token and the app delivers it (`docs/design/auth-sessions.md`), and
 `Monk::Auth.log_dev_link` covers development only (it is a no-op outside
@@ -223,7 +233,8 @@ server anyway: that is direct-to-MX delivery, i.e. running your own MTA.
 So: **on a VPS, real SMTP is fine. On a PaaS, prefer a provider's HTTPS
 API** — same provider, same deliverability, no port policy. Free tiers as
 of 2026: Brevo 9,000/month (300/day), Mailtrap ~4,000/month, Resend
-3,000/month, Amazon SES 3,000/month for 12 months, Postmark 100/month
+3,000/month, Amazon SES $200 of AWS credits for 6 months (new accounts; the old
+3,000/month offer is gone, per `docs/mail-providers.md`), Postmark 100/month
 (integration testing only). For magic-link auth, volume is tiny and
 deliverability is everything — Postmark or Resend on a paid tier, with a
 verified sending domain (SPF/DKIM), is the sane default; a login link in
