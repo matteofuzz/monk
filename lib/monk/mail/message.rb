@@ -11,14 +11,14 @@ module Monk
     Message = Data.define(:from, :to, :subject, :text, :html, :reply_to) do
       def initialize(from:, to:, subject:, text: nil, html: nil, reply_to: nil)
         to = Array(to) unless to.nil?
-        to&.each { |address| header!(:to, address) }
+        to&.each { |address| Fields.header!(:to, address) }
         raise InvalidMessageError, "to: needs at least one recipient" if to.nil? || to.empty?
 
-        header!(:from, from)
-        header!(:subject, subject)
-        header!(:reply_to, reply_to) unless reply_to.nil?
-        body!(:text, text)
-        body!(:html, html)
+        Fields.header!(:from, from)
+        Fields.header!(:subject, subject)
+        Fields.header!(:reply_to, reply_to) unless reply_to.nil?
+        Fields.body!(:text, text)
+        Fields.body!(:html, html)
         raise InvalidMessageError, "a message needs a text: or html: body (or both)" if text.nil? && html.nil?
 
         super(**Ractor.make_shareable(
@@ -34,8 +34,11 @@ module Monk
       # The bare addresses, for the SMTP envelope (MAIL FROM / RCPT TO).
       def envelope_from = Address.bare(from)
       def envelope_to = to.map { |address| Address.bare(address) }
+    end
 
-      private
+    # Field checks shared by Message and Monk::Mail.configure(from:).
+    module Fields
+      module_function
 
       # A CR or LF in a header value would let whoever controls it (say, a
       # user typing their email into a login form) inject headers of their

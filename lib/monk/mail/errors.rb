@@ -4,5 +4,11 @@ module Monk
     # the transport or the network.
     class InvalidMessageError < ArgumentError
     end
+
+    class InvalidMailUrlError < StandardError
+    end
+
+    class MissingMailUrlError < StandardError
+    end
   end
 end
