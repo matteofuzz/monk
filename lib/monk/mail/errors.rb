@@ -14,6 +14,9 @@ module Monk
     class MissingDependencyError < StandardError
     end
 
+    class NotConfiguredError < StandardError
+    end
+
     # A send that failed on the way out -- network, TLS, or the server
     # refusing it. The transport's own exception is the #cause.
     class DeliveryError < StandardError

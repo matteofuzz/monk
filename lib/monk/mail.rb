@@ -33,6 +33,26 @@ module Monk
 
       attr_reader :config
 
+      # Builds a Message and sends it through the configured transport,
+      # synchronously -- the calling worker Ractor waits for the send
+      # (docs/adr/0012-minimal-built-in-mailer.md accepts that cost; a
+      # local relay or a fast HTTPS provider keeps it short). Returns the
+      # Message. Invalid input raises InvalidMessageError before anything
+      # is sent; a failed send raises DeliveryError.
+      #
+      #   Monk::Mail.deliver(to: email, subject: "Your login link", text: "Log in: #{link}")
+      def deliver(to:, subject:, text: nil, html: nil, reply_to: nil, from: nil)
+        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.deliver" unless config
+
+        from ||= config[:from]
+        if from.nil?
+          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
+        end
+
+        message = Message.new(from: from, to: to, subject: subject, text: text, html: html, reply_to: reply_to)
+        config[:transport].deliver(message)
+      end
+
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module, same as Monk::Auth.freeze_registry! --
       # an unfrozen config Hash can't be read from a worker Ractor at all.
