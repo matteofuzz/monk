@@ -848,7 +848,7 @@ module Monk
         <<~RUBY.chomp.gsub(/^/, "  ")
           def test_connects_to_the_test_database
             Monk::Persistence::Pg.checkout(:primary) do |conn|
-              assert_equal "1", conn.exec("SELECT 1").getvalue(0, 0)
+              assert_equal 1, conn.exec("SELECT 1").getvalue(0, 0)
             end
           end
         RUBY

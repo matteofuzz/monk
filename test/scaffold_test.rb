@@ -1,8 +1,11 @@
 require_relative "test_helper"
 require "tmpdir"
 require "monk/scaffold"
+require "monk/persistence/pg"
 
 class ScaffoldTest < Minitest::Test
+  include PersistenceTestHelpers
+
   def test_write_bang_creates_the_base_skeleton_matching_the_templates_exactly
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -271,6 +274,30 @@ class ScaffoldTest < Minitest::Test
       assert_includes setup_md, "authenticate: true, redis fan-out: on"
       assert_includes setup_md, "demo_app_development"
       assert_includes setup_md, "demo_app_test"
+    end
+  end
+
+  # The sample test SETUP.md hands a --postgres app, run as the app would
+  # run it, against a real database: it has to pass as written, including
+  # how Monk's connections decode the value it checks.
+  def test_setup_mds_sample_postgres_test_passes_as_written
+    skip_unless_postgres_available
+
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest, postgres: true).write!
+      sample = read(dest, "SETUP.md")[%r{\*\*test/persistence_test\.rb\*\*.*?```ruby\n(.*?)```}m, 1]
+      sample = sample.sub(%(require_relative "test_helper"\n), "")
+      sample = sample.sub("class PersistenceTest < Minitest::Test", "Class.new(Minitest::Test) do")
+
+      Monk::Persistence::Pg.reset!
+      Monk::Persistence::Pg.register(:primary, **pg_test_opts)
+      sample_test = eval(sample) # rubocop:disable Security/Eval
+      result = sample_test.new("test_connects_to_the_test_database").run
+
+      assert_predicate result, :passed?, result.failures.map(&:message).join("\n")
+    ensure
+      Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
     end
   end
 

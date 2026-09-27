@@ -734,11 +734,13 @@ bundle), stopped with `TERM`. Two more tests are in
   the Live tests' `PgFanout` publisher, so some random orders failed
   `LivePgTest`. The child job process's connections now carry an
   `application_name`, and the test kills only those.
-- **Found, not fixed (outside this plan):** SETUP.md's sample Postgres
-  test, generated for `--postgres` without `--auth` and unrelated to
-  jobs, asserts `assert_equal "1", conn.exec("SELECT 1").getvalue(0, 0)`.
-  Monk's connections decode integers, so the value is `1`, and a
-  generated app's copy of that test fails.
+- **Found, fixed on its own (outside this plan):** SETUP.md's sample
+  Postgres test, generated for `--postgres` without `--auth` and
+  unrelated to jobs, asserted `assert_equal "1", conn.exec("SELECT
+  1").getvalue(0, 0)`. Monk's connections decode integers, so the value
+  is `1`, and a generated app's copy of that test failed. It now expects
+  `1`, and `test/scaffold_test.rb` runs the sample test taken from a
+  generated SETUP.md against the test database.
 
 21. `--jobs` implies `--postgres` (`@postgres = postgres || auth ||
     jobs`) and nothing else. It works with or without

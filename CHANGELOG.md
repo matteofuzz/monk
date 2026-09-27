@@ -14,6 +14,9 @@ in `lib/monk/version.rb`.
   `JSON.parse`, and json 3 removed it. Monk's connections now decode
   `json`/`jsonb` with their own decoder, keeping pg's other default
   types.
+- The sample test `SETUP.md` gives a `monk new --postgres` app (without
+  `--auth`) failed as written: it expected `SELECT 1` to return the
+  String `"1"`, but Monk's connections decode it to the Integer `1`.
 
 ## 0.17.0 - 2026-09-26
 
