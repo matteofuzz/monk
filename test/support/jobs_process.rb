@@ -14,6 +14,7 @@ Monk::Persistence::Pg.register(
   user: ENV.fetch("MONK_TEST_PG_USER"),
   password: ENV.fetch("MONK_TEST_PG_PASSWORD"),
   dbname: ENV.fetch("MONK_TEST_PG_DATABASE"),
+  application_name: JobsProcessJobs::APPLICATION_NAME,
 )
 Monk::Jobs.configure(db_name: JobsProcessJobs::DB)
 

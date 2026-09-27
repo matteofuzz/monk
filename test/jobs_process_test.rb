@@ -82,16 +82,17 @@ class JobsProcessTest < Minitest::Test
   end
 
   # Every connection the job process has, the supervisor's included, as
-  # when Postgres restarts under it: it reconnects and carries on.
+  # when Postgres restarts under it: it reconnects and carries on. Only
+  # that process's connections: other tests keep theirs open across tests.
   def test_a_job_process_survives_losing_every_database_connection
     pid = start_job_process
     JobsProcessJobs::Record.enqueue("before")
     wait_until { results.include?("before") }
 
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-      conn.exec(<<~SQL)
+      conn.exec_params(<<~SQL, [JobsProcessJobs::APPLICATION_NAME])
         SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-        WHERE datname = current_database() AND pid <> pg_backend_pid()
+        WHERE datname = current_database() AND application_name = $1
       SQL
     end
     JobsProcessJobs::Record.enqueue("after")

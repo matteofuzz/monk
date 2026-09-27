@@ -3,6 +3,9 @@
 # They record into jobs_process_results, which the test reads.
 module JobsProcessJobs
   DB = :jobs_process_test_db
+  # Every connection a child job process opens carries this, so a test can
+  # kill that process's connections and nobody else's.
+  APPLICATION_NAME = "monk_jobs_process_test".freeze
 
   def self.record(value)
     Monk::Persistence::Pg.checkout(DB) do |conn|
