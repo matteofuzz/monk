@@ -5,8 +5,8 @@
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
 class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
 retries, scheduled jobs), 5 (`drain!` and `clear!` for tests) and 6 (the
-Ractor runtime) done by 2026-09-27; nothing from Phase 7 on is
-implemented yet.
+Ractor runtime) done by 2026-09-27; Phase 7 (`NOTIFY` wake-up) skipped;
+nothing from Phase 8 on is implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -70,9 +70,10 @@ invalidates the phases that depend on it.
    order (strict ordering across queues, as in Solid Queue); a single
    `queue = ANY(...)` query can't use the index order across queues. One
    job per worker Ractor in v1.
-3. **Workers poll by default**, with a short, configurable interval. `LISTEN`/`NOTIFY`
-   is an opt-in wake-up only (Phase 7), never how jobs are delivered
-   (ADR 0013).
+3. **Workers poll**, with a short, configurable interval. `LISTEN`/`NOTIFY`
+   is never how jobs are delivered (ADR 0013), and v1 doesn't use it
+   to wake workers either (Phase 7, skipped). Lower `poll_interval` is
+   how an app gets faster pickup.
 4. **Delivery is at-least-once.** `running` jobs of a process whose
    heartbeat has expired go back to `available`, with `attempts` already
    counted. Jobs must be idempotent, and the guide
@@ -654,13 +655,40 @@ shutdown timeout. `#stop` does what `TERM`/`INT` do, for tests.
     job exactly once. `TERM` finishes the job in flight and leaves nothing
     claimed.
 
-## Phase 7 — Optional `NOTIFY` wake-up
+## Phase 7 — Optional `NOTIFY` wake-up — SKIPPED 2026-09-27
+
+Not built in v1; moved to "Explicitly out of scope" below. The plan was:
 
 20. `Monk::Jobs.configure(notify: true)`: `enqueue` adds `pg_notify`
     in the same transaction, and a listener Ractor in the job process
     (the `PgFanout` subscriber loop) wakes idle workers early. Polling
     keeps running regardless. Documented as for low-to-moderate write
     volume only, with ADR 0013's commit-lock caveat.
+
+**Why it was skipped:**
+
+- **The gain is small and narrow.** It only shortens the wait for jobs
+  enqueued to run immediately, and only while workers are idle. With the
+  default `poll_interval` of 1 s, that wait is about 0.5 s on average and
+  1 s at worst. Busy workers claim the next job at once anyway, and
+  scheduled jobs and retries are promoted by the supervisor's tick, not
+  by a notification.
+- **Polling faster gets most of it for free.** An idle poll is one query
+  against a small partial index. At `poll_interval: 0.2` with 5 workers,
+  that's about 25 small queries a second per job process, bringing the
+  average wait to about 0.1 s.
+- **The cost grows with load, while the benefit matters most at low
+  load.** A transaction that issued `NOTIFY` takes a database-wide lock
+  at commit (ADR 0013), so every transaction that enqueues a job would
+  commit one at a time. That falls on the app's own transactions exactly
+  when the app is busy. `LISTEN` also needs a session connection per job
+  process, so it doesn't work behind PgBouncer in transaction mode.
+- **It adds real moving parts:** a listener Ractor for the supervisor to
+  respawn, a reconnect path, a `:wake` control message for workers, and
+  tests for missed notifications.
+
+To revisit only if Phase 10 (login-link email latency) shows that
+tuning `poll_interval` isn't enough.
 
 ## Phase 8 — Scaffolding: `monk new --jobs` (Seam E)
 
@@ -693,7 +721,9 @@ shutdown timeout. `#stop` does what `TERM`/`INT` do, for tests.
 
 27. `docs/guides/jobs.md`: defining a job, enqueueing it (with and
     without `conn:`), idempotency first, retries and failed jobs,
-    scheduling, running `bin/jobs`, sizing workers, testing jobs
+    scheduling, running `bin/jobs`, sizing workers, tuning
+    `poll_interval` (pickup latency) and `tick_interval` (how late a
+    scheduled job may start), testing jobs
     (`drain!`, `clear!`, `in_ractor: false`). A
     "Keeping the queue healthy" section: long transactions as the main
     risk, `idle_in_transaction_session_timeout`, the autovacuum settings,
@@ -735,9 +765,10 @@ not decisions:
   `AUTH_SECRET`; or keep magic links synchronous and make everything else
   asynchronous.
 - **Latency for a user who is waiting.** A login link waits for the poll
-  interval plus the queue ahead of it. Candidates: a dedicated
-  `mailers` queue with its own worker and priority, or `notify: true` for
-  that queue only.
+  interval plus the queue ahead of it. Candidates: a dedicated `mailers`
+  queue with its own job process and a short `poll_interval`, or a high
+  priority. Phase 7's `NOTIFY` wake-up, skipped, is the fallback if
+  neither is enough.
 - **Which failures to retry.** `DeliveryError` (the relay is unreachable
   or rejected the send) is worth retrying. `InvalidMessageError` never
   is, and should go straight to failed.
@@ -758,6 +789,8 @@ not decisions:
   delivery (Phase 10) shows the need.
 - A `monk jobs:install` retrofit command.
 - Running job workers inside the web server's process.
+- Waking idle workers with `LISTEN`/`NOTIFY` (Phase 7, skipped): lower
+  `poll_interval` instead. Revisit only if Phase 10 shows a real need.
 
 ## Risks worth watching
 
