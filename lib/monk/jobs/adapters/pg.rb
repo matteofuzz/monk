@@ -102,6 +102,55 @@ module Monk
           DELETE FROM monk_jobs WHERE id = $1 AND state = 'failed'
         SQL
 
+        REGISTER_PROCESS_SQL = <<~SQL.freeze
+          INSERT INTO monk_processes (hostname, pid) VALUES ($1, $2) RETURNING id
+        SQL
+
+        # An upsert, not an UPDATE: a process that stalled long enough for
+        # another to prune it gets its row back under the same id. The jobs
+        # pruning released stay with whoever claimed them since; this
+        # process's late finish/fail calls on them just find nothing held.
+        HEARTBEAT_SQL = <<~SQL.freeze
+          INSERT INTO monk_processes (id, hostname, pid) OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3)
+          ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = now()
+        SQL
+
+        # Deletes processes whose heartbeat is older than $1 seconds, and
+        # releases their running jobs back to available with their attempt
+        # still counted (Decision 4). Also releases running jobs with no
+        # process row at all once they've been running that long -- a
+        # drain! that crashed mid-job, or rows left by a bug. The NOT EXISTS
+        # sees the rows as they were before the DELETE, so a pruned
+        # process's jobs are caught by the first condition.
+        PRUNE_SQL = <<~SQL.freeze
+          WITH dead AS (
+            DELETE FROM monk_processes
+            WHERE last_heartbeat_at < now() - $1::float8 * interval '1 second'
+            RETURNING id
+          )
+          UPDATE monk_jobs SET state = 'available', locked_by = NULL, locked_at = NULL
+          WHERE state = 'running' AND (
+            locked_by IN (SELECT id FROM dead)
+            OR (locked_at < now() - $1::float8 * interval '1 second'
+                AND NOT EXISTS (SELECT 1 FROM monk_processes p WHERE p.id = monk_jobs.locked_by))
+          )
+        SQL
+
+        # A graceful stop: whatever this process still has running goes back
+        # to available, and its row goes.
+        DEREGISTER_SQL = <<~SQL.freeze
+          WITH gone AS (DELETE FROM monk_processes WHERE id = $1)
+          UPDATE monk_jobs SET state = 'available', locked_by = NULL, locked_at = NULL
+          WHERE state = 'running' AND locked_by = $1
+        SQL
+
+        # One job back to available, if process_id still holds it: the job a
+        # worker was running when that worker died.
+        RELEASE_SQL = <<~SQL.freeze
+          UPDATE monk_jobs SET state = 'available', locked_by = NULL, locked_at = NULL
+          WHERE id = $1 AND state = 'running' AND locked_by = $2
+        SQL
+
         CLEAR_SQL = <<~SQL.freeze
           DELETE FROM monk_jobs;
           DELETE FROM monk_processes;
@@ -162,6 +211,47 @@ module Monk
         # Deletes a failed job and its payload. False if it isn't failed.
         def discard_failed(id)
           with_connection { |c| c.exec_params(DISCARD_FAILED_SQL, [id]).cmd_tuples == 1 }
+        end
+
+        # A job process's own row; returns its id, the process_id it claims
+        # jobs as.
+        def register_process(hostname:, pid:)
+          with_connection { |c| Integer(c.exec_params(REGISTER_PROCESS_SQL, [hostname, pid]).getvalue(0, 0)) }
+        end
+
+        def heartbeat(process_id, hostname:, pid:)
+          with_connection { |c| c.exec_params(HEARTBEAT_SQL, [process_id, hostname, pid]) }
+          nil
+        end
+
+        # Releases the jobs of processes silent for more than `timeout`
+        # seconds, and deletes those processes; returns how many jobs were
+        # released.
+        def prune(timeout)
+          with_connection { |c| c.exec_params(PRUNE_SQL, [timeout.to_f]).cmd_tuples }
+        end
+
+        # The job a dead worker was holding, back to available with its
+        # attempt counted; true if process_id still held it.
+        def release(id, process_id)
+          with_connection { |c| c.exec_params(RELEASE_SQL, [id, process_id]).cmd_tuples == 1 }
+        end
+
+        # Releases this process's running jobs and deletes its row.
+        def deregister(process_id)
+          with_connection { |c| c.exec_params(DEREGISTER_SQL, [process_id]) }
+          nil
+        end
+
+        # After a job timed out mid-query: cancels whatever the calling
+        # Ractor's connection is still running on the server, then
+        # reconnects, so the worker's next query doesn't wait for the
+        # abandoned one (Phase 0.3) or land inside its open transaction.
+        def reset_connection
+          conn = Monk::Persistence::Pg[@db_name]
+          conn.cancel
+          conn.reset
+          nil
         end
 
         # Every job (payloads by cascade) and every process row. Behind

@@ -17,6 +17,7 @@ module JobsJobTest
     queue "mailers"
     priority(-5)
     max_attempts 3
+    timeout 30
   end
 
   class WelcomeEmail < MailerJob
@@ -159,6 +160,24 @@ class JobsSettingsTest < Minitest::Test
 
     assert_raises(ArgumentError) { job.max_attempts 0 }
     assert_raises(ArgumentError) { job.max_attempts 40_000 }
+  end
+
+  def test_no_timeout_by_default
+    assert_nil JobsJobTest::SendReceipt.timeout
+  end
+
+  def test_timeout_is_set_and_inherited
+    assert_equal 30, JobsJobTest::MailerJob.timeout
+    assert_equal 30, JobsJobTest::WelcomeEmail.timeout
+  end
+
+  def test_timeout_must_be_a_positive_number_of_seconds
+    job = Class.new(Monk::Job)
+
+    assert_raises(ArgumentError) { job.timeout 0 }
+    assert_raises(ArgumentError) { job.timeout(-1) }
+    assert_raises(ArgumentError) { job.timeout "30" }
+    assert_equal 0.5, job.timeout(0.5)
   end
 
   def test_a_job_without_perform_says_so

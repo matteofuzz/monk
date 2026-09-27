@@ -5,6 +5,7 @@ module Monk
   #     queue "mailers"   # optional; "default" otherwise
   #     priority 10       # optional; lower runs sooner, 0 otherwise
   #     max_attempts 3    # optional; 5 otherwise
+  #     timeout 30        # optional; seconds a run may take, no limit otherwise
   #
   #     def self.perform(order_id)
   #       ...
@@ -51,6 +52,22 @@ module Monk
         return @max_attempts || inherited_setting(:max_attempts, DEFAULT_MAX_ATTEMPTS) if value.nil?
 
         @max_attempts = checked_integer(:max_attempts, value, MAX_ATTEMPTS_RANGE)
+      end
+
+      # Seconds one run of the job may take before the worker gives up on
+      # it: the run fails (and is retried like any other failure) and the
+      # worker resets its database connection, since an interrupted query
+      # keeps running on the server otherwise. nil, the default, means no
+      # limit.
+      def timeout(seconds = nil)
+        return @timeout || (equal?(Monk::Job) ? nil : superclass.timeout) if seconds.nil?
+
+        unless seconds.is_a?(Numeric) && seconds.positive?
+          raise ArgumentError,
+            "#{name || "a job"}'s timeout must be a positive number of seconds, got #{seconds.inspect}"
+        end
+
+        @timeout = seconds
       end
 
       # SendReceipt.enqueue(order_id, wait: 60) -- see Monk::Jobs.enqueue.

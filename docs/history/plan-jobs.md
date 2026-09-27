@@ -4,8 +4,9 @@
 
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
 class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
-retries, scheduled jobs) and 5 (`drain!` and `clear!` for tests) done
-2026-09-26; nothing from Phase 6 on is implemented yet.
+retries, scheduled jobs), 5 (`drain!` and `clear!` for tests) and 6 (the
+Ractor runtime) done by 2026-09-27; nothing from Phase 7 on is
+implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -561,7 +562,76 @@ job queueing behind jobs already waiting.
     effects of enqueued jobs without starting a worker process. (Built on
     the Postgres queue, running each job in a Ractor, see above.)
 
-## Phase 6 — Ractor runtime (Seams C and D)
+## Phase 6 — Ractor runtime (Seams C and D) — DONE 2026-09-27
+
+`lib/monk/jobs/runtime.rb` (the supervisor, `require "monk/jobs/runtime"`),
+`lib/monk/jobs/worker.rb`, and `register_process`, `heartbeat`, `prune`,
+`release`, `deregister`, `reset_connection` in the Postgres adapter.
+Tests:
+
+- `test/jobs_pg_processes_test.rb` (7): the process operations.
+- `test/jobs_runtime_test.rb` (14): the runtime in one process, on a
+  thread, with real worker Ractors.
+- `test/jobs_process_test.rb` (4): real child processes, via
+  `test/support/jobs_process.rb`, stopped with `TERM` and `kill -9`.
+- The `timeout` job setting's tests are in `test/jobs_job_test.rb`.
+
+All were stable over repeated runs.
+
+`Monk::Jobs::Runtime.new(queues:, workers:, poll_interval:,
+tick_interval:, heartbeat_interval:, process_timeout:,
+shutdown_timeout:).run(trap_signals: true)`. Defaults: `["default"]`, 5
+workers, 1 s poll, 1 s tick, 15 s heartbeat, 120 s process timeout, 25 s
+shutdown timeout. `#stop` does what `TERM`/`INT` do, for tests.
+
+**Differences from the steps below, and what building it found:**
+
+- **The heartbeat is an upsert.** A process that stalled long enough for
+  another to prune it gets its row back under the same id. The jobs
+  pruning released stay with whoever claimed them since, and this
+  process's late `finish`/`fail` calls on them find nothing held.
+- **Pruning also releases orphans:** running jobs with no process row at
+  all (a crashed `drain!`), after the same `process_timeout` grace
+  period.
+- **Per-job timeout is a job setting,** `timeout 30`. Its default is
+  `nil`, meaning no limit. A timed-out run is failed and retried like any
+  other failure, and the worker then cancels and resets its connection
+  (`adapter.reset_connection`) before claiming again. Open point: only the
+  queue database's connection is reset. A job that timed out mid-query on
+  a different registered database leaves that connection busy until the
+  query ends.
+- **Every exception fails the job**, not only StandardErrors (the worker
+  uses `rescue Exception`). Otherwise a job could be left `running` inside
+  a live process, which pruning never touches.
+  `UnknownJobError` and `NotImplementedError` never retry. After failing
+  the job, a non-StandardError is re-raised, so the worker Ractor ends and
+  the supervisor respawns it on its next tick. A worker that dies straight
+  away, for example because the database is down, is therefore restarted
+  at most once per tick.
+- **The Postgres-restart risk is covered, which took two additions:**
+  - Each worker tells the supervisor which job it holds (a port message
+    after claiming, another after finishing or failing). When a worker
+    dies, the supervisor releases that job with `release(id,
+    process_id)`. This covers a job that ran but whose `finish` never
+    reached the database; without it, that job would stay `running` until
+    the whole process restarted. Tested with a job that kills its own
+    connection at the end of its first run.
+  - A database error in the supervisor's tick (stage, heartbeat, prune,
+    release) is logged, its connection is reset, and the next tick tries
+    again. It no longer ends `run`. `deregister` failing on the way out is
+    logged; that process's jobs are then released by another process's
+    pruning. Tested by killing every database connection of a real child
+    process, after which new jobs still run.
+- **`monk/jobs` now requires the whole framework** (`require_relative
+  "../monk"`, as `monk/live` does). `Monk.freeze!` needs
+  `Persistence::Model`, which only `require "monk"` loads. The in-process
+  tests hid this, because `test_helper` loads `monk`. The child-process
+  test found it.
+- **`monk_processes` stays one row per OS process.** Workers are
+  identified to the supervisor by index, not by database rows.
+- Open point: a job released by a graceful stop's `deregister` or by
+  pruning keeps its attempt counted, as Decision 4 says. Jobs longer than
+  `shutdown_timeout` therefore spend an attempt on every deploy.
 
 14. `Monk::Jobs::Runtime.new(queues:, workers:, poll_interval:,
     tick_interval:).run`: the main Ractor registers a `monk_processes`
@@ -705,7 +775,8 @@ not decisions:
 - **At-least-once delivery surprising apps** that send non-idempotent
   side effects (charges, emails). This is the main reason Phase 10's mail
   design needs care.
-- **Postgres restart or failover** while `bin/jobs` runs. Like
-  `PgFanout` (`plan-live-pg-fanout.md` Phase 4 step 13), v1 may simply
-  let the affected Ractor die. The supervisor respawning it (Phase 6.15)
-  is the first line of defense, and needs its own test.
+- **Postgres restart or failover** while `bin/jobs` runs. Covered in
+  Phase 6: workers that lose their connection are respawned, the job a
+  dead worker held is released, and the supervisor reconnects on its
+  next tick. Tested by killing connections, not by a real server restart
+  or failover.

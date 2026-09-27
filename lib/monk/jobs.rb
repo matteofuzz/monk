@@ -1,4 +1,6 @@
-require_relative "freeze_hooks"
+# The whole framework, as monk/live does: jobs use Monk.freeze!, Monk::Log
+# and Monk.env, and a job process (bin/jobs) may load nothing else first.
+require_relative "../monk"
 require_relative "jobs/errors"
 require_relative "jobs/args"
 require "json"
