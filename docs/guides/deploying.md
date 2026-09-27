@@ -56,6 +56,21 @@ When the WebSocket process runs:
   With `--live`, Redis is the link between the app and the WebSocket
   process, and the app raises at boot without `REDIS_URL`.
 
+**With `--jobs`** (which implies `--postgres`, and combines with any row
+above), there's one more process: `bin/jobs`, which runs the background
+jobs. Like the WebSocket process it runs from the same image with its own
+command (`bin/jobs`), but it serves no port and needs no proxy route. It
+needs the same `DB_*` as `bin/server`, the jobs migration applied (by
+`bin/setup_db`, like any other), and `MAIL_*` too if jobs send mail.
+`JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes the jobs
+in hand, for up to 25 seconds, and puts back whatever is still running for
+the next process to pick up, so a normal rolling deploy loses nothing.
+Give the platform a longer stop window than that: Docker and Compose
+send `KILL` 10 seconds after `TERM` by default (`stop_grace_period`, below),
+and a job killed mid-run is only picked up again once another job process
+notices its process went silent, after 2 minutes. Scale it by running more
+instances, or with more workers per instance.
+
 The rest of this page walks through deploying case 2 (`--postgres`) on Render
 and Fly.io; adding the WebSocket process is covered in section 3, and a
 single-server alternative in section 4.
@@ -254,7 +269,8 @@ twice with different commands — `web` needs none, since its command is
 already the image's default `CMD`; `ws` overrides it. Drop the `postgres`
 service for combinations without `--postgres`/`--auth`, and the `redis`
 service for ones without `--redis`/`--live`. Keep the `ws` service for
-combinations that use WebSockets; it is mandatory under `--live`.
+combinations that use WebSockets; it is mandatory under `--live`. Keep
+the `jobs` service only with `--jobs`.
 
 ```yaml
 # compose.yaml
@@ -268,6 +284,12 @@ services:
     command: bin/websocket_server
     env_file: .env.production
     depends_on: [redis]
+  jobs:                         # with --jobs
+    build: .
+    command: bin/jobs
+    env_file: .env.production
+    stop_grace_period: 30s      # > bin/jobs's 25s wait for jobs in flight
+    depends_on: [postgres]
   postgres:
     image: postgres:16
     env_file: .env.production   # POSTGRES_PASSWORD etc.

@@ -4,9 +4,9 @@
 
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
 class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
-retries, scheduled jobs), 5 (`drain!` and `clear!` for tests) and 6 (the
-Ractor runtime) done by 2026-09-27; Phase 7 (`NOTIFY` wake-up) skipped;
-nothing from Phase 8 on is implemented yet.
+retries, scheduled jobs), 5 (`drain!` and `clear!` for tests), 6 (the
+Ractor runtime) and 8 (`monk new --jobs`) done by 2026-09-27; Phase 7
+(`NOTIFY` wake-up) skipped; nothing from Phase 9 on is implemented yet.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -690,7 +690,55 @@ Not built in v1; moved to "Explicitly out of scope" below. The plan was:
 To revisit only if Phase 10 (login-link email latency) shows that
 tuning `poll_interval` isn't enough.
 
-## Phase 8 — Scaffolding: `monk new --jobs` (Seam E)
+## Phase 8 — Scaffolding: `monk new --jobs` (Seam E) — DONE 2026-09-27
+
+Templates under `lib/monk/templates/jobs/` (`config/jobs.rb`,
+`jobs/hello_job.rb`, `bin/jobs`, plus Phase 1's migration),
+`Monk::Scaffold`'s `jobs:` option, `--jobs` in `exe/monk`, and the
+scaffolding and deploying guides. Tests: `test/scaffold_jobs_test.rb`
+(12), including loading the generated config and running `HelloJob`
+through `drain!` against the test database, and running the generated
+`bin/jobs` as a real process (with `BUNDLE_GEMFILE` pointed at Monk's own
+bundle), stopped with `TERM`. Two more tests are in
+`test/exe_monk_test.rb`.
+
+**Differences from the steps below, and what building it found:**
+
+- **The demo route is `POST /jobs/hello`,** added after the
+  `/api/hello` route. Both the base and the `--live` `config.ru` end their
+  routes with that line, so one edit covers both.
+  `config/jobs` is required after `config/persistence` (or
+  `config/auth`) and `config/mail`.
+- **`JOBS_WORKERS` and `JOBS_QUEUES` go in `.env` and `.env.example`
+  only.** Tests run jobs with `drain!`, never with a job process.
+- **`bin/jobs` loads `config/mail.rb` and `config/auth.rb` when present**
+  (like `bin/websocket_server` does with `config/auth.rb`), so jobs can
+  send mail. It sets `Monk::Views.root` to the app's `views/` itself,
+  since there's no `App` class there to do it, and a job may render a
+  mail template.
+- **SETUP.md's test section** adds `config/jobs` to the test helper and a
+  sample `test/jobs_test.rb` using `drain!` and `clear!`. This resolves
+  the open point about how a generated app's tests are wired for jobs.
+- **Adding jobs to an existing app** is covered in `scaffolding.md`'s
+  retrofit section, next to Postgres, Auth and Redis, rather than in the
+  jobs guide.
+- **Deploying:** `bin/jobs` is one more command on the same image, with
+  no port. Docker and Compose send `KILL` 10 s after `TERM` by default,
+  shorter than `bin/jobs`'s 25 s `shutdown_timeout`, so the Compose
+  example sets `stop_grace_period: 30s`. Without it, a job killed mid-run
+  waits for another process's pruning (2 minutes) to be picked up again.
+- **Found: a Phase 6 test killed other tests' connections.**
+  `test_a_job_process_survives_losing_every_database_connection`
+  terminated every backend in the test database except its own. That
+  included connections other test files keep for the whole run, such as
+  the Live tests' `PgFanout` publisher, so some random orders failed
+  `LivePgTest`. The child job process's connections now carry an
+  `application_name`, and the test kills only those.
+- **Found, not fixed (outside this plan):** SETUP.md's sample Postgres
+  test, generated for `--postgres` without `--auth` and unrelated to
+  jobs, asserts `assert_equal "1", conn.exec("SELECT 1").getvalue(0, 0)`.
+  Monk's connections decode integers, so the value is `1`, and a
+  generated app's copy of that test fails.
 
 21. `--jobs` implies `--postgres` (`@postgres = postgres || auth ||
     jobs`) and nothing else. It works with or without

@@ -25,6 +25,11 @@ monk new my_app --live --postgres  # same demo, but config/live.rb uses Monk::We
                                     #   --live requires --redis or --postgres explicitly (raises
                                     #   Monk::AmbiguousLiveTransportError with neither -- see live.md,
                                     #   "Without Redis"); passing both picks --redis
+monk new my_app --jobs       # + Monk::Jobs, background jobs, and --postgres, where the queue lives:
+                              #   config/jobs.rb (config.ru requires it), jobs/hello_job.rb and a
+                              #   POST /jobs/hello route enqueueing it, bin/jobs (the job process),
+                              #   the migration for the queue's tables, JOBS_WORKERS/JOBS_QUEUES in
+                              #   .env/.env.example
 ```
 
 Writes a fresh project directory from static templates (never overwrites
@@ -85,12 +90,19 @@ set — which `--redis` provides via a placeholder in the generated `.env`
 (see the flag list above). `--redis` is fully independent,
 and doesn't imply or get implied by `--postgres`/`--auth`.
 
+`--jobs` implies `--postgres` and nothing else. `bin/jobs` is the job
+process, run beside `bin/server` (and `bin/websocket_server`, if the app
+uses it). It loads `config/mail.rb` and `config/auth.rb` when they exist,
+so jobs can send mail. `SETUP.md` shows it running the demo job, and its
+test section adds `config/jobs` to the test helper and a sample test that
+runs jobs with `Monk::Jobs.drain!`. See [`jobs.md`](jobs.md).
+
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and
 an ES-module entry point under `public/` (see [`views.md`](views.md)). Alongside it, `/hello` and `/api/hello` are two one-line routes
 showing the plain-string and `json` response styles side by side.
 
-## Adding Postgres or Auth to an existing app
+## Adding Postgres, Auth, Redis or Jobs to an existing app
 
 `monk new`'s flags only apply at creation time — there's no `monk add`
 command. Retrofitting an app you already scaffolded plain (or wrote by
@@ -151,3 +163,17 @@ flag):
    directly at boot — there's no `config/redis.rb` to add — and wraps its
    `Registry` in a `Monk::WebSocket::RedisFanout` the moment it's present;
    unset, it runs in-process only, same as without `--redis`.
+
+**Jobs** (do the Postgres steps first — the queue lives there):
+
+1. Copy from a `monk new --jobs` app, verbatim: `config/jobs.rb`,
+   `bin/jobs` (keep it executable), and `jobs/hello_job.rb` if you want
+   the demo. None of them is templated.
+2. `require_relative "config/jobs"` in `config.ru`, after
+   `config/persistence` (or `config/auth`) and `config/mail`, before
+   `Monk.boot(App)`.
+3. Add the jobs migration, a copy of the `create_jobs_tables` pair from a
+   `monk new --jobs` app, with a version that sorts after the migrations
+   you already have (e.g. `20260927120000_create_jobs_tables`), and run it.
+4. Run `bin/jobs` beside `bin/server`. `JOBS_WORKERS` and `JOBS_QUEUES`
+   set how many workers it runs and which queues they serve.

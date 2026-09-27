@@ -1,0 +1,26 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require_relative "../config/settings"
+
+# Loaded when this app has them, so jobs can send mail or use Monk::Auth --
+# a missing file is a harmless no-op, the same way bin/websocket_server
+# treats config/auth.rb.
+%w[mail auth].each do |name|
+  require_relative "../config/#{name}"
+rescue LoadError
+  nil
+end
+
+require_relative "../config/jobs"
+require "monk/jobs/runtime"
+
+# The app's templates, so a job can render one (a mail's HTML part, say):
+# there's no App class here to point Monk::Views at them.
+Monk::Views.root = File.expand_path("../views", __dir__)
+
+workers = Integer(ENV.fetch("JOBS_WORKERS", "5"))
+queues = ENV.fetch("JOBS_QUEUES", "default").split(",").map(&:strip)
+puts "Monk::Jobs: #{workers} worker(s) on #{queues.join(", ")} -- TERM or Ctrl-C finishes the jobs in hand and stops"
+$stdout.flush
+
+Monk::Jobs::Runtime.new(workers: workers, queues: queues).run

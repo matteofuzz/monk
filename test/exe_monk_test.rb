@@ -57,6 +57,27 @@ class ExeMonkTest < Minitest::Test
     end
   end
 
+  def test_new_with_jobs_adds_the_jobs_scaffold_and_implies_postgres
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      stdout, _stderr, status = run_monk("new", dest, "--jobs")
+
+      assert status.success?
+      assert File.exist?(File.join(dest, "config/jobs.rb"))
+      assert File.executable?(File.join(dest, "bin/jobs"))
+      assert File.exist?(File.join(dest, "bin/migrate")) # postgres scaffold, implied by --jobs
+      assert_match(%r{bin/jobs}, stdout)
+    end
+  end
+
+  def test_help_describes_the_jobs_flag
+    stdout, _stderr, status = run_monk("help")
+
+    assert status.success?
+    assert_match(/--jobs/, stdout)
+  end
+
   def test_missing_app_name_prints_usage_and_exits_non_zero
     _stdout, stderr, status = run_monk("new")
 

@@ -56,6 +56,30 @@ module Monk
       "config/mail.rb" => "mail/config/mail.rb",
     }.freeze
 
+    # --jobs: Monk::Jobs. The migration is the canonical one under
+    # templates/jobs/db/migrate -- the same file Monk's own tests apply --
+    # numbered after auth's so the two sort in order when both are present.
+    JOBS_FILES = {
+      "config/jobs.rb" => "jobs/config/jobs.rb",
+      "jobs/hello_job.rb" => "jobs/jobs/hello_job.rb",
+      "bin/jobs" => "jobs/bin/jobs",
+      "db/migrate/00000000000002_create_jobs_tables.up.sql" => "jobs/db/migrate/00000000000002_create_jobs_tables.up.sql",
+      "db/migrate/00000000000002_create_jobs_tables.down.sql" =>
+        "jobs/db/migrate/00000000000002_create_jobs_tables.down.sql",
+    }.freeze
+
+    # --jobs's demo route, added right after this line in config.ru (the
+    # base and the --live one both end their routes with it), so the
+    # round trip -- enqueue from a request, run in bin/jobs -- works out of
+    # the box.
+    JOBS_ROUTE_ANCHOR = %(  get("/api/hello") { json(message: "hello from monk") }\n).freeze
+    JOBS_ROUTE = <<~RUBY.gsub(/^(?!$)/, "  ").freeze
+
+      # Enqueues the demo job (jobs/hello_job.rb) for bin/jobs to run:
+      #   curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
+      post("/jobs/hello") { json(enqueued: HelloJob.enqueue(params[:name] || "world")) }
+    RUBY
+
     # --live: Monk::Live's demo (a counter whose open tabs update when
     # another request changes it). These replace three base files outright
     # rather than patching them -- a live config.ru and index are different
@@ -89,7 +113,7 @@ module Monk
       <script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>
     HTML
 
-    EXECUTABLE_FILES = %w[bin/server bin/websocket_server bin/console bin/setup_db bin/migrate].freeze
+    EXECUTABLE_FILES = %w[bin/server bin/websocket_server bin/console bin/setup_db bin/migrate bin/jobs].freeze
 
     # auth: implies postgres -- Monk::Auth is Postgres-only (lib/monk/auth.rb
     # subclasses Monk::Persistence::Pg::Model), so there's no combination
@@ -119,10 +143,13 @@ module Monk
     #
     # mail: Monk::Mail on its own, no Postgres needed. auth: implies it, the
     # same way it implies postgres: a magic link has to reach someone.
-    def initialize(dir, postgres: false, auth: false, redis: false, live: false, mail: false)
+    #
+    # jobs: implies postgres, since the queue lives there, and nothing else.
+    def initialize(dir, postgres: false, auth: false, redis: false, live: false, mail: false, jobs: false)
       @dir = dir
       @auth = auth
-      @postgres = postgres || auth
+      @jobs = jobs
+      @postgres = postgres || auth || jobs
       @mail = mail || auth
       @live = live
 
@@ -163,6 +190,11 @@ module Monk
       if @mail
         MAIL_FILES.each { |relative, template| write_file(relative, template) }
         append_gemfile_extra("mail/Gemfile.extra")
+      end
+
+      if @jobs
+        JOBS_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
+        add_jobs_route!
       end
 
       wire_config_ru! if @postgres || @mail
@@ -251,11 +283,20 @@ module Monk
       # bin/websocket_server loads config/auth.rb too and never sends mail,
       # so it shouldn't need MAIL_URL to boot.
       requires << "require_relative \"config/mail\"\n" if @mail
+      requires << "require_relative \"config/jobs\"\n" if @jobs
 
       content = File.read(path)
       raise "config.ru wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
 
       File.write(path, content.sub(settings_require, "#{settings_require}#{requires}"))
+    end
+
+    def add_jobs_route!
+      path = File.join(@dir, "config.ru")
+      content = File.read(path)
+      raise "config.ru wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
+
+      File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
 
     # .env/.env.test/.env.example are the other deliberate exception to
@@ -287,6 +328,12 @@ module Monk
         test << %(MAIL_FROM="#{app_name} <no-reply@localhost>")
         example << "MAIL_URL=smtp://user:password@smtp.example.com:587"
         example << %(MAIL_FROM="#{app_name} <no-reply@example.com>")
+      end
+
+      # bin/jobs's settings. Not in .env.test: tests run jobs with
+      # Monk::Jobs.drain!, never a job process.
+      if @jobs
+        [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=default") }
       end
 
       # REDIS_URL is deliberately absent from .env.test -- only a test that
@@ -589,8 +636,8 @@ module Monk
         ```bash
         bin/server              # HTTP app on :9292
         bin/websocket_server    # WS chat process on :9293, in another terminal
-        ```
-        #{auth_or_redis_confirmation_note}#{mail_setup_note}
+        #{"bin/jobs                # background jobs (jobs/), in a third terminal\n" if @jobs}```
+        #{auth_or_redis_confirmation_note}#{mail_setup_note}#{jobs_setup_note}
         ## Test environment
 
         ### 1. Create the test database
@@ -637,7 +684,7 @@ module Monk
 
         require "minitest/autorun"
         require_relative "../config/settings"
-        require_relative "../config/#{@auth ? "auth" : "persistence"}"#{%(\nrequire_relative "../config/mail") if @mail}
+        require_relative "../config/#{@auth ? "auth" : "persistence"}"#{%(\nrequire_relative "../config/mail") if @mail}#{%(\nrequire_relative "../config/jobs") if @jobs}
         ```
 
         **Rakefile**:
@@ -663,7 +710,7 @@ module Monk
         #{sample_test_body}
         end
         ```
-
+        #{jobs_test_sample}
         Then:
 
         ```bash
@@ -711,6 +758,62 @@ module Monk
         and `MAIL_FROM` to a sender on a domain you've verified with your
         provider -- an unset `MAIL_URL` fails the boot there. Provider
         examples: `docs/guides/mail.md` in the monk repo.
+      MARKDOWN
+    end
+
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def jobs_setup_note
+      return "" unless @jobs
+
+      <<~MARKDOWN
+
+        ### Background jobs
+
+        `config/jobs.rb` configures `Monk::Jobs` on the app's own database --
+        its tables come from `db/migrate/00000000000002_create_jobs_tables`,
+        which `bin/setup_db` already applied -- and loads the job classes in
+        `jobs/`. With `bin/server` and `bin/jobs` both running, enqueue the
+        demo job and watch it run:
+
+        ```bash
+        curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
+        tail -f log/development.log   # ... INFO Hello, Ann, from a background job
+        ```
+
+        `JOBS_WORKERS` and `JOBS_QUEUES` (in `.env`) set how many worker Ractors
+        `bin/jobs` runs and which queues they take jobs from, in order. A job
+        may run more than once (its process was killed mid-job, say), so make
+        each one safe to repeat. `TERM` or Ctrl-C lets the jobs in hand finish
+        before `bin/jobs` exits.
+      MARKDOWN
+    end
+
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def jobs_test_sample
+      return "" unless @jobs
+
+      <<~MARKDOWN
+
+        **test/jobs_test.rb** -- `Monk::Jobs.drain!` runs every enqueued job
+        right in the test (each in its own Ractor, as `bin/jobs` would, so a
+        job that only works outside one fails here too), and
+        `Monk::Jobs.clear!` empties the queue between tests:
+
+        ```ruby
+        require_relative "test_helper"
+
+        class JobsTest < Minitest::Test
+          def teardown
+            Monk::Jobs.clear!
+          end
+
+          def test_the_demo_job_runs
+            HelloJob.enqueue("test")
+
+            assert_equal 1, Monk::Jobs.drain!
+          end
+        end
+        ```
       MARKDOWN
     end
 

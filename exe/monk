@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require_relative "../lib/monk/scaffold"
 
-USAGE = "Usage: monk new APP_NAME [--postgres] [--auth] [--mail] [--redis] [--live]".freeze
+USAGE = "Usage: monk new APP_NAME [--postgres] [--auth] [--mail] [--redis] [--live] [--jobs]".freeze
 
 HELP = <<~TEXT.freeze
   #{USAGE}
@@ -79,6 +79,16 @@ HELP = <<~TEXT.freeze
                        views/index.erb and bin/websocket_server with live
                        versions, and adds the runtime's <meta>/<script> tags
                        to the layout.
+      --jobs          Also scaffold Monk::Jobs (background jobs on Postgres).
+                       Implies --postgres, where the queue lives. Adds
+                       config/jobs.rb (required by config.ru, after
+                       persistence/auth/mail), jobs/hello_job.rb (a demo
+                       job, enqueued by a POST /jobs/hello route added to
+                       config.ru), bin/jobs (the job process, run beside
+                       bin/server), and the migration creating the queue's
+                       tables. .env/.env.example get JOBS_WORKERS and
+                       JOBS_QUEUES (not .env.test: tests run jobs with
+                       Monk::Jobs.drain!).
 
   Commands:
       new APP_NAME    Create a new project (see Options above)
@@ -123,8 +133,9 @@ when "new"
   mail = rest.include?("--mail") || auth
   redis = rest.include?("--redis")
   live = rest.include?("--live")
+  jobs = rest.include?("--jobs")
   Monk::Scaffold.new(
-    app_name, postgres: rest.include?("--postgres"), auth: auth, mail: mail, redis: redis, live: live,
+    app_name, postgres: rest.include?("--postgres"), auth: auth, mail: mail, redis: redis, live: live, jobs: jobs,
   ).write!
 
   puts "Created #{app_name}. Next steps:"
@@ -133,6 +144,7 @@ when "new"
   puts "  see SETUP.md for the full dev-then-test walkthrough"
   puts "  change the placeholder AUTH_SECRET in .env/.env.test before relying on it" if auth
   puts "  set MAIL_URL and MAIL_FROM outside development (see config/mail.rb)" if mail
+  puts "  run bin/jobs beside bin/server to process background jobs (see SETUP.md)" if jobs
   if live
     if redis
       puts "  Monk::Live needs Redis running, bin/server and bin/websocket_server (see SETUP.md)"
