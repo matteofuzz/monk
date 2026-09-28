@@ -808,7 +808,68 @@ bundle), stopped with `TERM`. Two more tests are in
     **Job state** (available / scheduled / running / failed), **Payload**,
     **Stager**, **Job process**), CHANGELOG.
 
-## Phase 10 — `Monk::Mail` integration — DECISION NEEDED, analyzed together once Phases 1–9 ship
+## Phase 10 — `Monk::Mail` integration — DECIDED 2026-09-28, implementation next
+
+The seven questions below were settled one at a time on 2026-09-28 and
+recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`](../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md):
+
+1. **API:** an explicit, opt-in `Monk::Mail.deliver_later(...)`, with
+   `deliver`'s arguments plus `wait:`/`at:`/`conn:`, enqueueing a built-in
+   `Monk::Mail::DeliveryJob`, via `require "monk/mail/later"`. `deliver`
+   is unchanged.
+2. **Rendering:** when enqueuing. The caller passes `html:
+   Monk::Mail.render(...)` as today, and the job stores finished Strings.
+3. **Login tokens:** never stored. The app's login route checks its
+   rate limit and the redirect, then enqueues `SendLoginLink(email,
+   redirect_to)`. The job calls `request_login`, builds the link, and
+   calls `deliver_link`, whose hook sends synchronously inside the job.
+4. **Latency:** mail jobs use `queue "mailers"`, and scaffolds with mail
+   set `JOBS_QUEUES=mailers,default`. The guides recommend a dedicated
+   `mailers` job process once an app has long-running jobs.
+5. **Retries:** a new general `never_retry *error_classes` job setting.
+   `deliver_later` validates the message when called. `DeliveryJob`
+   doesn't retry permanent SMTP failures (5xx, authentication) but does
+   retry temporary ones. `SendLoginLink` has `max_attempts 3`.
+6. **Scaffolding:** `--auth --jobs` adds `jobs/send_login_link.rb`.
+   With mail, `config/jobs.rb` requires `monk/mail/later` and `.env` gets
+   `JOBS_QUEUES=mailers,default`. SETUP.md shows the route side. No
+   generated login routes: the auth scaffold leaves routes to the app.
+7. **Records:** ADR 0014, with a one-line pointer from ADR 0012; the
+   mail, auth, jobs and scaffolding guides; CHANGELOG; README.
+
+**Implementation steps:**
+
+29. `never_retry *error_classes` on `Monk::Job`: inherited, checked when
+    set (Exception subclasses only), and used by the worker alongside its
+    built-in never-retry list. `drain!` doesn't retry anything anyway.
+30. `lib/monk/mail/later.rb`, loaded by `require "monk/mail/later"`,
+    which requires both `monk/mail` and `monk/jobs`:
+    - `Monk::Mail::DeliveryJob < Monk::Job`, `queue "mailers"`. It sends
+      with `deliver`. A `DeliveryError` whose cause is a permanent SMTP
+      failure (`Net::SMTPFatalError`, `Net::SMTPAuthenticationError`,
+      `Net::SMTPSyntaxError`) is re-raised as a new
+      `Monk::Mail::PermanentDeliveryError < DeliveryError`, listed in
+      `never_retry`. Temporary failures propagate and are retried.
+    - `Monk::Mail.deliver_later(to:, subject:, text:, html:, reply_to:,
+      from:, wait:, at:, conn:)` builds the `Message` first, so invalid
+      input raises in the caller, then enqueues the fields as plain JSON.
+    - Tested against `test/support/fake_smtp_server.rb`: 550 fails at
+      once, 450 schedules a retry, a bad address raises at call time,
+      and `conn:` rolls back with the caller's transaction.
+31. Scaffold: `jobs/send_login_link.rb` (template) with `--auth --jobs`;
+    with mail and jobs, a `require "monk/mail/later"` line in
+    `config/jobs.rb` and `JOBS_QUEUES=mailers,default`; SETUP.md shows
+    `SendLoginLink.enqueue` from a login route and `deliver_later`.
+    Tests: the generated files, plus the generated `SendLoginLink`
+    delivering a real link through `drain!` under `log://`, with no raw
+    token anywhere in `monk_job_payloads`.
+32. Docs: the one-line pointer in ADR 0012; `mail.md` ("A send blocks
+    the worker" gains `deliver_later`); `auth.md` ("Sending the magic
+    link" gains the job variant and why the hook mustn't use
+    `deliver_later`); `jobs.md` (`never_retry`, the `mailers` queue);
+    `scaffolding.md`; CHANGELOG; README's email row.
+
+The original questions, kept for the record:
 
 The goal: when an app has jobs, mail is delivered from a job rather than
 blocking the worker Ractor that serves the request. ADR 0012 accepted
