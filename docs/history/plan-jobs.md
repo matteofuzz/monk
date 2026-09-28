@@ -861,6 +861,21 @@ recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`]
     - Tested against `test/support/fake_smtp_server.rb`: 550 fails at
       once, 450 schedules a retry, a bad address raises at call time,
       and `conn:` rolls back with the caller's transaction.
+
+    **DONE 2026-09-28:** `lib/monk/mail/later.rb`, and
+    `PermanentDeliveryError` in `lib/monk/mail/errors.rb`. Tests are in
+    `test/mail_deliver_later_test.rb` (11), which also covers an
+    unreachable relay (retried) and `from:` being resolved at enqueue.
+    The retry-versus-fail cases run one claimed job through the job
+    worker's own `Monk::Jobs::Worker.perform`, since `drain!` retries
+    nothing by design.
+    - `PermanentDeliveryError` lives with Mail's other errors, so a
+      `rescue` of it doesn't need `monk/mail/later` loaded. Being a
+      subclass of `DeliveryError`, a `rescue DeliveryError` still catches
+      it.
+    - `DeliveryJob` stores the fields of the `Message` it built, so the
+      job re-checks the same values in the job process rather than
+      re-deriving them.
 31. Scaffold: `jobs/send_login_link.rb` (template) with `--auth --jobs`;
     with mail and jobs, a `require "monk/mail/later"` line in
     `config/jobs.rb` and `JOBS_QUEUES=mailers,default`; SETUP.md shows
