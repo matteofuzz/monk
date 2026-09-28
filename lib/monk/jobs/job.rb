@@ -6,6 +6,7 @@ module Monk
   #     priority 10       # optional; lower runs sooner, 0 otherwise
   #     max_attempts 3    # optional; 5 otherwise
   #     timeout 30        # optional; seconds a run may take, no limit otherwise
+  #     never_retry KeyError  # optional; errors that fail the job at once
   #
   #     def self.perform(order_id)
   #       ...
@@ -68,6 +69,27 @@ module Monk
         end
 
         @timeout = seconds
+      end
+
+      # Errors that retrying can't fix: a job that raises one of these (or
+      # a subclass of one, matched the way rescue matches) fails at once
+      # instead of spending its remaining attempts. Adds to the parent
+      # class's list rather than replacing it, so an app's own base job
+      # class can declare errors for every job. With no arguments, returns
+      # the whole list -- frozen, so a worker Ractor can read it.
+      def never_retry(*error_classes)
+        inherited = equal?(Monk::Job) ? [] : superclass.never_retry
+        unless error_classes.empty?
+          error_classes.each do |error_class|
+            next if error_class.is_a?(Class) && error_class <= Exception
+
+            raise ArgumentError,
+              "#{name || "a job"}'s never_retry takes exception classes, got #{error_class.inspect}"
+          end
+          @never_retry = ((@never_retry || []) + error_classes).uniq.freeze
+        end
+
+        (inherited + (@never_retry || [])).uniq.freeze
       end
 
       # SendReceipt.enqueue(order_id, wait: 60) -- see Monk::Jobs.enqueue.

@@ -53,6 +53,7 @@ module Monk
       # pruning never touches. A non-StandardError is re-raised afterwards,
       # ending this Ractor so the supervisor starts a fresh one.
       def self.perform(adapter, process_id, claim)
+        job = nil
         error = begin
           job = Monk::Jobs.lookup(claim.job_class)
           run_job(job, claim.args)
@@ -62,7 +63,7 @@ module Monk
         end
         return adapter.finish(claim.id, process_id) unless error
 
-        record_failure(adapter, process_id, claim, error)
+        record_failure(adapter, process_id, claim, error, job)
         raise error unless error.is_a?(StandardError) || error.is_a?(NotImplementedError)
       end
 
@@ -72,12 +73,14 @@ module Monk
         Timeout.timeout(job.timeout) { job.perform(*args) }
       end
 
-      def self.record_failure(adapter, process_id, claim, error)
+      # job is nil when its class couldn't be found (UnknownJobError).
+      def self.record_failure(adapter, process_id, claim, error, job)
         # Phase 0.3: the interrupted query is still running on the server,
         # and this connection's next query would wait for it.
         adapter.reset_connection if error.is_a?(Timeout::Error)
 
-        retry_in = NEVER_RETRY.any? { |klass| error.is_a?(klass) } ? nil : Monk::Jobs.backoff(claim.attempts)
+        never_retry = NEVER_RETRY + (job ? job.never_retry : [])
+        retry_in = never_retry.any? { |klass| error.is_a?(klass) } ? nil : Monk::Jobs.backoff(claim.attempts)
         outcome = adapter.fail(claim.id, process_id, error: Monk::Jobs.describe_error(error), retry_in: retry_in)
         outcomes = { scheduled: "retrying in #{retry_in}s", failed: "failed for good" }
         what_next = outcomes.fetch(outcome, "no longer held")

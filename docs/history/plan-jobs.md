@@ -842,6 +842,11 @@ recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`]
 29. `never_retry *error_classes` on `Monk::Job`: inherited, checked when
     set (Exception subclasses only), and used by the worker alongside its
     built-in never-retry list. `drain!` doesn't retry anything anyway.
+    **DONE 2026-09-28:** in `lib/monk/jobs/job.rb` and `worker.rb`.
+    A subclass's list adds to its parent's. Matching is by `is_a?`, like
+    `rescue`, so a listed error's subclasses count but its parents don't.
+    Tests: 4 in `test/jobs_job_test.rb` and 3 worker cases in
+    `test/jobs_runtime_test.rb`.
 30. `lib/monk/mail/later.rb`, loaded by `require "monk/mail/later"`,
     which requires both `monk/mail` and `monk/jobs`:
     - `Monk::Mail::DeliveryJob < Monk::Job`, `queue "mailers"`. It sends

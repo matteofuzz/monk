@@ -28,6 +28,14 @@ module JobsJobTest
 
   class NoPerform < Monk::Job
   end
+
+  class GivesUpOnKeyError < Monk::Job
+    never_retry KeyError
+  end
+
+  class AlsoGivesUpOnRangeError < GivesUpOnKeyError
+    never_retry RangeError
+  end
 end
 
 class JobsRegistryTest < Minitest::Test
@@ -178,6 +186,27 @@ class JobsSettingsTest < Minitest::Test
     assert_raises(ArgumentError) { job.timeout(-1) }
     assert_raises(ArgumentError) { job.timeout "30" }
     assert_equal 0.5, job.timeout(0.5)
+  end
+
+  def test_never_retry_is_empty_by_default
+    assert_equal [], JobsJobTest::SendReceipt.never_retry
+  end
+
+  def test_never_retry_lists_its_errors_and_adds_to_the_parents
+    assert_equal [KeyError], JobsJobTest::GivesUpOnKeyError.never_retry
+    assert_equal [KeyError, RangeError], JobsJobTest::AlsoGivesUpOnRangeError.never_retry
+  end
+
+  def test_never_retry_is_shareable_so_worker_ractors_can_read_it
+    assert Ractor.shareable?(JobsJobTest::AlsoGivesUpOnRangeError.never_retry)
+  end
+
+  def test_never_retry_takes_only_exception_classes
+    job = Class.new(Monk::Job)
+
+    assert_raises(ArgumentError) { job.never_retry "KeyError" }
+    assert_raises(ArgumentError) { job.never_retry String }
+    assert_raises(ArgumentError) { job.never_retry KeyError.new("an instance") }
   end
 
   def test_a_job_without_perform_says_so

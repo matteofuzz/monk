@@ -47,6 +47,18 @@ module JobsRuntimeJobs
     end
   end
 
+  class RejectedForGood < Monk::Job
+    never_retry KeyError
+
+    def self.perform(error) = raise(error == "subclass" ? IndexError.new("no") : KeyError, "no such key")
+  end
+
+  class RetriesOtherErrors < Monk::Job
+    never_retry KeyError
+
+    def self.perform = raise(ArgumentError, "might work next time")
+  end
+
   class Crashes < Monk::Job
     def self.perform = raise(Fatal, "the worker Ractor goes down with this")
   end
@@ -146,6 +158,34 @@ class JobsRuntimeTest < Minitest::Test
 
     wait_until { job_row(DB_NAME, id)["state"] == "failed" }
     assert_match(/UnknownJobError/, job_row(DB_NAME, id)["last_error"])
+  end
+
+  def test_an_error_listed_in_never_retry_fails_the_job_at_once
+    id = JobsRuntimeJobs::RejectedForGood.enqueue("listed")
+
+    start_runtime
+
+    wait_until { job_row(DB_NAME, id)["state"] == "failed" }
+    assert_equal 1, job_row(DB_NAME, id)["attempts"]
+    assert_match(/\AKeyError: no such key/, job_row(DB_NAME, id)["last_error"])
+  end
+
+  # Matched like rescue: IndexError's subclass KeyError is listed, not
+  # IndexError itself, so this one is retried.
+  def test_never_retry_matches_subclasses_only_not_parents
+    id = JobsRuntimeJobs::RejectedForGood.enqueue("subclass")
+
+    start_runtime
+
+    wait_until { job_row(DB_NAME, id)["state"] == "scheduled" }
+  end
+
+  def test_errors_not_listed_in_never_retry_are_still_retried
+    id = JobsRuntimeJobs::RetriesOtherErrors.enqueue
+
+    start_runtime
+
+    wait_until { job_row(DB_NAME, id)["state"] == "scheduled" }
   end
 
   def test_a_job_without_perform_fails_without_retrying
