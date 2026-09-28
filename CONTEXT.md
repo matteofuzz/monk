@@ -60,3 +60,27 @@ _Avoid_: Component, widget
 How the client recovers when it may have missed a patch (a `seq` gap, a reconnect, a failed refetch): it refetches the current page over HTTP and morphs it in, keeping focus and typed text. The page's own view is the only definition of what a region looks like, so patches are an optimization over "the page can always be re-fetched". If the refetch isn't the app page (an error, a non-HTML answer, any redirect) the client stops instead of morphing.
 _Avoid_: Snapshot, refresh, replay
 
+**Job**:
+A unit of background work: a `Monk::Job` subclass with a `self.perform`, and one enqueued call of it (`SendReceipt.enqueue(42)`), stored as a row in `monk_jobs` plus its payload. Its arguments are plain JSON values, checked when it's enqueued. A job may run more than once (delivery is at-least-once), so it has to be safe to repeat. The class is found again in the job process by its name, only ever among loaded `Monk::Job` subclasses.
+_Avoid_: Task, worker (a worker is what runs jobs), message
+
+**Queue**:
+A name a job is enqueued under (`queue "mailers"`, `"default"` otherwise), and nothing more: there's no queue object or table of its own, only a column. A job process serves the queues it's given, in order.
+_Avoid_: Channel, topic (a Live term), tube
+
+**Job state**:
+Where a job is in its life, one of four: `available` (can be claimed now), `scheduled` (not due yet: enqueued with `wait:`/`at:`, or waiting to retry), `running` (claimed by a job process), `failed` (out of attempts, or never worth retrying; kept until retried or discarded). A finished job has no state: it's deleted. Each state has its own partial index, so claiming never looks at scheduled or failed jobs.
+_Avoid_: Status, stage
+
+**Payload**:
+The part of a job the queue itself never updates: its class name, its JSON arguments, and its last error, in `monk_job_payloads`. Kept apart from the narrow `monk_jobs` row that claiming rewrites, so a claim never rewrites the arguments (ADR 0013).
+_Avoid_: Body, data, message
+
+**Job process**:
+`bin/jobs`: one OS process running `Monk::Jobs::Runtime`, a supervisor in its main Ractor and a pool of worker Ractors, each running one job at a time on its own database connection. It checks in (`monk_processes`) so that, if it dies, another job process gives its running jobs back to the queue. Never embedded in the web server's process.
+_Avoid_: Worker (one worker Ractor inside it), daemon, consumer
+
+**Stager**:
+The job process supervisor's once-a-tick step that turns due `scheduled` jobs into `available` ones, in batches. Every job process runs it; `SKIP LOCKED` keeps two from moving the same job. It's why a scheduled job or a retry can start up to one tick late.
+_Avoid_: Scheduler (that's recurring jobs, which Monk doesn't have), dispatcher, promoter
+

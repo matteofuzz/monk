@@ -2,7 +2,7 @@
 
 A light Ruby web framework designed to be fully `Ractor`-safe: every app it produces is a valid Rack 3 app that is also `Ractor.shareable?`, so it can be served in parallel across Ractor worker pools without silently losing that safety property. Named after Thelonious Sphere Monk, great and unique Jazz piano player and composer.
 
-**Built in** (loaded by `require "monk"`): routing, context and error handling, boot-time Ractor-shareability checks, `Monk::StateRactor` for shared state, settings, ERB views, static assets and logging. **Opt-in** (each needs its own `require`): Postgres persistence and migrations, passwordless auth and sessions, a WebSocket server with Redis or Postgres fan-out, and `Monk::Live` server-pushed HTML updates. Details for each are in the [Features](#features) table below.
+**Built in** (loaded by `require "monk"`): routing, context and error handling, boot-time Ractor-shareability checks, `Monk::StateRactor` for shared state, settings, ERB views, static assets and logging. **Opt-in** (each needs its own `require`): Postgres persistence and migrations, passwordless auth and sessions, email, background jobs on Postgres, a WebSocket server with Redis or Postgres fan-out, and `Monk::Live` server-pushed HTML updates. Details for each are in the [Features](#features) table below.
 
 Monk is Kino-agnostic — it's built on stdlib `Ractor` primitives only, with no runtime dependency on any particular server. [Kino](https://github.com/yaroslav/kino) is the reference/development server (see `bin/server`), but any Ractor-aware Rack server, or a conventional one, can run a Monk app.
 
@@ -22,7 +22,7 @@ bin/server           # -> http://localhost:9292/hello
 
 `monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", require: "monk"`.
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md).
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, email, background jobs, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md).
 
 All `monk` commands and flags are listed by:
 
@@ -61,9 +61,10 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/guides/migrations.md) |
 | Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
 | Email | `Monk::Mail`: text/HTML email over SMTP or a local relay, one `MAIL_URL`, sent from any worker Ractor | `require "monk/mail"`; SMTP needs the `net-smtp` gem | [`mail.md`](docs/guides/mail.md) |
+| Background jobs | `Monk::Jobs`: a queue in Postgres, run by `bin/jobs` on worker Ractors; retries with backoff, scheduled jobs, enqueue inside the app's own transaction, `drain!` for tests | `require "monk/jobs"` (+ `require "monk/jobs/runtime"` in the job process); needs the `pg` gem and a registered Postgres connection | [`jobs.md`](docs/guides/jobs.md) |
 | WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis or Postgres fan-out | `require "monk/websocket"`; fan-out: `require "monk/websocket/redis_fanout"` (+ the `redis` gem) or `require "monk/websocket/pg_fanout"` (+ the `pg` gem) | [`websocket.md`](docs/guides/websocket.md) |
 | Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis or Postgres | [`live.md`](docs/guides/live.md) |
-| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth or Redis | — (the `monk` command; flags `--postgres`, `--auth`, `--redis`, `--live`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
+| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth, Redis or Jobs | — (the `monk` command; flags `--postgres`, `--auth`, `--mail`, `--jobs`, `--redis`, `--live`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 
 ## More documentation
 

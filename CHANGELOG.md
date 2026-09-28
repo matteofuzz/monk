@@ -6,6 +6,30 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Added
+
+- `Monk::Jobs` (`require "monk/jobs"`): background jobs on Postgres, with
+  no other dependency. A job is a `Monk::Job` subclass with
+  `self.perform` and optional `queue`, `priority`, `max_attempts` and
+  `timeout` settings, enqueued with `SendReceipt.enqueue(*args, wait:,
+  at:, conn:)`. Args must be plain JSON values, checked at enqueue.
+  `conn:` enqueues inside the app's own transaction. The queue is a narrow
+  state table plus a payload table, claimed with `FOR UPDATE SKIP
+  LOCKED`: ADR 0013 records the design and the benchmarks that chose it
+  over one wide table and over Solid Queue's split.
+  `Monk::Jobs::Runtime` (`require "monk/jobs/runtime"`) is the job
+  process. It runs a supervisor and a pool of worker Ractors, retries
+  failures with backoff, keeps jobs that run out of attempts as failed
+  (`Monk::Jobs.retry_failed`/`discard_failed`), and releases the jobs of
+  dead workers and dead processes. On `TERM` it finishes the jobs in hand
+  first. Delivery is at-least-once. For tests, `Monk::Jobs.drain!` runs
+  every due job in its own Ractor, and `Monk::Jobs.clear!` empties the
+  queue (test environment only). See `docs/guides/jobs.md`.
+- `monk new --jobs` (implies `--postgres`): `config/jobs.rb`, a demo
+  `HelloJob` with a `POST /jobs/hello` route, `bin/jobs`, the queue's
+  migration, `JOBS_WORKERS`/`JOBS_QUEUES` in `.env`, and `SETUP.md`
+  steps for running and testing jobs.
+
 ### Fixed
 
 - `json` and `jsonb` columns read through `Monk::Persistence::Pg` (raw

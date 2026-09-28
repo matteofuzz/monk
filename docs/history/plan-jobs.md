@@ -5,8 +5,9 @@
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
 class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
 retries, scheduled jobs), 5 (`drain!` and `clear!` for tests), 6 (the
-Ractor runtime) and 8 (`monk new --jobs`) done by 2026-09-27; Phase 7
-(`NOTIFY` wake-up) skipped; nothing from Phase 9 on is implemented yet.
+Ractor runtime), 8 (`monk new --jobs`) and 9 (docs) done by 2026-09-28;
+Phase 7 (`NOTIFY` wake-up) skipped; Phase 10 (`Monk::Mail` integration),
+a decision to make together, is what's left.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -767,7 +768,31 @@ bundle), stopped with `TERM`. Two more tests are in
     the migration to add. Whether Monk should also ship a `monk jobs:install`-style
     command is out of scope (see below).
 
-## Phase 9 — Docs
+## Phase 9 — Docs — DONE 2026-09-28
+
+- `docs/guides/jobs.md`: the guide the scaffolding guide already linked
+  to. It opens with at-least-once delivery, before any API.
+- README: the opt-in list, a features row, and the scaffolding row's
+  flags. That row was also missing `--mail`, now added.
+- `CONTEXT.md`: **Job**, **Queue**, **Job state**, **Payload**, **Job
+  process**, **Stager**.
+- CHANGELOG, under "Unreleased": "Added" entries for `Monk::Jobs` and
+  `monk new --jobs`.
+
+**Differences from the steps below:**
+
+- **Moving the queue to its own database is written out step by step,**
+  because it takes more than `configure(db_name: :queue)`. The jobs
+  migration has to be applied to that database, and `bin/setup_db` only
+  migrates `:primary`. A `:primary` `conn:` must no longer be passed,
+  since the job would be inserted into tables that don't exist on that
+  database.
+- **The healthy-queue section quotes Phase 0's numbers** (about 2 to 13
+  ms per claim, half the throughput, under a held transaction; nothing
+  on a separate database) rather than only asserting the risk.
+- **`docs/guides/mail.md` still says "Monk has no job queue"** in "A send
+  blocks the worker". Updating it is part of Phase 10's integration
+  design, per Phase 10's own list.
 
 27. `docs/guides/jobs.md`: defining a job, enqueueing it (with and
     without `conn:`), idempotency first, retries and failed jobs,
