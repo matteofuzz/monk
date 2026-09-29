@@ -71,7 +71,7 @@ module Monk
     # numbered after auth's so the two sort in order when both are present.
     JOBS_FILES = {
       "config/jobs.rb" => "jobs/config/jobs.rb",
-      "jobs/hello_job.rb" => "jobs/jobs/hello_job.rb",
+      "app/jobs/hello_job.rb" => "jobs/app/jobs/hello_job.rb",
       "bin/jobs" => "jobs/bin/jobs",
       "db/migrate/00000000000002_create_jobs_tables.up.sql" => "jobs/db/migrate/00000000000002_create_jobs_tables.up.sql",
       "db/migrate/00000000000002_create_jobs_tables.down.sql" =>
@@ -81,7 +81,7 @@ module Monk
     # --auth --jobs: the magic link is created and sent inside a job, so the
     # raw token is never stored (docs/adr/0014).
     JOBS_AUTH_FILES = {
-      "jobs/send_login_link.rb" => "jobs/jobs/send_login_link.rb",
+      "app/jobs/send_login_link.rb" => "jobs/app/jobs/send_login_link.rb",
     }.freeze
 
     # --mail --jobs (or --auth --jobs): Monk::Mail.deliver_later, loaded in
@@ -96,7 +96,7 @@ module Monk
     JOBS_ROUTE_ANCHOR = %(  get("/api/hello") { json(message: "hello from monk") }\n).freeze
     JOBS_ROUTE = <<~RUBY.gsub(/^(?!$)/, "  ").freeze
 
-      # Enqueues the demo job (jobs/hello_job.rb) for bin/jobs to run:
+      # Enqueues the demo job (app/jobs/hello_job.rb) for bin/jobs to run:
       #   curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
       post("/jobs/hello") { json(enqueued: HelloJob.enqueue(params[:name] || "world")) }
     RUBY
@@ -282,7 +282,7 @@ module Monk
 
     def combinations
       pairs = []
-      pairs << ["--auth + --jobs", "jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
+      pairs << ["--auth + --jobs", "app/jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
       if @mail && @jobs
         pairs << ["--mail + --jobs",
                   "config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first",]
@@ -903,7 +903,7 @@ module Monk
 
       <<~MARKDOWN.chomp
 
-        Magic links go through a job too, `jobs/send_login_link.rb`: it
+        Magic links go through a job too, `app/jobs/send_login_link.rb`: it
         creates the token and sends the link inside the job, so the raw
         token is never stored, not even in the queue. Your login route,
         after its own per-email rate limit, just enqueues it:

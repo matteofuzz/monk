@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1 and 2 done 2026-09-29. Phase 1 took every `views/` →
+Status: Phases 1–3 done 2026-09-29. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -157,6 +157,12 @@ end
 - Tests: `scaffold_jobs_test.rb`, including the drain and real `bin/jobs`
   process tests, which confirm the new paths load and that
   `SendLoginLink` reaches `AppMailer::MAGIC_LINK`.
+- Done as planned, plus: the jobs test helpers load the generated
+  `config/load.rb` instead of each config by hand. With `--live`,
+  `bin/jobs` now loads `config/live.rb` too, which starts the fanout's
+  subscriber Ractor and connection, so a new test runs `bin/jobs` from a
+  `--jobs --live --postgres` app and checks it runs a job and exits 0 on
+  TERM (ADR 0015 notes the connection).
 
 ### Phase 4: `--live`
 

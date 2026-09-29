@@ -20,7 +20,7 @@ class ScaffoldSummaryTest < Minitest::Test
       "  --postgres  (needed by --auth, --jobs)",
       "  --mail      (needed by --auth)",
       "Together they also generate:",
-      "  --auth + --jobs  jobs/send_login_link.rb: login links are sent from a job",
+      "  --auth + --jobs  app/jobs/send_login_link.rb: login links are sent from a job",
       "  --mail + --jobs  config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first",
     ], summary(auth: true, jobs: true)
   end
