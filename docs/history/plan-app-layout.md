@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1–4 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
+Status: Phases 1–5 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -211,6 +211,17 @@ now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
   `mail_setup_note`, `jobs_setup_note`, `auth_mail_sentence`, the
   `JOBS_ROUTE` comment, the `AUTH_FILES` comment). `monk new`'s printed
   summary lists no paths, so it's unchanged.
+
+- Done 2026-09-29. Beyond the above: every variant's test helper ends
+  the same way (`config/load`, `app/app`, `APP = Monk.boot(App)`), and a
+  `test/app_test.rb` sample makes a request (`GET /hello`) through it,
+  replacing the old `test/settings_test.rb`. `--live --redis` now puts
+  `REDIS_URL` in `.env.test`, since the test helper loads
+  `config/live.rb`. Building the fanout connects to nothing, so the tests
+  pass with Redis unreachable. Checked by generating four apps (base,
+  `--mail`, `--live --redis`, `--auth --jobs --live`), following their
+  SETUP.md test section verbatim against this checkout, and running
+  `bundle exec rake test` in each: all green.
 
 ### Phase 6: docs
 

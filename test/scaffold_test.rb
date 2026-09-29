@@ -501,6 +501,41 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
+  # Whatever the flags, the SETUP.md test helper loads the app the way
+  # config.ru does -- config/load.rb, then app/app.rb, booted once -- and a
+  # sample test makes a request through it. App lives in app/app.rb now,
+  # so the old "extract App from config.ru first" advice is gone.
+  def test_setup_md_test_helper_loads_and_boots_the_app_for_every_flag_set
+    [{}, { mail: true }, { postgres: true }, { auth: true, jobs: true }, { live: true, redis: true }].each do |flags|
+      Dir.mktmpdir do |tmp|
+        dest = File.join(tmp, "demo_app")
+        Monk::Scaffold.new(dest, **flags).write!
+
+        setup_md = read(dest, "SETUP.md")
+        helper = %(require_relative "../config/load"\nrequire_relative "../app/app"\n)
+        assert_includes setup_md, helper, "flags: #{flags}"
+        assert_includes setup_md, "APP = Monk.boot(App)", "flags: #{flags}"
+        assert_includes setup_md, %(Rack::MockRequest.env_for("/hello")), "flags: #{flags}"
+        refute_includes setup_md, "Extract `App`", "flags: #{flags}"
+        refute_match(/`config\.ru`'s `class App`|config\.ru` requires/, setup_md, "flags: #{flags}")
+      end
+    end
+  end
+
+  # --live --redis's config/live.rb raises without REDIS_URL, and the test
+  # helper loads it through config/load.rb -- so .env.test carries it.
+  # Building the fanout connects to nothing, so tests need no Redis running
+  # unless one publishes. --redis alone still leaves it out (below).
+  def test_live_with_redis_puts_redis_url_in_env_test
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, live: true, redis: true).write!
+
+      assert_includes read(dest, ".env.test"), "REDIS_URL=redis://localhost:6379/0"
+    end
+  end
+
   # --mail on its own: Monk::Mail without Auth or Postgres.
   def test_write_bang_with_mail_adds_config_mail_and_net_smtp_only
     Dir.mktmpdir do |tmp|
@@ -551,14 +586,14 @@ class ScaffoldTest < Minitest::Test
 
       setup_md = read(dest, "SETUP.md")
       assert_includes setup_md, "MAIL_URL"
-      assert_includes setup_md, %(require_relative "../config/mail")
+      assert_includes setup_md, %(require_relative "../config/load")
       refute_includes setup_md, "AppMailer"
       # Tests boot outside development, where an unset MAIL_URL raises --
       # so the test helper has to load .env.test (MAIL_URL=log://) before
       # config/mail.rb, as the --postgres variant already does for DB_NAME.
       dotenv_at = setup_md.index('Dotenv.load(File.expand_path(".env.test"')
       refute_nil dotenv_at, "expected the test helper to load .env.test"
-      assert_operator dotenv_at, :<, setup_md.index('require_relative "../config/mail"')
+      assert_operator dotenv_at, :<, setup_md.index('require_relative "../config/load"')
     end
   end
 
@@ -699,7 +734,7 @@ class ScaffoldTest < Minitest::Test
 
       setup_md = read(dest, "SETUP.md")
       assert_includes setup_md, "MAIL_URL"
-      assert_includes setup_md, %(require_relative "../config/mail")
+      assert_includes setup_md, %(require_relative "../config/load")
     end
   end
 

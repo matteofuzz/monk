@@ -430,12 +430,16 @@ module Monk
         [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=#{queues}") }
       end
 
-      # REDIS_URL is deliberately absent from .env.test -- only a test that
-      # actually exercises RedisFanout needs it, unlike DB_NAME/AUTH_SECRET
-      # which every test touching persistence/auth needs.
+      # REDIS_URL is absent from .env.test for --redis alone -- only a test
+      # that actually exercises RedisFanout needs it. --live --redis is
+      # different: config/live.rb raises without it, and the test helper
+      # loads config/live.rb through config/load.rb. Building the fanout
+      # connects to nothing, so tests still need no Redis running unless
+      # one publishes.
       if @redis
         dev << "REDIS_URL=redis://localhost:6379/0"
         example << "REDIS_URL=redis://localhost:6379/0"
+        test << "REDIS_URL=redis://localhost:6379/0" if live_over_redis?
       end
 
       write_lines(".env", dev)
@@ -491,11 +495,14 @@ module Monk
 
         - `config/live.rb` -- the Redis wiring (`Monk::WebSocket::RedisFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
+        - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
+          only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
+          publish.
         - `public/js/monk_live/` -- the browser runtime, copied from the gem.
           The layout points at it and at `LIVE_WS_URL` (default
           `ws://localhost:9293`; use `wss://` in production).
@@ -528,11 +535,14 @@ module Monk
 
         - `config/live.rb` -- the Postgres wiring (`Monk::WebSocket::PgFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
+        - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
+          only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
+          publish.
         - `public/js/monk_live/` -- the browser runtime, copied from the gem.
           The layout points at it and at `LIVE_WS_URL` (default
           `ws://localhost:9293`; use `wss://` in production).
@@ -594,8 +604,7 @@ module Monk
 
         ENV["MONK_ENV"] ||= "test"
         #{base_test_dotenv_lines}
-        require "minitest/autorun"
-        require_relative "../config/settings"#{%(\nrequire_relative "../config/mail") if @mail}
+        #{test_helper_app_lines}
         ```
 
         **Rakefile**:
@@ -611,22 +620,7 @@ module Monk
         task default: :test
         ```
 
-        **test/settings_test.rb** -- `config.ru`'s `class App` lives inline in a
-        rackup file, not a plain `.rb` a test could `require_relative`, so this
-        starts with what's actually requirable standalone. Extract `App` into
-        its own file (`require_relative`d from both `config.ru` and
-        `test/test_helper.rb`) once there's real app behavior worth testing
-        against requests:
-
-        ```ruby
-        require_relative "test_helper"
-
-        class SettingsTest < Minitest::Test
-          def test_monk_env_reads_as_test
-            assert_equal "test", Monk::Settings[:monk_env]
-          end
-        end
-        ```
+        #{app_test_sample}
 
         Then:
 
@@ -667,8 +661,9 @@ module Monk
       <<~MARKDOWN
         # Setting up #{app_name} (dev, then test)
 
-        `config.ru`, `.env`, and `.env.test` are already wired up by `monk new`
-        -- `config.ru` requires `config/#{@auth ? "auth" : "persistence"}` before `class App`, and
+        `config/load.rb`, `.env`, and `.env.test` are already wired up by `monk new`
+        -- `config/load.rb` requires `config/#{@auth ? "auth" : "persistence"}` (and every other config
+        you enabled), then loads `app/`, and
         `.env`/`.env.test` are pre-filled with a database name derived from
         this project's directory (`#{app_name}_development` / `#{app_name}_test`), not the
         generic `app_development` fallback baked into `config/persistence.rb`
@@ -730,7 +725,7 @@ module Monk
         ```bash
         bin/server              # HTTP app on :9292
         bin/websocket_server    # WS chat process on :9293, in another terminal
-        #{"bin/jobs                # background jobs (jobs/), in a third terminal\n" if @jobs}```
+        #{"bin/jobs                # background jobs (app/jobs/), in a third terminal\n" if @jobs}```
         #{auth_or_redis_confirmation_note}#{mail_setup_note}#{jobs_setup_note}
         ## Test environment
 
@@ -766,7 +761,7 @@ module Monk
 
         **test/test_helper.rb** -- loads `.env.test` explicitly (not the default
         dotenv-in-`config/settings.rb` path, which only loads plain `.env`), then
-        wires up the app config the same way `config.ru` does:
+        loads and boots the app the same way `config.ru` does:
 
         ```ruby
         $LOAD_PATH.unshift(File.expand_path("..", __dir__))
@@ -776,9 +771,7 @@ module Monk
         require "dotenv"
         Dotenv.load(File.expand_path(".env.test", __dir__ + "/.."))
 
-        require "minitest/autorun"
-        require_relative "../config/settings"
-        require_relative "../config/#{@auth ? "auth" : "persistence"}"#{%(\nrequire_relative "../config/mail") if @mail}#{%(\nrequire_relative "../config/jobs") if @jobs}
+        #{test_helper_app_lines}
         ```
 
         **Rakefile**:
@@ -804,6 +797,8 @@ module Monk
         #{sample_test_body}
         end
         ```
+
+        #{app_test_sample}
         #{jobs_test_sample}
         Then:
 
@@ -865,9 +860,9 @@ module Monk
 
         `config/jobs.rb` configures `Monk::Jobs` on the app's own database --
         its tables come from `db/migrate/00000000000002_create_jobs_tables`,
-        which `bin/setup_db` already applied -- and loads the job classes in
-        `jobs/`. With `bin/server` and `bin/jobs` both running, enqueue the
-        demo job and watch it run:
+        which `bin/setup_db` already applied. The job classes live in
+        `app/jobs/`, which `config/load.rb` loads. With `bin/server` and
+        `bin/jobs` both running, enqueue the demo job and watch it run:
 
         ```bash
         curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
@@ -950,11 +945,12 @@ module Monk
     end
 
     # The no-Postgres test helper normally has nothing to load from
-    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need:
-    # they boot outside development, where an unset MAIL_URL raises.
+    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need
+    # (they boot outside development, where an unset MAIL_URL raises), and
+    # with --live --redis it has REDIS_URL, which config/live.rb needs.
     # Interpolated into a squiggly heredoc, so no indentation of its own.
     def base_test_dotenv_lines
-      return "" unless @mail
+      return "" unless @mail || live_over_redis?
 
       %(\nrequire "dotenv"\nDotenv.load(File.expand_path(".env.test", __dir__ + "/.."))\n)
     end
@@ -985,6 +981,44 @@ module Monk
           end
         RUBY
       end
+    end
+
+    def live_over_redis? = @live && @live_transport == :redis
+
+    # The end of every SETUP.md test helper: the app loaded the way
+    # config.ru loads it (config/load.rb, then app/app.rb), booted once.
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def test_helper_app_lines
+      <<~RUBY.chomp
+        require "minitest/autorun"
+        require_relative "../config/load"
+        require_relative "../app/app"
+
+        # Booted once, as config.ru does: request tests call APP.
+        APP = Monk.boot(App)
+      RUBY
+    end
+
+    # A request through the booted app. Every generated app, --live's
+    # included, has GET /hello.
+    def app_test_sample
+      <<~MARKDOWN.chomp
+        **test/app_test.rb** -- a request through the booted app:
+
+        ```ruby
+        require_relative "test_helper"
+        require "rack/mock_request"
+
+        class AppTest < Minitest::Test
+          def test_hello
+            status, _headers, body = APP.call(Rack::MockRequest.env_for("/hello"))
+
+            assert_equal 200, status
+            assert_equal "hello from monk", body.join
+          end
+        end
+        ```
+      MARKDOWN
     end
 
     def write_file(relative_path, template_path, executable: false)

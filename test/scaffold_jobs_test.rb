@@ -89,7 +89,7 @@ class ScaffoldJobsTest < Minitest::Test
 
       assert_includes setup, "bin/jobs"
       assert_includes setup, "/jobs/hello"
-      assert_includes setup, %(require_relative "../config/jobs")
+      assert_includes setup, %(require_relative "../config/load")
       assert_includes setup, "Monk::Jobs.drain!"
       assert_includes setup, "Monk::Jobs.clear!"
     end
