@@ -203,9 +203,9 @@ Monk::Live.configure(
 
 Reuses the same `DB_*` env vars `config/persistence.rb` already reads — no
 new configuration, no `REDIS_URL`. Passing both `--redis` and `--postgres`
-picks `--redis` (an explicit ask beats an implied default); `--auth` implies
-`--postgres` the same way it always has, so `--live --auth` alone also picks
-PgFanout. See `docs/design/live-pg-fanout.md`/
+picks `--redis` (an explicit ask beats an implied default); `--auth` and
+`--jobs` both imply `--postgres`, so `--live --auth` or `--live --jobs`
+alone also picks PgFanout (`monk new` prints which transport it chose). See `docs/design/live-pg-fanout.md`/
 `docs/history/plan-live-pg-fanout.md` in the monk gem's own repo for the full
 design.
 

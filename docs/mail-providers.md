@@ -23,7 +23,7 @@ or is left to the SMTP transport. They come from Monk's shape (see
 | P1 | **One HTTPS POST, a static auth header, a JSON body** | Anything that needs request signing (AWS SigV4) or multipart encoding is more than 15 lines and more than zero dependencies |
 | P2 | **Credentials fit in one URL** | `MAIL_URL=scheme://SECRET[@host]`. A provider that also needs a project ID, a region or a key pair still fits (`user:pass@host`), but each extra part is one more thing to explain |
 | P3 | **Built per call inside a worker Ractor** | No global client object. `Net::HTTP.start` per send, the same as `PG::Connection` is per Ractor |
-| P4 | **Fast and bounded** | Every send blocks a pool slot (no job queue), so a single round-trip HTTPS call with a tight timeout beats a multi-round-trip SMTP conversation |
+| P4 | **Fast and bounded** | Every send blocks a pool slot (no job queue), so a single round-trip HTTPS call with a tight timeout beats a multi-round-trip SMTP conversation. *Updated 2026-09-29:* with `Monk::Jobs`, `Monk::Mail.deliver_later` sends from a job process instead, which takes most of the weight off this constraint for apps that run one |
 | P5 | **SMTP is the universal fallback** | Every provider below offers SMTP, so no provider is *unreachable*. A preset is a convenience, not a requirement |
 
 ## 2. The providers at a glance

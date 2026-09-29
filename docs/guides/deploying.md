@@ -18,31 +18,29 @@ yourself.
 
 ## What each scaffold needs
 
-`monk new` flags combine along two independent axes — database (none,
-`--postgres`, `--auth`, which implies `--postgres`) and Redis (none,
-`--redis`, `--live`, which implies `--redis`) — so there are nine valid
-combinations. `bin/websocket_server` is scaffolded in every one, but you
-only run it if the app actually uses WebSockets; `--live` is the exception,
-where it is mandatory.
+An app needs what the base skeleton needs, plus the row of every flag it
+was scaffolded with, including flags another flag implied (`--auth` turns
+on `--postgres` and `--mail`, and `--jobs` turns on `--postgres`: see
+[`scaffolding.md`](scaffolding.md), "How flags combine"; `monk new` prints
+which ones it turned on).
 
-| # | Command | `bin/server` | `bin/websocket_server` | One-off job | Postgres | Redis | Env vars | Extra gems |
-|---|---|---|---|---|---|---|---|---|
-| 1 | `monk new app` | required | only if the app uses WebSockets | none | no | no | none | none |
-| 2 | `--postgres` | required | only if the app uses WebSockets | `bin/setup_db` | yes | no | `DB_*` | `pg`, `dotenv` |
-| 3 | `--auth` (implies `--postgres`) | required | only if the app uses WebSockets | `bin/setup_db` | yes | no | `DB_*`, `AUTH_SECRET`, `PUBLIC_URL` | `pg`, `dotenv` |
-| 4 | `--redis` | required | only if the app uses WebSockets | none | no | only if the WebSocket process runs | `REDIS_URL` | `redis`, `dotenv` |
-| 5 | `--postgres --redis` | required | only if the app uses WebSockets | `bin/setup_db` | yes | only if the WebSocket process runs | `DB_*`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
-| 6 | `--auth --redis` | required | only if the app uses WebSockets | `bin/setup_db` | yes | only if the WebSocket process runs | `DB_*`, `AUTH_SECRET`, `PUBLIC_URL`, `REDIS_URL` | `pg`, `redis`, `dotenv` |
-| 7 | `--live` | required | **required** | none | no | required | `REDIS_URL`, `PUBLIC_URL` | `redis`, `dotenv` |
-| 8 | `--postgres --live` | required | **required** | `bin/setup_db` | yes | required | `DB_*`, `REDIS_URL`, `PUBLIC_URL` | `pg`, `redis`, `dotenv` |
-| 9 | `--auth --live` | required | **required** | `bin/setup_db` | yes | required | `DB_*`, `AUTH_SECRET`, `REDIS_URL`, `PUBLIC_URL` | `pg`, `redis`, `dotenv` |
+| Flag | Processes | Services | Env vars | Extra gems |
+|---|---|---|---|---|
+| (base) | `bin/server`; `bin/websocket_server` only if the app uses WebSockets | none | `PUBLIC_URL` (see below) | none |
+| `--postgres` | one-off `bin/setup_db` on each deploy (applies migrations) | Postgres | `DB_*` | `pg`, `dotenv` |
+| `--auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
+| `--mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp`, `dotenv` |
+| `--redis` | — | Redis, only once more than one WebSocket process runs | `REDIS_URL` | `redis`, `dotenv` |
+| `--live --redis` | `bin/websocket_server` **required** | Redis, **required** | `REDIS_URL`, `PUBLIC_URL` | `redis`, `dotenv` |
+| `--live --postgres` | `bin/websocket_server` **required** | Postgres (`LISTEN`/`NOTIFY`), no Redis | `PUBLIC_URL` | — |
+| `--jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
 
-`PUBLIC_URL` (`config/settings.rb`, every app declares it — table above
-omits it for rows where the default, `http://localhost:9292`, is harmless
-to leave alone) is this app's own origin: `--auth`'s magic link builds
-itself from it, and `--live`'s `WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` default
-from it too, so setting it once keeps all three in sync instead of drifting
-apart — see auth.md's "Sending the magic link" and live.md's "Running it".
+`PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
+own origin. Its default, `http://localhost:9292`, is only harmless without
+`--auth` and `--live`: `--auth`'s magic link builds itself from it, and
+`--live`'s `WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` default from it too, so
+setting it once keeps all three in sync instead of drifting apart. See
+auth.md's "Sending the magic link" and live.md's "Running it".
 
 When the WebSocket process runs:
 
@@ -53,15 +51,16 @@ When the WebSocket process runs:
   are anonymous.
 - With `--redis` but not `--live`, Redis only matters once you run more than
   one WebSocket instance (the `:chat` channel then fans out through it).
-  With `--live`, Redis is the link between the app and the WebSocket
-  process, and the app raises at boot without `REDIS_URL`.
+  With `--live`, Redis or Postgres is the link between the app and the
+  WebSocket process: with `--live --redis` the app raises at boot without
+  `REDIS_URL`, and `--live --postgres` reuses the `DB_*` settings.
 
-**With `--jobs`** (which implies `--postgres`, and combines with any row
-above), there's one more process: `bin/jobs`, which runs the background
-jobs. Like the WebSocket process it runs from the same image with its own
-command (`bin/jobs`), but it serves no port and needs no proxy route. It
-needs the same `DB_*` as `bin/server`, the jobs migration applied (by
-`bin/setup_db`, like any other), and `MAIL_*` too if jobs send mail.
+**With `--jobs`**, there's one more process: `bin/jobs`, which runs the
+background jobs. Like the WebSocket process it runs from the same image
+with its own command (`bin/jobs`), but it serves no port and needs no
+proxy route. It needs the same `DB_*` as `bin/server`, the jobs migration
+applied (by `bin/setup_db`, like any other), and `MAIL_*` too if jobs
+send mail (with `--auth` they do: login links are sent from a job).
 `JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes the jobs
 in hand, for up to 25 seconds, and puts back whatever is still running for
 the next process to pick up, so a normal rolling deploy loses nothing.
@@ -71,7 +70,7 @@ and a job killed mid-run is only picked up again once another job process
 notices its process went silent, after 2 minutes. Scale it by running more
 instances, or with more workers per instance.
 
-The rest of this page walks through deploying case 2 (`--postgres`) on Render
+The rest of this page walks through deploying a `--postgres` app on Render
 and Fly.io; adding the WebSocket process is covered in section 3, and a
 single-server alternative in section 4.
 
@@ -258,7 +257,7 @@ plain `ws://` to the WebSocket process behind it.
 ## 4. A single VPS (Docker Compose + Caddy)
 
 One small server (Hetzner, DigitalOcean, Lightsail — any Linux box with
-Docker) runs everything: web, WebSocket, Postgres, Redis and the proxy. It
+Docker) runs everything: web, WebSocket, jobs, Postgres, Redis and the proxy. It
 suits a staging or closed-beta deploy of any combination in the table
 above: it has no per-platform port or process limits, and `/ws` routing
 (section 3) is just a Caddy rule. The cost is operational — OS patching,
