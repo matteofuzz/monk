@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1–3 done 2026-09-29. Phase 1 took every `views/` →
+Status: Phases 1–3 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -163,6 +163,19 @@ end
   subscriber Ractor and connection, so a new test runs `bin/jobs` from a
   `--jobs --live --postgres` app and checks it runs a job and exits 0 on
   TERM (ADR 0015 notes the connection).
+
+### Between Phases 3 and 4: only the WebSocket process listens
+
+Done 2026-09-29. With Phase 3, `bin/jobs` (and `bin/console`) loaded
+`config/live.rb`, whose fanout started a subscriber connection when built,
+so every process listened. We chose an explicit `#listen!` on
+`RedisFanout`/`PgFanout` (a no-op on `Registry`), called once by
+`bin/websocket_server` through `Monk::Live.listen!`. `#register` raises
+before it. The alternatives weighed were keeping it as it was, keeping
+Live out of `bin/jobs`, and a lazy start on the first `#register`
+(`docs/design/websocket.md`, "Who listens"). The `--live` `bin/jobs` test
+now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
+`bin/websocket_server` needs `Monk::Live.listen!` added (CHANGELOG).
 
 ### Phase 4: `--live`
 

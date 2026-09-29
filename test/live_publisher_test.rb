@@ -158,6 +158,18 @@ class LivePublisherTest < Minitest::Test
     assert_equal "remove", JSON.parse(receive(port))["mode"]
   end
 
+  # bin/websocket_server's one call: listen on whatever registry
+  # config/live.rb configured.
+  def test_listen_bang_listens_on_the_configured_registry
+    Monk::Live.configure(registry: @registry)
+
+    assert_same @registry, Monk::Live.listen!
+  end
+
+  def test_listen_bang_needs_a_configured_registry
+    assert_raises(Monk::Live::NotConfiguredError) { Monk::Live.listen! }
+  end
+
   def test_configure_rejects_a_registry_that_is_not_ractor_shareable
     error = assert_raises(ArgumentError) { Monk::Live.configure(registry: Object.new.tap { |o| o.instance_variable_set(:@x, +"") }) }
 

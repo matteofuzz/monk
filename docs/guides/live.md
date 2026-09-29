@@ -44,9 +44,23 @@ below.
 # config/live.rb, required by both processes
 Monk::Live.configure(registry: Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: ENV.fetch("REDIS_URL")))
 
+# bin/websocket_server, once at boot, before server.run
+Monk::Live.listen!
+
 # in a route
 Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/_row", contact: contact
 ```
+
+Both processes build the fanout from the same `config/live.rb`, but only the
+WebSocket process calls `Monk::Live.listen!`. That opens the fanout's
+subscriber connection (a Redis subscription, or a Postgres `LISTEN`), which
+relays updates published anywhere to this process's sockets. It returns once
+the subscription is in effect, and raises `Monk::WebSocket::ListenError`
+right there if Redis or Postgres can't be reached. Every other process
+(`bin/server`, `bin/jobs`, `bin/console`) only publishes, and holds no
+subscriber connection. A WebSocket process that forgets `listen!` gets
+`Monk::WebSocket::NotListeningError` at the first subscription, rather than
+sockets that silently never receive anything from other processes.
 
 `patch` renders `views/contacts/_row.erb` **once** and pushes the result to
 everyone subscribed to the topic `"contacts:7"`. `to:` is a CSS selector

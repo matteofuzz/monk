@@ -6,15 +6,13 @@ require "monk/websocket/redis_fanout"
 # Phase 6). Two concerns: it has to be usable the exact way Registry
 # already is -- held behind a module constant, read from every connection's
 # own Ractor -- and its Redis round trip has to actually deliver across two
-# instances while dropping each instance's own echo.
+# instances while dropping each instance's own echo. It subscribes only
+# once #listen! is called -- by the one process that holds sockets -- so a
+# publish-only process holds no subscriber connection at all.
 class WebSocketRedisFanoutTest < Minitest::Test
   include RedisTestHelpers
   include WebSocketTestHelpers # for #wait_until only -- no server/socket use here
 
-  # Construction always spawns a real subscriber Ractor that connects
-  # immediately (there's no lazy/offline path), so this needs a live Redis
-  # the same as every other test here -- otherwise the background Ractor's
-  # own connection failure prints an unrelated, misleading stack trace.
   def test_a_fanout_instance_is_frozen_and_ractor_shareable
     skip_unless_redis_available
 
@@ -40,17 +38,60 @@ class WebSocketRedisFanoutTest < Minitest::Test
     assert_equal 0, result
   end
 
+  # A publish-only process (bin/server, bin/jobs) builds the same fanout
+  # from the same config/live.rb, and never needs to hear other processes'
+  # broadcasts -- so constructing one mustn't subscribe.
+  def test_constructing_opens_no_subscriber_connection
+    skip_unless_redis_available
+
+    before = subscriber_count
+    Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+
+    assert_equal before, subscriber_count
+  end
+
+  # #listen! returns once the psubscribe is in effect, so a broadcast sent
+  # right after it can't be missed -- and calling it again changes nothing.
+  def test_listen_bang_opens_one_subscriber_connection_and_is_idempotent
+    skip_unless_redis_available
+
+    fanout = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+    before = subscriber_count
+
+    assert_same fanout, fanout.listen!
+    assert_equal before + 1, subscriber_count
+
+    fanout.listen!
+    assert_equal before + 1, subscriber_count
+  end
+
+  def test_register_before_listen_bang_raises
+    skip_unless_redis_available
+
+    fanout = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+    port = Ractor::Port.new
+
+    error = assert_raises(Monk::WebSocket::NotListeningError) { fanout.register(:room1, port) }
+    assert_match(/listen!/, error.message)
+  ensure
+    port&.close
+  end
+
+  def test_listen_bang_raises_when_redis_is_unreachable
+    fanout = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: "redis://127.0.0.1:1/0")
+
+    error = assert_raises(Monk::WebSocket::ListenError) { fanout.listen! }
+    assert_match(/RedisFanout/, error.message)
+  end
+
   def test_broadcast_from_one_instance_reaches_a_connection_registered_on_a_sibling_instance
     skip_unless_redis_available
 
-    registry_a = Monk::WebSocket::Registry.new
-    registry_b = Monk::WebSocket::Registry.new
-    fanout_a = Monk::WebSocket::RedisFanout.new(registry_a, redis_url: redis_test_url)
-    Monk::WebSocket::RedisFanout.new(registry_b, redis_url: redis_test_url)
-    wait_for_subscribers
+    fanout_a = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+    fanout_b = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).listen!
 
     port = Ractor::Port.new
-    registry_b.register(:room1, port)
+    fanout_b.register(:room1, port)
     received = []
     reader = Thread.new { loop { received << port.receive } }
 
@@ -69,16 +110,14 @@ class WebSocketRedisFanoutTest < Minitest::Test
   def test_a_fanouts_own_broadcast_is_not_delivered_twice_to_its_own_registry
     skip_unless_redis_available
 
-    registry_a = Monk::WebSocket::Registry.new
-    fanout_a = Monk::WebSocket::RedisFanout.new(registry_a, redis_url: redis_test_url)
-    # A second instance on the same Redis, standing in for a sibling
-    # process, so there's a live subscriber for A's publish to echo past --
-    # without it, this test would pass even with the echo-guard removed.
-    Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
-    wait_for_subscribers
+    fanout_a = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).listen!
+    # A second listening instance on the same Redis, standing in for a
+    # sibling process -- A's own subscriber is the one that must drop A's
+    # publish when it comes back.
+    Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).listen!
 
     port = Ractor::Port.new
-    registry_a.register(:room1, port)
+    fanout_a.register(:room1, port)
     received = []
     reader = Thread.new { loop { received << port.receive } }
 
@@ -97,14 +136,11 @@ class WebSocketRedisFanoutTest < Minitest::Test
 
   private
 
-  # RedisFanout#initialize spawns its subscriber Ractor and returns
-  # immediately -- it doesn't wait for that Ractor's own psubscribe to
-  # actually take effect on the Redis server. Publish is fire-and-forget
-  # (no queue/replay for a subscriber that isn't listening yet), so a
-  # broadcast sent before this window closes can simply be lost. A fixed
-  # wait here, not a retry loop, keeps each test's later single #broadcast
-  # call meaning exactly one message went out.
-  def wait_for_subscribers
-    sleep 0.3
+  # Clients with at least one pattern subscription (test/support/live_ws_process.rb).
+  def subscriber_count
+    redis = Redis.new(url: redis_test_url)
+    redis.call("CLIENT", "LIST").scan(/psub=(\d+)/).count { |(count)| count.to_i.positive? }
+  ensure
+    redis&.close
   end
 end

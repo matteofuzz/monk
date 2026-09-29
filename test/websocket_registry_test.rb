@@ -21,6 +21,14 @@ class WebSocketRegistryTest < Minitest::Test
     port_b&.close
   end
 
+  # Same interface as the fanouts, so a WS process calls #listen! whichever
+  # one it holds: an in-process Registry has nothing to listen to.
+  def test_listen_bang_is_a_no_op_returning_the_registry
+    registry = Monk::WebSocket::Registry.new
+
+    assert_same registry, registry.listen!
+  end
+
   def test_broadcast_does_not_deliver_to_a_port_registered_under_a_different_key
     registry = Monk::WebSocket::Registry.new
     other_key_port = Ractor::Port.new

@@ -307,6 +307,45 @@ multi-message session.
    not generate — consistent with the existing posture, and proxy config
    varies more by host than the Ruby side of this feature does.
 
+## Who listens (0.19)
+
+Until 0.18, building a `RedisFanout` or `PgFanout` started its subscriber
+Ractor and connection straight away. Every process that loaded
+`config/live.rb` listened: the WebSocket process, which needs to, but also
+`bin/server` and, once it loaded the app's config (ADR 0015), `bin/jobs`
+and `bin/console`. Each of those held an idle Redis subscription or
+Postgres `LISTEN` connection and a Ractor that received every update and
+dropped it, having no sockets.
+
+Since 0.19 a fanout listens only once `#listen!` is called, and only the
+process that holds sockets calls it: `Monk::Live.listen!` (or
+`REGISTRY.listen!` for plain `Monk::WebSocket`) in `bin/websocket_server`,
+at boot, from the main Ractor.
+
+- **`#listen!` returns once the subscription is in effect.** The subscriber
+  Ractor reports back through a `Ractor::Port` after `psubscribe` is
+  confirmed or `LISTEN` has run, so nothing broadcast after `#listen!`
+  can be missed. The old fixed waits in tests went away with it.
+- **An unreachable Redis or Postgres fails at boot.** `#listen!` raises
+  `Monk::WebSocket::ListenError`, where before the subscriber Ractor died
+  silently in the background.
+- **Forgetting it is loud.** `#register` on a fanout that isn't listening
+  raises `Monk::WebSocket::NotListeningError`, since that socket would never
+  get another process's broadcasts.
+- **The fanout stays frozen.** It can't record that it's listening on
+  itself, so `Monk::WebSocket::Listeners` keeps the origin ids of listening
+  fanouts in a frozen list in a module ivar: written from the main Ractor
+  in `#listen!`, read from any Ractor in `#register`.
+- **`Registry#listen!` is a no-op**, so a WebSocket process calls it the
+  same way whether it holds a `Registry` or a fanout.
+
+We considered starting the subscriber automatically on the first
+`#register`, through a small gate Ractor. It needs no line in the app, but
+adds a Ractor and a round trip per subscription, hides when a process starts
+listening, and moves a connection failure from boot to the first
+subscription. With a single app on Monk, an explicit call at boot was the
+simpler choice.
+
 ## Explicitly out of scope (for this doc)
 
 - Lobbying for or patching Kino to add hijack — the empirical finding above

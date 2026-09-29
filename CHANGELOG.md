@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** `Monk::WebSocket::RedisFanout` and `PgFanout` no longer
+  subscribe when built. The process that holds sockets calls `#listen!`
+  once at boot: `Monk::Live.listen!`, or `REGISTRY.listen!` for plain
+  `Monk::WebSocket`. Publish-only processes (`bin/server`, `bin/jobs`,
+  `bin/console`) then hold no idle subscriber connection. `#listen!`
+  returns once the subscription is in effect and raises
+  `Monk::WebSocket::ListenError` if Redis or Postgres can't be reached.
+  `#register` before `#listen!` raises
+  `Monk::WebSocket::NotListeningError`. `Registry#listen!` is a no-op, so
+  the same line works with either. The scaffolded `bin/websocket_server`
+  calls it. **To upgrade**, add `Monk::Live.listen!` (or
+  `REGISTRY.listen!`) to your `bin/websocket_server` before
+  `server.run`. See `docs/design/websocket.md`, "Who listens".
+
 ## 0.18.0 - 2026-09-29
 
 ### Added

@@ -199,19 +199,20 @@ class ScaffoldJobsTest < Minitest::Test
   end
 
   # With --live, bin/jobs's config/load.rb also loads config/live.rb, so a
-  # job can push a Live update -- which starts the fanout's subscriber
-  # Ractor and its LISTEN connection. The process still has to run jobs and
-  # stop cleanly on TERM with it running.
+  # job can push a Live update. It only publishes, so it never calls
+  # listen!: no LISTEN connection, only the jobs' own.
   def test_the_generated_bin_jobs_of_a_live_app_runs_jobs_and_stops_on_term
     skip_unless_postgres_available
 
     in_scaffold(jobs: true, live: true, postgres: true) do |dest|
       with_generated_app(dest) do
         HelloJob.enqueue("Cleo")
+        listeners_before = live_listener_count
         pid = Process.spawn(generated_app_env, RbConfig.ruby, "-W0", "bin/jobs", chdir: dest, out: File::NULL)
 
         begin
           wait_until { count_rows(:primary, "monk_jobs").zero? }
+          assert_equal listeners_before, live_listener_count, "bin/jobs mustn't LISTEN"
         ensure
           Process.kill("TERM", pid)
           _, status = Process.wait2(pid)
@@ -226,6 +227,17 @@ class ScaffoldJobsTest < Minitest::Test
   end
 
   private
+
+  # Backends whose last statement was PgFanout's LISTEN (as in
+  # test/websocket_pg_fanout_test.rb).
+  def live_listener_count
+    Monk::Persistence::Pg.checkout(:primary) do |conn|
+      conn.exec_params(
+        "SELECT count(*) FROM pg_stat_activity WHERE query = $1 AND datname = current_database()",
+        ["LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}"],
+      ).getvalue(0, 0).to_i
+    end
+  end
 
   def in_scaffold(**flags)
     Dir.mktmpdir do |tmp|

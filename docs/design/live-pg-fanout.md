@@ -61,8 +61,10 @@ structurally but not line-for-line — three places are genuinely different,
 not just a syntax swap.
 
 **Construction/freeze.** Same shape: store the wrapped registry, generate
-a frozen origin UUID (echo suppression), start a subscriber Ractor, freeze
-`self`. Different: no new env var. `config/persistence.rb` already builds
+a frozen origin UUID (echo suppression), freeze `self`. (Since 0.19 the
+subscriber Ractor starts in `#listen!`, called only by the WebSocket
+process, not in the constructor; see `docs/design/websocket.md`, "Who
+listens".) Different: no new env var. `config/persistence.rb` already builds
 a Postgres connection from `Monk::Settings`' `DB_HOST`/`DB_PORT`/`DB_USER`/
 `DB_PASSWORD`/`DB_NAME`. `PgFanout` reuses that connection info rather than
 inventing a parallel `PG_FANOUT_URL` — an app that already has Postgres

@@ -1,5 +1,7 @@
 require "pg"
 require "securerandom"
+require_relative "errors"
+require_relative "listeners"
 
 module Monk
   module WebSocket
@@ -7,7 +9,7 @@ module Monk
     # "monk/websocket/pg_fanout" explicitly -- "monk/websocket" alone does
     # not load this. A second implementation of the exact interface
     # RedisFanout wraps a Registry behind (#register, #unregister, #count,
-    # #broadcast, docs/design/live-pg-fanout.md,
+    # #broadcast, #listen!, docs/design/live-pg-fanout.md,
     # docs/history/plan-live-pg-fanout.md), so an app swaps which object it
     # holds and nothing else changes. Uses Postgres LISTEN/NOTIFY instead
     # of Redis pub/sub -- for an app that already runs Postgres
@@ -53,15 +55,11 @@ module Monk
       end
 
       def initialize(registry, pg_opts:)
-        # Checked upfront, on the argument, before anything below opens a
-        # real Postgres connection -- RedisFanout has no equivalent check
-        # (freezing self never raises on its own, even when an ivar isn't
-        # itself shareable), so a bad registry there only surfaces later
-        # as an opaque Ractor::IsolationError. Checking here first, rather
-        # than after spawning the subscriber below, means a bad registry
-        # never leaves a live LISTEN connection running past a failed
-        # construction. Mirrors Monk::Live.configure's own check of its
-        # registry argument.
+        # Checked upfront, on the argument -- RedisFanout has no equivalent
+        # check (freezing self never raises on its own, even when an ivar
+        # isn't itself shareable), so a bad registry there only surfaces
+        # later as an opaque Ractor::IsolationError. Mirrors
+        # Monk::Live.configure's own check of its registry argument.
         unless Ractor.shareable?(registry)
           raise ArgumentError,
             "Monk::WebSocket::PgFanout.new needs a Ractor-shareable registry, got #{registry.class}"
@@ -79,20 +77,43 @@ module Monk
         @pg_opts = Ractor.make_shareable(pg_opts.dup)
         # Frozen explicitly, not just a String literal: read from every
         # calling Ractor's own #broadcast and from the subscriber Ractor
-        # below, both of which raise Ractor::IsolationError on an
+        # #listen! starts, both of which raise Ractor::IsolationError on an
         # unfrozen value -- same reason RedisFanout freezes its own
         # @origin.
         @origin = SecureRandom.uuid.freeze
 
+        freeze
+      end
+
+      # Starts relaying other processes' broadcasts into this process's
+      # registry: a subscriber Ractor with its own LISTEN connection. Only
+      # the process that holds sockets calls this (bin/websocket_server, at
+      # boot, from the main Ractor) -- a publish-only process (bin/server,
+      # bin/jobs) never does, so it holds no LISTEN connection at all.
+      # Returns once the LISTEN is in effect, so nothing notified after it
+      # can be missed; raises ListenError if Postgres can't be reached.
+      # Calling it again is a no-op.
+      def listen!
+        return self if Listeners.listening?(@origin)
+
+        ready = Ractor::Port.new
         # Ractor.new's block args must be shareable: registry is
         # (Registry freezes itself around a Ractor, which is inherently
-        # shareable), @pg_opts and @origin are already made so above. The
-        # PG::Connection itself is never passed in -- opened fresh inside
-        # the block, mirroring RedisFanout's subscriber and
-        # Monk::Persistence::Pg's per-Ractor connection pattern.
-        @subscriber = Ractor.new(registry, @pg_opts, @origin) do |registry, pg_opts, own_origin|
-          conn = PG.connect(**pg_opts)
-          conn.exec("LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}")
+        # shareable), @pg_opts and @origin are already made so, a Port
+        # always is. The PG::Connection itself is never passed in --
+        # opened fresh inside the block, mirroring RedisFanout's
+        # subscriber and Monk::Persistence::Pg's per-Ractor connection
+        # pattern.
+        Ractor.new(@registry, @pg_opts, @origin, ready) do |registry, pg_opts, own_origin, ready|
+          begin
+            conn = PG.connect(**pg_opts)
+            conn.exec("LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}")
+          rescue StandardError => e
+            ready.send("#{e.class}: #{e.message}")
+            next
+          end
+          ready.send(:ok)
+
           loop do
             conn.wait_for_notify do |_channel, _pid, raw|
               sender, key, payload = Monk::WebSocket::PgFanout.decode_envelope(raw)
@@ -103,10 +124,24 @@ module Monk
           end
         end
 
-        freeze
+        result = ready.receive
+        raise ListenError, "Monk::WebSocket::PgFanout#listen! couldn't LISTEN: #{result}" unless result == :ok
+
+        Listeners.add(@origin)
+        self
       end
 
-      def register(key, port) = @registry.register(key, port)
+      def register(key, port)
+        unless Listeners.listening?(@origin)
+          raise NotListeningError,
+            "Monk::WebSocket::PgFanout#register before #listen!: this socket would never get " \
+            "other processes' broadcasts -- call listen! once at boot in the process that holds " \
+            "sockets (bin/websocket_server: Monk::Live.listen!)"
+        end
+
+        @registry.register(key, port)
+      end
+
       def unregister(key, port) = @registry.unregister(key, port)
       def count(key) = @registry.count(key)
 

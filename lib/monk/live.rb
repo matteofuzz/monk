@@ -62,6 +62,16 @@ module Monk
         @max_topics = max_topics
       end
 
+      # Boot-time, main Ractor, in the WS process only (bin/websocket_server):
+      # starts the configured registry relaying other processes' updates
+      # to this process's sockets. A publish-only process (bin/server,
+      # bin/jobs) never calls it, so it opens no subscriber connection.
+      def listen!
+        registry || raise(NotConfiguredError,
+          "Monk::Live isn't configured -- call Monk::Live.configure(registry: ...) before listen!",)
+        registry.listen!
+      end
+
       # Boot-time, main Ractor. See Monk::Live::Policy for the semantics:
       # deny by default, first matching rule wins, anonymous subjects need
       # `anonymous: true`. The block must be Ractor-shareable.

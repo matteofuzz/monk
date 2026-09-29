@@ -63,7 +63,7 @@ phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/hi
 A `Registry` only reaches connections held by its own process. Once a
 WebSocket server is scaled to more than one process (or host),
 `Monk::WebSocket::RedisFanout` wraps a `Registry` behind the identical
-`#register`/`#unregister`/`#count`/`#broadcast` interface, so swapping which
+`#register`/`#unregister`/`#count`/`#broadcast`/`#listen!` interface, so swapping which
 object a connection holds is the only change an app makes:
 
 ```ruby
@@ -75,7 +75,16 @@ REGISTRY = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis
 `#broadcast` still delivers to this process's own `Registry` directly —
 same latency and reliability as a plain `Registry` if Redis is briefly
 unavailable — and additionally publishes to Redis so sibling processes'
-subscriber Ractors deliver it to their own local connections. Opt-in at the
+subscriber Ractors deliver it to their own local connections.
+
+A fanout only subscribes once `REGISTRY.listen!` is called, once, at boot,
+in the process that holds the sockets (the scaffolded `bin/websocket_server`
+does it before `server.run`). It returns when the subscription is in
+effect, and raises `Monk::WebSocket::ListenError` if Redis can't be
+reached. A process that only broadcasts never calls it, so it opens no
+subscriber connection. `#register` on a fanout that isn't listening raises
+`Monk::WebSocket::NotListeningError`. A plain `Registry` has `#listen!` too,
+as a no-op, so the same line works whichever one `REGISTRY` holds. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it
 needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
 

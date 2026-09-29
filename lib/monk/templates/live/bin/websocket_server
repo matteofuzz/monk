@@ -17,6 +17,12 @@ end
 # Redis.
 require_relative "../config/live"
 
+# This process holds the browsers' sockets, so it's the only one that
+# listens for updates published elsewhere (bin/server, bin/jobs): the
+# fanout's subscriber connection is opened here, at boot, and an
+# unreachable Redis/Postgres fails right here.
+Monk::Live.listen!
+
 authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
 port = ENV.fetch("WS_PORT", "9293").to_i
 # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
