@@ -883,6 +883,21 @@ recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`]
     Tests: the generated files, plus the generated `SendLoginLink`
     delivering a real link through `drain!` under `log://`, with no raw
     token anywhere in `monk_job_payloads`.
+    **DONE 2026-09-28:** template `lib/monk/templates/jobs/jobs/send_login_link.rb`,
+    `Monk::Scaffold` (`JOBS_AUTH_FILES`, `add_deliver_later!`, the
+    `mailers` queue order, the SETUP.md notes). Six more tests in
+    `test/scaffold_jobs_test.rb`. The end-to-end test checks that the
+    queued job holds only the email, that no login token exists before the
+    job runs, and that the link in the sent email redeems to a session.
+    Found along the way:
+    - **An older test-isolation bug**, unrelated to jobs: three tests in
+      `test/scaffold_live_test.rb` load a generated `config/live.rb`
+      (which configures `Monk::Live`) without resetting it, so
+      `LivePublisherTest` failed in some random orders (`--seed 35618`).
+      They now reset `Monk::Live`.
+    - **One full-suite run ended with a single error** whose details
+      weren't captured. It didn't recur in 14 further runs with different
+      seeds, so it remains unexplained. Worth watching for.
 32. Docs: the one-line pointer in ADR 0012; `mail.md` ("A send blocks
     the worker" gains `deliver_later`); `auth.md` ("Sending the magic
     link" gains the job variant and why the hook mustn't use

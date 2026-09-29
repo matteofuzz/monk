@@ -68,6 +68,17 @@ module Monk
         "jobs/db/migrate/00000000000002_create_jobs_tables.down.sql",
     }.freeze
 
+    # --auth --jobs: the magic link is created and sent inside a job, so the
+    # raw token is never stored (docs/adr/0014).
+    JOBS_AUTH_FILES = {
+      "jobs/send_login_link.rb" => "jobs/jobs/send_login_link.rb",
+    }.freeze
+
+    # --mail --jobs (or --auth --jobs): Monk::Mail.deliver_later, loaded in
+    # config/jobs.rb right after Monk::Jobs itself.
+    JOBS_REQUIRE_ANCHOR = %(require "monk/jobs"\n).freeze
+    JOBS_MAIL_REQUIRE = %(require "monk/mail/later"\n).freeze
+
     # --jobs's demo route, added right after this line in config.ru (the
     # base and the --live one both end their routes with it), so the
     # round trip -- enqueue from a request, run in bin/jobs -- works out of
@@ -194,7 +205,9 @@ module Monk
 
       if @jobs
         JOBS_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
+        JOBS_AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
         add_jobs_route!
+        add_deliver_later! if @mail
       end
 
       wire_config_ru! if @postgres || @mail
@@ -299,6 +312,14 @@ module Monk
       File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
 
+    def add_deliver_later!
+      path = File.join(@dir, "config/jobs.rb")
+      content = File.read(path)
+      raise "config/jobs.rb wiring failed: #{JOBS_REQUIRE_ANCHOR.inspect} not found" unless content.include?(JOBS_REQUIRE_ANCHOR)
+
+      File.write(path, content.sub(JOBS_REQUIRE_ANCHOR, "#{JOBS_REQUIRE_ANCHOR}#{JOBS_MAIL_REQUIRE}"))
+    end
+
     # .env/.env.test/.env.example are the other deliberate exception to
     # "templates are static files, copied verbatim" (see the class comment
     # above): DB_NAME needs this app's own directory name in it -- the one
@@ -332,8 +353,11 @@ module Monk
 
       # bin/jobs's settings. Not in .env.test: tests run jobs with
       # Monk::Jobs.drain!, never a job process.
+      # With mail, the mailers queue is served first, so a backlog of other
+      # work never delays a login email (docs/adr/0014).
       if @jobs
-        [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=default") }
+        queues = @mail ? "mailers,default" : "default"
+        [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=#{queues}") }
       end
 
       # REDIS_URL is deliberately absent from .env.test -- only a test that
@@ -784,7 +808,45 @@ module Monk
         `bin/jobs` runs and which queues they take jobs from, in order. A job
         may run more than once (its process was killed mid-job, say), so make
         each one safe to repeat. `TERM` or Ctrl-C lets the jobs in hand finish
-        before `bin/jobs` exits.
+        before `bin/jobs` exits.#{jobs_mail_note}#{jobs_auth_note}
+      MARKDOWN
+    end
+
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def jobs_mail_note
+      return "" unless @mail
+
+      <<~MARKDOWN.chomp
+
+        To send an email from a job instead of the request, use
+        `Monk::Mail.deliver_later` -- the same arguments as `deliver` (render
+        HTML first with `Monk::Mail.render`), plus `wait:`/`at:`, or `conn:`
+        to enqueue inside your own transaction. It goes on the `mailers`
+        queue, which `JOBS_QUEUES` serves first. Temporary failures are
+        retried; a refusal the mail server made final is not.
+      MARKDOWN
+    end
+
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def jobs_auth_note
+      return "" unless @auth
+
+      <<~MARKDOWN.chomp
+
+        Magic links go through a job too, `jobs/send_login_link.rb`: it
+        creates the token and sends the link inside the job, so the raw
+        token is never stored, not even in the queue. Your login route,
+        after its own per-email rate limit, just enqueues it:
+
+        ```ruby
+        post("/auth/request") do
+          SendLoginLink.enqueue(params[:email])
+          json(sent: true)
+        end
+        ```
+
+        Don't point `config/auth.rb`'s `deliver:` at `deliver_later`: that
+        would store the link, token included, in the queue until it's sent.
       MARKDOWN
     end
 

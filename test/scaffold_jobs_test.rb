@@ -13,6 +13,7 @@ require "monk/persistence/pg/migrator"
 class ScaffoldJobsTest < Minitest::Test
   include PersistenceTestHelpers
   include JobsTestHelpers
+  include AuthTestHelpers
 
   def test_jobs_implies_postgres
     in_scaffold(jobs: true) do |dest|
@@ -103,6 +104,62 @@ class ScaffoldJobsTest < Minitest::Test
     end
   end
 
+  # --- with --auth and --mail (docs/adr/0014) ---
+
+  def test_auth_and_jobs_write_the_send_login_link_job
+    in_scaffold(jobs: true, auth: true) do |dest|
+      assert_equal template("jobs/jobs/send_login_link.rb"), read(dest, "jobs/send_login_link.rb")
+    end
+  end
+
+  def test_jobs_without_auth_write_no_send_login_link_job
+    in_scaffold(jobs: true, mail: true) do |dest|
+      refute File.exist?(File.join(dest, "jobs/send_login_link.rb"))
+    end
+  end
+
+  def test_mail_and_jobs_load_deliver_later_and_serve_mailers_first
+    in_scaffold(jobs: true, mail: true) do |dest|
+      assert_includes read(dest, "config/jobs.rb"), %(require "monk/jobs"\nrequire "monk/mail/later"\n)
+      assert_includes read(dest, ".env"), "JOBS_QUEUES=mailers,default"
+      assert_includes read(dest, ".env.example"), "JOBS_QUEUES=mailers,default"
+      assert_includes read(dest, "SETUP.md"), "Monk::Mail.deliver_later"
+    end
+  end
+
+  def test_jobs_without_mail_neither_load_deliver_later_nor_add_a_mailers_queue
+    in_scaffold(jobs: true) do |dest|
+      refute_includes read(dest, "config/jobs.rb"), "monk/mail/later"
+      assert_includes read(dest, ".env"), "JOBS_QUEUES=default\n"
+    end
+  end
+
+  def test_setup_md_shows_the_login_route_enqueueing_send_login_link
+    in_scaffold(jobs: true, auth: true) do |dest|
+      assert_includes read(dest, "SETUP.md"), "SendLoginLink.enqueue(params[:email])"
+    end
+  end
+
+  # ADR 0014's whole point: the job carries only the email, the token is
+  # created and sent inside the job, and the link it sends works.
+  def test_the_generated_send_login_link_sends_a_working_link_without_ever_storing_the_token
+    skip_unless_postgres_available
+
+    in_scaffold(jobs: true, auth: true) do |dest|
+      with_generated_auth_app(dest) do
+        SendLoginLink.enqueue("ann@example.test")
+        assert_equal ["ann@example.test"], JSON.parse(queued_args), "only the email is queued"
+        assert_equal 0, count_rows(:primary, "login_tokens"), "no token exists until the job runs"
+
+        assert_equal 1, Monk::Jobs.drain!
+
+        link = File.read(File.join(@log_dir, "test.log"))[%r{http://localhost:9292/auth/callback/[\w-]+}]
+        refute_nil link, "the email carries the link"
+        assert_equal "ann@example.test", Monk::Auth.redeem(link.split("/").last)&.fetch(:subject)
+      end
+    end
+  end
+
   # The generated pieces together, as the app's own tests would use them:
   # config/jobs.rb (with config/persistence.rb under it) loaded, the
   # generated migration applied, the demo job enqueued and drained.
@@ -178,6 +235,50 @@ class ScaffoldJobsTest < Minitest::Test
     Monk::Jobs.reset! if defined?(Monk::Jobs)
     Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
     Monk::Views.reset!
+  end
+
+  # The same, for an --auth --jobs app: settings, mail (log://), auth, then
+  # jobs, config.ru's order, with both generated migrations applied.
+  def with_generated_auth_app(dest)
+    with_log do |log_dir|
+      @log_dir = log_dir
+      with_settings do
+        with_env_vars(generated_app_env.merge("AUTH_SECRET" => "s3cr3t", "MAIL_URL" => "log://")) do
+          Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+          Monk::Jobs.reset! if defined?(Monk::Jobs)
+          require File.join(dest, "config/settings")
+          load File.join(dest, "config/mail.rb")
+          load File.join(dest, "config/persistence.rb")
+          Monk::Persistence::Pg.checkout(:primary) do |conn|
+            drop_jobs_tables(conn)
+            drop_auth_tables(conn)
+          end
+          load File.join(dest, "config/auth.rb")
+          load File.join(dest, "config/jobs.rb")
+          Monk::Views.reset!
+          Monk::Views.root = File.join(dest, "views") # as the generated bin/jobs does
+          Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.join(dest, "db/migrate")).migrate!
+          yield
+        ensure
+          Monk::Persistence::Pg.checkout(:primary) do |conn|
+            drop_jobs_tables(conn)
+            drop_auth_tables(conn)
+          end
+        end
+      end
+    end
+  ensure
+    Monk::Jobs.reset! if defined?(Monk::Jobs)
+    Monk::Auth.reset! if defined?(Monk::Auth)
+    Monk::Mail.reset! if defined?(Monk::Mail)
+    Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+    Monk::Views.reset!
+  end
+
+  def queued_args
+    Monk::Persistence::Pg.checkout(:primary) do |conn|
+      conn.exec("SELECT args::text FROM monk_job_payloads").getvalue(0, 0)
+    end
   end
 
   # What the generated config/persistence.rb reads, pointed at the test
