@@ -1,3 +1,4 @@
+require "json"
 require "pg"
 
 require_relative "../persistence"
@@ -16,12 +17,31 @@ module Monk
     module Pg
       extend Monk::Persistence::Registry
 
+      # json/jsonb columns, decoded with plain JSON.parse. pg's own
+      # PG::TextDecoder::JSON (1.6.3) calls JSON.parse(string, quirks_mode:
+      # true), and json 3 removed that keyword, so with pg's default every
+      # json/jsonb read raised ArgumentError. json 3 parses a bare scalar
+      # ("7", "\"text\"") without it.
+      class JsonDecoder < PG::SimpleDecoder
+        def decode(string, _tuple = nil, _field = nil)
+          JSON.parse(string)
+        end
+      end
+
+      # pg's default result types, with JsonDecoder for json and jsonb.
+      # Built once and made shareable, so every Ractor's #connect can use
+      # it rather than building its own.
+      RESULT_TYPES = Ractor.make_shareable(
+        PG::BasicTypeRegistry.new.register_default_types
+          .tap { |types| %w[json jsonb].each { |name| types.register_type(0, name, nil, JsonDecoder) } },
+      )
+
       class << self
         private
 
         def connect(**opts)
           conn = PG.connect(**opts)
-          conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn)
+          conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn, registry: RESULT_TYPES)
           conn
         end
 

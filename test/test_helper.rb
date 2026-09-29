@@ -312,3 +312,40 @@ module AuthTestHelpers
     drop_table_if_exists(conn, "login_tokens")
   end
 end
+
+# Shared by the Monk::Jobs Postgres tests (jobs_pg_*_test.rb): the real
+# schema from the one canonical migration, applied through Migrator.
+# Include alongside PersistenceTestHelpers.
+module JobsTestHelpers
+  JOBS_MIGRATIONS_DIR = File.expand_path("../lib/monk/templates/jobs/db/migrate", __dir__)
+
+  def setup_jobs_tables(db_name)
+    require "monk/persistence/pg/migrator"
+    Monk::Persistence::Pg.register(db_name, **pg_test_opts)
+    Monk::Persistence::Pg.checkout(db_name) { |conn| drop_jobs_tables(conn) }
+    Monk::Persistence::Pg::Migrator.new(db_name: db_name, dir: JOBS_MIGRATIONS_DIR).migrate!
+  end
+
+  def drop_jobs_tables(conn)
+    %w[monk_job_payloads monk_jobs monk_processes schema_migrations].each do |table|
+      drop_table_if_exists(conn, table, cascade: true)
+    end
+  end
+
+  # A job's row joined to its payload, plus how far its run_at is from
+  # now by the database clock.
+  def job_row(db_name, id)
+    Monk::Persistence::Pg.checkout(db_name) do |conn|
+      conn.exec_params(<<~SQL, [id]).first
+        SELECT j.*, p.job_class, p.args::text AS args, p.last_error,
+          extract(epoch FROM j.run_at - now())::float8 AS seconds_until_due
+        FROM monk_jobs j JOIN monk_job_payloads p ON p.job_id = j.id
+        WHERE j.id = $1
+      SQL
+    end
+  end
+
+  def count_rows(db_name, table)
+    Monk::Persistence::Pg.checkout(db_name) { |conn| conn.exec("SELECT count(*) FROM #{table}").getvalue(0, 0) }
+  end
+end

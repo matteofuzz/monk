@@ -4,6 +4,62 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.18.0 - 2026-09-29
+
+### Added
+
+- `Monk::Jobs` (`require "monk/jobs"`): background jobs on Postgres, with
+  no other dependency. A job is a `Monk::Job` subclass with
+  `self.perform` and optional `queue`, `priority`, `max_attempts` and
+  `timeout` settings, enqueued with `SendReceipt.enqueue(*args, wait:,
+  at:, conn:)`. Args must be plain JSON values, checked at enqueue.
+  `conn:` enqueues inside the app's own transaction. The queue is a narrow
+  state table plus a payload table, claimed with `FOR UPDATE SKIP
+  LOCKED`: ADR 0013 records the design and the benchmarks that chose it
+  over one wide table and over Solid Queue's split.
+  `Monk::Jobs::Runtime` (`require "monk/jobs/runtime"`) is the job
+  process. It runs a supervisor and a pool of worker Ractors, retries
+  failures with backoff, keeps jobs that run out of attempts as failed
+  (`Monk::Jobs.retry_failed`/`discard_failed`), and releases the jobs of
+  dead workers and dead processes. On `TERM` it finishes the jobs in hand
+  first. Delivery is at-least-once. For tests, `Monk::Jobs.drain!` runs
+  every due job in its own Ractor, and `Monk::Jobs.clear!` empties the
+  queue (test environment only). See `docs/guides/jobs.md`.
+- `monk new --jobs` (implies `--postgres`): `config/jobs.rb`, a demo
+  `HelloJob` with a `POST /jobs/hello` route, `bin/jobs`, the queue's
+  migration, `JOBS_WORKERS`/`JOBS_QUEUES` in `.env`, and `SETUP.md`
+  steps for running and testing jobs.
+- `Monk::Mail.deliver_later` (`require "monk/mail/later"`): `deliver`'s
+  arguments plus `wait:`/`at:`/`conn:`, sent from a job on the `mailers`
+  queue. The message is checked when called, so bad input raises there.
+  Temporary failures are retried, while a refusal the server made final
+  (SMTP 5xx, refused credentials) fails the job at once as the new
+  `Monk::Mail::PermanentDeliveryError`, a `DeliveryError`. `deliver` is
+  unchanged. See ADR 0014.
+- `never_retry *error_classes` on `Monk::Job`: errors that fail a job at
+  once instead of spending its remaining attempts.
+- `monk new` prints the flags it resolved: which ones another flag turned
+  on, and why (`--postgres (needed by --auth, --jobs)`), and which pairs
+  change what gets generated. `monk --help` and the scaffolding guide
+  state the rule behind it: a flag is implied when there's only one right
+  answer, and required when there's a real choice (`--live`'s transport).
+- `monk new --auth --jobs` adds `jobs/send_login_link.rb`, which creates
+  the login token and sends the link inside the job, so the raw token is
+  never stored in the queue. With mail, `--jobs` also loads
+  `deliver_later` and serves the `mailers` queue first.
+
+### Fixed
+
+- `json` and `jsonb` columns read through `Monk::Persistence::Pg` (raw
+  queries and `Model` alike) raised `ArgumentError: unknown keyword:
+  quirks_mode`. pg 1.6.3's JSON decoder passes that keyword to
+  `JSON.parse`, and json 3 removed it. Monk's connections now decode
+  `json`/`jsonb` with their own decoder, keeping pg's other default
+  types.
+- The sample test `SETUP.md` gives a `monk new --postgres` app (without
+  `--auth`) failed as written: it expected `SELECT 1` to return the
+  String `"1"`, but Monk's connections decode it to the Integer `1`.
+
 ## 0.17.0 - 2026-09-26
 
 ### Added

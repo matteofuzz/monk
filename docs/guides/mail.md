@@ -143,8 +143,9 @@ It raises:
 ### A send blocks the worker
 
 `deliver` is synchronous: the worker Ractor serving the request waits for
-the whole SMTP conversation, and Monk has no job queue. SMTP timeouts are
-5s to connect and 10s per read. Two ways to keep it short:
+the whole SMTP conversation. SMTP timeouts are 5s to connect and 10s per
+read. With background jobs, send from a job instead (next section).
+Without them, two ways to keep it short:
 
 - **A local relay** (`smtp://localhost:25`). Handing the message to a relay
   on the same host takes about a millisecond; the relay queues it, retries,
@@ -153,6 +154,45 @@ the whole SMTP conversation, and Monk has no job queue. SMTP timeouts are
   relay's logs, never as a `DeliveryError`.
 - **A provider close to your servers.** A remote SMTP send is several
   round-trips, so latency adds up.
+
+### Sending from a job: `deliver_later`
+
+With [`Monk::Jobs`](jobs.md) set up, `deliver_later` hands the send to the
+job process (`bin/jobs`), so the request doesn't wait for SMTP at all:
+
+```ruby
+require "monk/mail/later" # monk new --mail --jobs adds this to config/jobs.rb
+
+Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
+  text: receipt_text, html: Monk::Mail.render("mail/receipt", order: order))
+```
+
+- **The same arguments as `deliver`**, plus `wait:`/`at:` to send later,
+  and `conn:` to enqueue inside your own transaction, so the email is only
+  sent if your writes commit ([`jobs.md`](jobs.md), "Inside the app's own
+  transaction"). It returns the job's id, not the sent message.
+- **Checked when you call it.** The message is built before anything is
+  queued, so bad input raises `InvalidMessageError` right there, as with
+  `deliver`. A missing `from:` is filled in from `configure` at that moment.
+- **Render HTML first**, with `Monk::Mail.render`, as above. The job stores
+  the finished message and only sends it, so the job process doesn't need
+  your templates, and a message queued before a deploy sends what was
+  rendered then.
+- **Retries:** a temporary failure (the relay unreachable, a 4xx "try
+  later", TLS, a timeout) is retried with the queue's usual backoff. A
+  refusal the server made final (a 5xx such as "no such mailbox", or
+  refused credentials) fails the job at once as
+  `Monk::Mail::PermanentDeliveryError`, a `DeliveryError`. Failed jobs
+  stay in the queue until retried or discarded ([`jobs.md`](jobs.md),
+  "When a job fails"), so after fixing a bad `MAIL_URL`,
+  `Monk::Jobs.retry_failed(id)` resends.
+- **The `mailers` queue.** Mail jobs run on it, and `monk new` sets
+  `JOBS_QUEUES=mailers,default` so they're served before other work. Once
+  the app has slow jobs, run a separate `bin/jobs` just for `mailers`
+  (`JOBS_QUEUES=mailers`), so an email never waits behind them.
+- **Delivery is at-least-once.** A job process killed mid-send can send the
+  same email twice. That's rare, and usually harmless for mail, but it's
+  why `deliver_later` isn't for anything that must go out exactly once.
 
 ## With `Monk::Auth`
 
@@ -179,11 +219,24 @@ Require `config/mail.rb` from `config.ru`, not from `config/auth.rb`:
 `bin/websocket_server` loads `config/auth.rb` too, never sends mail, and
 shouldn't need `MAIL_URL` to boot.
 
+**Don't point `deliver:` at `deliver_later`.** The job would store the
+login link, a working token included, in the queue until it's sent. That
+undoes the reason `Monk::Auth` stores only token hashes: that reading the
+database isn't enough to log in as someone. To send login links from a job,
+move the whole login request into one, so the token is created and sent
+inside the job and never stored. `monk new --auth --jobs` scaffolds it as
+`jobs/send_login_link.rb`; see [`auth.md`](auth.md), "Sending the magic
+link from a job".
+
 ## In tests
 
 Set `MAIL_URL=log://` for the test environment: nothing is sent, and each
 message is one line in `log/test.log`. An unset `MAIL_URL` outside
 development fails the boot on purpose.
+
+Mail sent with `deliver_later` is queued, not sent, until the job runs: run
+it in the test with `Monk::Jobs.drain!` ([`jobs.md`](jobs.md), "Testing
+jobs"), then check `log/test.log`.
 
 ## Choosing where mail goes
 

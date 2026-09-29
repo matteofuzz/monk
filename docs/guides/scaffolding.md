@@ -25,7 +25,52 @@ monk new my_app --live --postgres  # same demo, but config/live.rb uses Monk::We
                                     #   --live requires --redis or --postgres explicitly (raises
                                     #   Monk::AmbiguousLiveTransportError with neither -- see live.md,
                                     #   "Without Redis"); passing both picks --redis
+monk new my_app --jobs       # + Monk::Jobs, background jobs, and --postgres, where the queue lives:
+                              #   config/jobs.rb (config.ru requires it), jobs/hello_job.rb and a
+                              #   POST /jobs/hello route enqueueing it, bin/jobs (the job process),
+                              #   the migration for the queue's tables, JOBS_WORKERS/JOBS_QUEUES in
+                              #   .env/.env.example. With --mail (or --auth): config/jobs.rb loads
+                              #   Monk::Mail.deliver_later, and JOBS_QUEUES serves "mailers" first.
+                              #   With --auth: jobs/send_login_link.rb, which sends magic links from a job
 ```
+
+## How flags combine
+
+A flag is **implied** when there's only one right answer, and **required**
+when there's a real choice:
+
+| Flag | Implies | Requires |
+|---|---|---|
+| `--auth` | `--postgres` (Auth only runs on Postgres), `--mail` (a magic link has to reach someone) | — |
+| `--jobs` | `--postgres` (the queue lives there) | — |
+| `--live` | — | `--redis` or `--postgres`: Live's cross-process transport is a choice with trade-offs, so Monk won't pick it for you, and raises `Monk::AmbiguousLiveTransportError` with neither |
+| `--postgres`, `--mail`, `--redis` | — | — |
+
+Some pairs also change what gets generated:
+
+| Together | Generates |
+|---|---|
+| `--auth` + `--jobs` | `jobs/send_login_link.rb`: login links are sent from a job, and the raw token is never stored |
+| `--mail` + `--jobs` | `config/jobs.rb` loads `Monk::Mail.deliver_later`, and `JOBS_QUEUES` serves `mailers` first |
+| `--live` + `--redis` | `config/live.rb` fans out over Redis (`--redis` wins if `--postgres` is also on) |
+| `--live` + `--postgres` | `config/live.rb` fans out over Postgres (`Monk::WebSocket::PgFanout`) |
+
+A flag counts whether you typed it or another flag implied it: `monk new
+my_app --auth --live` gets Postgres fan-out, because `--auth` turned
+`--postgres` on. `monk new` prints the outcome after creating the
+project:
+
+```
+Flags: --auth --jobs --live, which also turned on:
+  --postgres  (needed by --auth, --jobs)
+  --mail      (needed by --auth)
+Together they also generate:
+  --auth + --jobs      jobs/send_login_link.rb: login links are sent from a job
+  --mail + --jobs      config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first
+  --live + --postgres  config/live.rb fans out over Postgres (Monk::WebSocket::PgFanout)
+```
+
+## What gets written
 
 Writes a fresh project directory from static templates (never overwrites
 an existing directory — `monk new` refuses if `my_app` already exists) and
@@ -85,12 +130,29 @@ set — which `--redis` provides via a placeholder in the generated `.env`
 (see the flag list above). `--redis` is fully independent,
 and doesn't imply or get implied by `--postgres`/`--auth`.
 
+`--jobs` implies `--postgres` and nothing else. `bin/jobs` is the job
+process, run beside `bin/server` (and `bin/websocket_server`, if the app
+uses it). It loads `config/mail.rb` and `config/auth.rb` when they exist,
+so jobs can send mail. `SETUP.md` shows it running the demo job, and its
+test section adds `config/jobs` to the test helper and a sample test that
+runs jobs with `Monk::Jobs.drain!`. See [`jobs.md`](jobs.md).
+
+With `--mail` (or `--auth`, which implies it), `--jobs` also adds
+`require "monk/mail/later"` to `config/jobs.rb`, so
+`Monk::Mail.deliver_later` is available, and sets
+`JOBS_QUEUES=mailers,default`, so emails go out before other work. With
+`--auth` it adds `jobs/send_login_link.rb`: your login route enqueues it,
+and it creates the login token and sends the link inside the job, so the
+raw token is never stored in the queue. `config/auth.rb`'s `deliver:`
+stays a synchronous send, which now runs inside that job. See
+[`auth.md`](auth.md#sending-the-magic-link-from-a-job).
+
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and
 an ES-module entry point under `public/` (see [`views.md`](views.md)). Alongside it, `/hello` and `/api/hello` are two one-line routes
 showing the plain-string and `json` response styles side by side.
 
-## Adding Postgres or Auth to an existing app
+## Adding Postgres, Auth, Redis or Jobs to an existing app
 
 `monk new`'s flags only apply at creation time — there's no `monk add`
 command. Retrofitting an app you already scaffolded plain (or wrote by
@@ -151,3 +213,17 @@ flag):
    directly at boot — there's no `config/redis.rb` to add — and wraps its
    `Registry` in a `Monk::WebSocket::RedisFanout` the moment it's present;
    unset, it runs in-process only, same as without `--redis`.
+
+**Jobs** (do the Postgres steps first — the queue lives there):
+
+1. Copy from a `monk new --jobs` app, verbatim: `config/jobs.rb`,
+   `bin/jobs` (keep it executable), and `jobs/hello_job.rb` if you want
+   the demo. None of them is templated.
+2. `require_relative "config/jobs"` in `config.ru`, after
+   `config/persistence` (or `config/auth`) and `config/mail`, before
+   `Monk.boot(App)`.
+3. Add the jobs migration, a copy of the `create_jobs_tables` pair from a
+   `monk new --jobs` app, with a version that sorts after the migrations
+   you already have (e.g. `20260927120000_create_jobs_tables`), and run it.
+4. Run `bin/jobs` beside `bin/server`. `JOBS_WORKERS` and `JOBS_QUEUES`
+   set how many workers it runs and which queues they serve.

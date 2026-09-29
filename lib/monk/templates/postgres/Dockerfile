@@ -25,6 +25,8 @@ COPY . .
 # platform that assigns its own). bin/websocket_server (WS_PORT default
 # 9293) is a separate process/deploy unit -- run this same image with
 # `bin/websocket_server` as the command instead of publishing another
-# port from this Dockerfile -- see docs/guides/deploying.md.
+# port from this Dockerfile -- see docs/guides/deploying.md. With --jobs,
+# bin/jobs is another one, the same way: this image, `bin/jobs` as the
+# command, no port at all.
 EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]

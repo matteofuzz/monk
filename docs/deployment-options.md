@@ -214,7 +214,13 @@ route handler, inside a worker Ractor. Three consequences:
    inside `POST /auth/request` occupies one pool slot for its full
    round-trip. With a small pool that is a real capacity limit, and it
    argues for a fast HTTPS API call with a tight timeout over a
-   multi-round-trip SMTP conversation.
+   multi-round-trip SMTP conversation. *Updated 2026-09-29:* Monk now
+   has a job queue (`Monk::Jobs`, `docs/guides/jobs.md`), and
+   `Monk::Mail.deliver_later` sends from it, so a send no longer has to
+   block a web worker. `monk new --auth --jobs` sends login links from a
+   job (`docs/adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`).
+   It needs one more process, `bin/jobs`, and the host must still allow
+   outbound SMTP.
 
 **Port policy is the deciding factor between hosts**, and it is uniformly
 hostile on managed platforms:
