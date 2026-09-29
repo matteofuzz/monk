@@ -7,6 +7,8 @@ require "monk/live"
 # `monk new APP --live`: the Monk::Live wiring, so a fresh app has a page
 # whose open tabs update when another request changes server state.
 class ScaffoldLiveTest < Minitest::Test
+  include RedisTestHelpers
+
   EXE = File.expand_path("../exe/monk", __dir__)
 
   def test_live_writes_the_demo_wiring_from_the_live_templates
@@ -131,6 +133,44 @@ class ScaffoldLiveTest < Minitest::Test
     # config/live.rb configures Monk::Live; left configured, a later test
     # expecting it unconfigured fails in some random orders.
     Monk::Live.reset! if defined?(Monk::Live)
+  end
+
+  # The generated --live app as config.ru runs it: config/load.rb (settings,
+  # then config/live.rb), app/app.rb, Monk.boot. GET / renders the counter
+  # through app/views; POST /hit publishes through Monk::Live.patch, which
+  # renders app/views/live/_hits.erb and sends it over Redis -- a wrong
+  # template path or wiring would fail the request. app/app.rb goes into a
+  # throwaway module so its top-level App doesn't leak into other tests.
+  def test_the_generated_live_app_boots_renders_and_publishes_a_hit
+    skip_unless_redis_available
+
+    in_app do |dest|
+      with_settings do
+        with_env("REDIS_URL", redis_test_url) do
+          Dir.chdir(dest) do
+            require File.join(dest, "config/load")
+            wrapper = Module.new
+            load File.join(dest, "app/app.rb"), wrapper
+            app = wrapper::App
+            Monk.boot(app)
+
+            _status, _headers, body = app.call(env_for("GET", "/"))
+            assert_includes body.join, %(<strong id="hits">0</strong>)
+
+            status, headers, _body = app.call(env_for("POST", "/hit"))
+            assert_equal 302, status
+            assert_equal "/", headers["location"]
+
+            _status, _headers, body = app.call(env_for("GET", "/"))
+            assert_includes body.join, %(<strong id="hits">1</strong>)
+          end
+        end
+      end
+    end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
+    Monk::Views.reset!
+    Monk::Assets.reset!
   end
 
   def test_live_ws_url_defaults_to_the_direct_port_in_development

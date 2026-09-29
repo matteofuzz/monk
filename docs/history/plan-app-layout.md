@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1–3 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
+Status: Phases 1–4 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -191,6 +191,12 @@ now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
   route itself. The guide shows when to move one out.
 - Tests: `scaffold_live_test.rb`, including the `ruby -c` test over every
   generated file.
+- Done 2026-09-29. Everything above except the last bullet had already
+  landed in Phase 1. What Phase 4 added: a test that boots the generated
+  `--live` app the way `config.ru` does (`config/load` + `app/app.rb` +
+  `Monk.boot`), renders the counter, and posts `/hit`, which publishes
+  through `Monk::Live.patch` over Redis. No test had run the generated
+  live app as a whole before; breaking the partial name makes it fail.
 
 ### Phase 5: generated SETUP.md
 
