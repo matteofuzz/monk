@@ -126,6 +126,9 @@ class ScaffoldLiveTest < Minitest::Test
   ensure
     Monk::Auth.reset!
     Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+    # config/live.rb configures Monk::Live; left configured, a later test
+    # expecting it unconfigured fails in some random orders.
+    Monk::Live.reset! if defined?(Monk::Live)
   end
 
   def test_live_ws_url_defaults_to_the_direct_port_in_development
@@ -141,6 +144,8 @@ class ScaffoldLiveTest < Minitest::Test
         end
       end
     end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
   end
 
   def test_live_ws_url_defaults_to_a_wss_path_under_public_url_outside_development
@@ -158,6 +163,8 @@ class ScaffoldLiveTest < Minitest::Test
         end
       end
     end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
   end
 
   def test_websocket_server_defaults_ws_allowed_origins_to_public_url
