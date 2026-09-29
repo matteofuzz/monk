@@ -1,8 +1,8 @@
 # Deploying a Monk app
 
 Example deployment cases for an app scaffolded with `monk new --postgres`
-(`Gemfile`, `config.ru`, `config/persistence.rb`, `bin/setup_db`,
-`bin/migrate`, `bin/console`, `db/migrate/`). Both cases below assume that
+(`Gemfile`, `config.ru`, `config/load.rb`, `config/persistence.rb`,
+`app/`, `bin/setup_db`, `bin/migrate`, `bin/console`, `db/migrate/`). Both cases below assume that
 scaffold as the starting point.
 
 Neither case changes anything in this repo (`monk` itself) — they describe
@@ -53,14 +53,21 @@ When the WebSocket process runs:
   one WebSocket instance (the `:chat` channel then fans out through it).
   With `--live`, Redis or Postgres is the link between the app and the
   WebSocket process: with `--live --redis` the app raises at boot without
-  `REDIS_URL`, and `--live --postgres` reuses the `DB_*` settings.
+  `REDIS_URL`, and `--live --postgres` reuses the `DB_*` settings. Only
+  the WebSocket process listens (`Monk::Live.listen!` at its boot, which
+  fails right there if Redis or Postgres is unreachable); `bin/server`
+  and `bin/jobs` only publish, and open a connection for that the first
+  time they do.
 
 **With `--jobs`**, there's one more process: `bin/jobs`, which runs the
 background jobs. Like the WebSocket process it runs from the same image
 with its own command (`bin/jobs`), but it serves no port and needs no
-proxy route. It needs the same `DB_*` as `bin/server`, the jobs migration
-applied (by `bin/setup_db`, like any other), and `MAIL_*` too if jobs
-send mail (with `--auth` they do: login links are sent from a job).
+proxy route. It loads the same `config/load.rb` as `bin/server`, so give
+it the same environment: `DB_*`, `MAIL_*` when the app sends mail (with
+`--auth` it does: login links are sent from a job), and with `--live
+--redis`, `REDIS_URL` (`config/live.rb` raises without it, and jobs can
+push Live updates). It also needs the jobs migration applied (by
+`bin/setup_db`, like any other).
 `JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes the jobs
 in hand, for up to 25 seconds, and puts back whatever is still running for
 the next process to pick up, so a normal rolling deploy loses nothing.

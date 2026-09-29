@@ -38,8 +38,9 @@ Ractors):
 Monk::Persistence::Pg.register(:main, host: "127.0.0.1", port: 5432, user: "postgres", password: "postgres", dbname: "monk_app")
 ```
 
-Do this once at app boot (e.g. in `config.ru`, before `Monk.boot(App)`),
-not inside a route.
+Do this once at app boot, before `Monk.boot(App)` (in a `monk new` app,
+`config/persistence.rb`, which `config/load.rb` requires), not inside a
+route.
 
 **Per-environment database names.** `MONK_ENV` (see [`settings.md`](settings.md)) and
 the database name are two separate, unlinked knobs — setting `MONK_ENV=test`

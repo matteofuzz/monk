@@ -8,6 +8,37 @@ in `lib/monk/version.rb`.
 
 ### Changed
 
+- `monk new` lays the app out under `app/`, by role (ADR 0015):
+  `app/app.rb` holds `class App` and its routes, templates are in
+  `app/views/`, and every role directory is created with a `.keep`:
+  `app/models`, `presenters`, `helpers`, `mailers`, `broadcasts`, `jobs`.
+  `config.ru` is the same three lines for every flag set, and the new
+  `config/load.rb` requires the settings and each enabled module's config,
+  then loads `app/` by role. It never boots the app. `bin/jobs`,
+  `bin/console` and the generated test helper require it too. `--auth`'s
+  magic-link sender moves from `config/auth.rb` to
+  `app/mailers/app_mailer.rb` and is renamed `AppMailer::MAGIC_LINK`;
+  `config/auth.rb` requires that file itself. `config/jobs.rb` no longer
+  loads the job classes. The generated SETUP.md's test helper loads and
+  boots the app, with a sample request test. `docs/guides/scaffolding.md`,
+  "Where code goes", says what goes in each directory.
+  **An 0.18 app keeps working as it is.** To move it to the new layout:
+  1. `git mv views app/views` and `git mv jobs app/jobs`; create the other
+     role directories you want.
+  2. Move `class App` and its routes from `config.ru` into `app/app.rb`,
+     and change `views "views"` to `views "app/views"`.
+  3. Create `config/load.rb`: the `require_relative` lines `config.ru` had
+     for `config/*` (without the `config/` prefix), then the loop over
+     `app/` roles from a freshly generated one. Make `config.ru`
+     `require_relative "config/load"`, `require_relative "app/app"`,
+     `run Monk.boot(App)`.
+  4. Remove the `Dir[...]` loop from `config/jobs.rb`. In `bin/jobs`,
+     replace its config requires with `require_relative "../config/load"`
+     and point `Monk::Views.root` at `../app/views`. Do the same in
+     `bin/console`.
+  5. Optional: move `AppMailer` from `config/auth.rb` into
+     `app/mailers/app_mailer.rb` and `require_relative` it from
+     `config/auth.rb`.
 - **Breaking:** `Monk::WebSocket::RedisFanout` and `PgFanout` no longer
   subscribe when built. The process that holds sockets calls `#listen!`
   once at boot: `Monk::Live.listen!`, or `REGISTRY.listen!` for plain

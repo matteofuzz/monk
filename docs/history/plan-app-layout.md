@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1–5 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
+Status: Phases 1–6 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -244,6 +244,17 @@ now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
 - `CONTEXT.md`: no new terms; the role names are ordinary words.
 - `CHANGELOG.md`: the layout change and the manual upgrade steps
   (decision 8). The version bump is left to the release.
+
+- Done 2026-09-29. Beyond the above: `docs/guides/scaffolding.md` got
+  the full tree, "Where code goes" (the role table, presenter vs helper,
+  no catch-alls, templates only in `app/views/`, directories whose module
+  is off), "Load order", and a SETUP.md section; its retrofit steps now
+  edit `config/load.rb`. `settings.md`, `persistence.md` and
+  `deploying.md` (which also says `bin/jobs` needs `REDIS_URL` with
+  `--live --redis`, and that only the WebSocket process listens) were
+  updated too. `live.md` had no stale path beyond one template comment,
+  and needed no broadcasts example: moving code into `app/broadcasts/` is
+  covered by the scaffolding guide's table.
 
 ### Phase 7: verify
 

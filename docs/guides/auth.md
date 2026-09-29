@@ -79,9 +79,13 @@ typed in.
    plugs in, usually a one-line call to `Monk::Mail.deliver` (example in
    [`mail.md`](mail.md#with-monkauth)), or any other channel such as SMS.
    Like a route block, it has to be `Ractor.shareable?`, so build
-   it as a module constant (`AppMailer::DELIVER = ->(email:, link:, token:)
-   { ... }`), not inline in `config/auth.rb` — self at a script's top level
-   isn't shareable, the same rule `Monk::Live.authorize` blocks follow.
+   it as a module constant (`AppMailer::MAGIC_LINK = ->(email:, link:, token:)
+   { ... }`, in `app/mailers/app_mailer.rb`), not inline in
+   `config/auth.rb` — self at a script's top level isn't shareable, the
+   same rule `Monk::Live.authorize` blocks follow. `config/auth.rb`
+   requires that file itself (`require_relative "../app/mailers/app_mailer"`),
+   since `configure` checks `deliver:` right away, before
+   `config/load.rb` loads `app/`.
 2. **`Monk::Auth.log_dev_link`**, only if no `deliver:` is configured and
    `Monk.env.development?` — prints the link to stdout and
    `log/development.log`, plus a scannable QR code if the app's own
@@ -97,7 +101,7 @@ With [background jobs](jobs.md), the login request doesn't have to wait
 for the email to go out. Move the whole request into a job, not just the
 send: the job creates the token and sends the link, so the raw token only
 ever exists in memory and in the email. `monk new --auth --jobs` generates
-this job as `jobs/send_login_link.rb`:
+this job as `app/jobs/send_login_link.rb`:
 
 ```ruby
 class SendLoginLink < Monk::Job

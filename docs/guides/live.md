@@ -62,7 +62,7 @@ subscriber connection. A WebSocket process that forgets `listen!` gets
 `Monk::WebSocket::NotListeningError` at the first subscription, rather than
 sockets that silently never receive anything from other processes.
 
-`patch` renders `views/contacts/_row.erb` **once** and pushes the result to
+`patch` renders `app/views/contacts/_row.erb` **once** and pushes the result to
 everyone subscribed to the topic `"contacts:7"`. `to:` is a CSS selector
 matched with `querySelectorAll`, so one call can update every element that
 matches. The same call takes `mode:`:

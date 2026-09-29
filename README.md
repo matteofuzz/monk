@@ -22,7 +22,7 @@ bin/server           # -> http://localhost:9292/hello
 
 `monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", require: "monk"`.
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `views/`, `public/`, a `SETUP.md`). Flags add Postgres, auth, email, background jobs, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md).
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `public/`, a `SETUP.md`), with the app's own code under `app/`: `app/app.rb` for routes, `app/views/`, and one directory per role (`models/`, `presenters/`, `helpers/`, `mailers/`, `broadcasts/`, `jobs/`). Flags add Postgres, auth, email, background jobs, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md), which also says where each kind of code goes.
 
 All `monk` commands and flags are listed by:
 

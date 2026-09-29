@@ -1,7 +1,7 @@
 # Views — HTML with ERB
 
-Templates live in `views/` (by convention; `views "app/views"` moves them)
-and are compiled **once at boot**, in the main Ractor, into ordinary
+Templates live in `views/` by default, and in `app/views/` in a `monk new`
+app (`views "app/views"`, see [`scaffolding.md`](scaffolding.md)). They are compiled **once at boot**, in the main Ractor, into ordinary
 methods — never at request time. That's not a performance preference, it's
 what Ractor-safety leaves available: a worker can't hold a template cache
 or install methods on a shared module. It also means a template with a
@@ -10,7 +10,7 @@ blowing up on a live request. See [`design/views.md`](../design/views.md) for th
 
 ```ruby
 class App < Monk::Base
-  views  "views"          # default
+  views  "app/views"      # as monk new writes it; the default is "views"
   layout "layouts/app"    # optional default layout
   assets "public"         # default; `assets false` turns static serving off
 
@@ -19,7 +19,7 @@ end
 ```
 
 ```erb
-<%# views/layouts/app.erb %>
+<%# app/views/layouts/app.erb %>
 <!doctype html>
 <html>
   <head>
@@ -32,7 +32,7 @@ end
 ```
 
 ```erb
-<%# views/index.erb %>
+<%# app/views/index.erb %>
 <h1><%= @title %></h1>
 <ul>
   <% locals[:posts].each do |post| -%>
