@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase after v0.17.0: the unreleased `main_dev/monk_jobs` branch as of 2026-09-29, which adds `Monk::Jobs` (background jobs on Postgres), `Monk::Mail.deliver_later` and `monk new --jobs`. LOC is `wc -l` of every `.rb` file under `lib/` except the `monk new` templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at v0.18.0 (LOC recomputed for this version: it adds `Monk::Jobs`, background jobs on Postgres, `Monk::Mail.deliver_later` and `monk new --jobs`). LOC is `wc -l` of every `.rb` file under `lib/` except the `monk new` templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
