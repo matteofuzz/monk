@@ -38,6 +38,11 @@ in `lib/monk/version.rb`.
   unchanged. See ADR 0014.
 - `never_retry *error_classes` on `Monk::Job`: errors that fail a job at
   once instead of spending its remaining attempts.
+- `monk new` prints the flags it resolved: which ones another flag turned
+  on, and why (`--postgres (needed by --auth, --jobs)`), and which pairs
+  change what gets generated. `monk --help` and the scaffolding guide
+  state the rule behind it: a flag is implied when there's only one right
+  answer, and required when there's a real choice (`--live`'s transport).
 - `monk new --auth --jobs` adds `jobs/send_login_link.rb`, which creates
   the login token and sends the link inside the job, so the raw token is
   never stored in the queue. With mail, `--jobs` also loads

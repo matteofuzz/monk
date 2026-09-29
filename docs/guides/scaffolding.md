@@ -34,6 +34,44 @@ monk new my_app --jobs       # + Monk::Jobs, background jobs, and --postgres, wh
                               #   With --auth: jobs/send_login_link.rb, which sends magic links from a job
 ```
 
+## How flags combine
+
+A flag is **implied** when there's only one right answer, and **required**
+when there's a real choice:
+
+| Flag | Implies | Requires |
+|---|---|---|
+| `--auth` | `--postgres` (Auth only runs on Postgres), `--mail` (a magic link has to reach someone) | — |
+| `--jobs` | `--postgres` (the queue lives there) | — |
+| `--live` | — | `--redis` or `--postgres`: Live's cross-process transport is a choice with trade-offs, so Monk won't pick it for you, and raises `Monk::AmbiguousLiveTransportError` with neither |
+| `--postgres`, `--mail`, `--redis` | — | — |
+
+Some pairs also change what gets generated:
+
+| Together | Generates |
+|---|---|
+| `--auth` + `--jobs` | `jobs/send_login_link.rb`: login links are sent from a job, and the raw token is never stored |
+| `--mail` + `--jobs` | `config/jobs.rb` loads `Monk::Mail.deliver_later`, and `JOBS_QUEUES` serves `mailers` first |
+| `--live` + `--redis` | `config/live.rb` fans out over Redis (`--redis` wins if `--postgres` is also on) |
+| `--live` + `--postgres` | `config/live.rb` fans out over Postgres (`Monk::WebSocket::PgFanout`) |
+
+A flag counts whether you typed it or another flag implied it: `monk new
+my_app --auth --live` gets Postgres fan-out, because `--auth` turned
+`--postgres` on. `monk new` prints the outcome after creating the
+project:
+
+```
+Flags: --auth --jobs --live, which also turned on:
+  --postgres  (needed by --auth, --jobs)
+  --mail      (needed by --auth)
+Together they also generate:
+  --auth + --jobs      jobs/send_login_link.rb: login links are sent from a job
+  --mail + --jobs      config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first
+  --live + --postgres  config/live.rb fans out over Postgres (Monk::WebSocket::PgFanout)
+```
+
+## What gets written
+
 Writes a fresh project directory from static templates (never overwrites
 an existing directory — `monk new` refuses if `my_app` already exists) and
 prints the next manual step (`bundle install`); it never runs `bundle

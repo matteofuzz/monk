@@ -158,6 +158,8 @@ module Monk
     # jobs: implies postgres, since the queue lives there, and nothing else.
     def initialize(dir, postgres: false, auth: false, redis: false, live: false, mail: false, jobs: false)
       @dir = dir
+      # As passed, before anything is implied -- #summary reports the difference.
+      @requested = { postgres: postgres, auth: auth, mail: mail, jobs: jobs, redis: redis, live: live }
       @auth = auth
       @jobs = jobs
       @postgres = postgres || auth || jobs
@@ -180,6 +182,29 @@ module Monk
       else
         @redis = redis
       end
+    end
+
+    # The flags as resolved, for `monk new` to print: which flags were
+    # given, which ones they implied and why, and which combinations change
+    # what gets generated. The rule behind it, stated in `monk --help`: a
+    # flag is implied when there's only one right answer (--auth can only
+    # use Postgres), and required when there's a real choice (--live's
+    # transport).
+    def summary
+      given = FLAG_ORDER.select { |flag| @requested[flag] }
+      return ["Flags: none (the base skeleton)."] if given.empty?
+
+      implied = implied_flags
+      flags = given.map { |flag| "--#{flag}" }.join(" ")
+      lines = implied.empty? ? ["Flags: #{flags}."] : ["Flags: #{flags}, which also turned on:"]
+      implied.each do |flag, sources|
+        lines << "  #{"--#{flag}".ljust(12)}(needed by #{sources.map { |source| "--#{source}" }.join(", ")})"
+      end
+
+      together = combinations
+      lines << "Together they also generate:" unless together.empty?
+      width = together.map { |pair, _| pair.length }.max
+      lines.concat(together.map { |pair, what| "  #{pair.ljust(width)}  #{what}" })
     end
 
     def write!
@@ -229,7 +254,41 @@ module Monk
       write_setup_md!
     end
 
+    FLAG_ORDER = %i[postgres auth mail jobs redis live].freeze
+
+    # Only these two imply anything, and only one flag each can need.
+    IMPLIED_BY = { postgres: %i[auth jobs], mail: %i[auth] }.freeze
+
     private
+
+    def implied_flags
+      resolved = { postgres: @postgres, mail: @mail }
+      IMPLIED_BY.filter_map do |flag, sources|
+        next if @requested[flag] || !resolved[flag]
+
+        [flag, sources.select { |source| @requested[source] }]
+      end
+    end
+
+    def combinations
+      pairs = []
+      pairs << ["--auth + --jobs", "jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
+      if @mail && @jobs
+        pairs << ["--mail + --jobs",
+                  "config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first",]
+      end
+      pairs << live_combination if @live
+      pairs
+    end
+
+    def live_combination
+      if @live_transport == :redis
+        both = @postgres ? "; --redis wins over --postgres" : ""
+        ["--live + --redis", "config/live.rb fans out over Redis (Monk::WebSocket::RedisFanout#{both})"]
+      else
+        ["--live + --postgres", "config/live.rb fans out over Postgres (Monk::WebSocket::PgFanout)"]
+      end
+    end
 
     def write_live!
       write_file("config/live.rb", LIVE_CONFIG_TEMPLATES.fetch(@live_transport))

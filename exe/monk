@@ -90,6 +90,27 @@ HELP = <<~TEXT.freeze
                        JOBS_QUEUES (not .env.test: tests run jobs with
                        Monk::Jobs.drain!).
 
+  How flags combine -- a flag is implied when there's only one right
+  answer, and required when there's a real choice:
+
+      Flag         Implies               Requires
+      --auth       --postgres, --mail    -
+      --jobs       --postgres            -
+      --live       -                     --redis or --postgres (Live's
+                                         transport: a choice, so it's yours)
+      --postgres, --mail, --redis stand alone.
+
+  Some pairs also change what gets generated:
+
+      --auth + --jobs      jobs/send_login_link.rb: login links sent from a job
+      --mail + --jobs      config/jobs.rb loads Monk::Mail.deliver_later;
+                           JOBS_QUEUES serves mailers first
+      --live + --redis     config/live.rb fans out over Redis
+      --live + --postgres  config/live.rb fans out over Postgres (without --redis)
+
+  `monk new` prints which flags it turned on, and why, after creating the
+  project.
+
   Commands:
       new APP_NAME    Create a new project (see Options above)
       help            Show this help (also --help, -h)
@@ -129,16 +150,21 @@ when "new"
   app_name = rest.find { |arg| !arg.start_with?("-") }
   usage_error! if app_name.nil?
 
+  # Flags as typed: Monk::Scaffold resolves what they imply, and reports it.
   auth = rest.include?("--auth")
-  mail = rest.include?("--mail") || auth
+  mail = rest.include?("--mail") || auth # for the next-steps lines below
   redis = rest.include?("--redis")
   live = rest.include?("--live")
   jobs = rest.include?("--jobs")
-  Monk::Scaffold.new(
-    app_name, postgres: rest.include?("--postgres"), auth: auth, mail: mail, redis: redis, live: live, jobs: jobs,
-  ).write!
+  scaffold = Monk::Scaffold.new(
+    app_name, postgres: rest.include?("--postgres"), auth: auth, mail: rest.include?("--mail"), redis: redis,
+    live: live, jobs: jobs,
+  )
+  scaffold.write!
 
-  puts "Created #{app_name}. Next steps:"
+  puts "Created #{app_name}."
+  puts scaffold.summary
+  puts "Next steps:"
   puts "  cd #{app_name}"
   puts "  bundle install"
   puts "  see SETUP.md for the full dev-then-test walkthrough"

@@ -71,6 +71,26 @@ class ExeMonkTest < Minitest::Test
     end
   end
 
+  def test_new_prints_the_flags_it_implied_and_why
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      stdout, _stderr, status = run_monk("new", dest, "--auth")
+
+      assert status.success?
+      assert_includes stdout, "--postgres  (needed by --auth)"
+      assert_includes stdout, "--mail      (needed by --auth)"
+    end
+  end
+
+  def test_help_states_how_flags_combine
+    stdout, _stderr, status = run_monk("help")
+
+    assert status.success?
+    assert_match(/implied when there's only one right\s+answer, and required when there's a real choice/, stdout)
+    assert_match(/--auth\s+--postgres, --mail/, stdout)
+  end
+
   def test_help_describes_the_jobs_flag
     stdout, _stderr, status = run_monk("help")
 
