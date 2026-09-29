@@ -2,7 +2,10 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: planned 2026-09-29, nothing implemented yet.
+Status: Phases 1 and 2 done 2026-09-29. Phase 1 took every `views/` →
+`app/views/` path move and the `--live` `app/app.rb` override from Phases
+2–4, since a single `config.ru` for every flag needs them at once. Those
+phases keep their other work.
 Companion record: [`../adr/0015-scaffolded-app-layout-app-dir-by-role.md`](../adr/0015-scaffolded-app-layout-app-dir-by-role.md)
 (why `app/`, why role names rather than Monk module names, the list of
 roles, and why `app/` is loaded eagerly in a fixed order).
@@ -21,16 +24,16 @@ config/
   settings.rb persistence.rb auth.rb mail.rb jobs.rb live.rb
 app/
   app.rb                                    # NEW: class App, moved out of config.ru
-  models/.keep                              # NEW, --postgres
+  models/ presenters/ helpers/ mailers/ broadcasts/ jobs/   # NEW, always, each with a .keep
   mailers/app_mailer.rb                     # NEW, --auth: moved out of config/auth.rb
   jobs/hello_job.rb send_login_link.rb      # was jobs/
   views/index.erb layouts/app.erb mail/magic_link.erb live/_hits.erb   # was views/
 db/migrate/  public/  bin/  test/
 ```
 
-`presenters/` and `broadcasts/` aren't written: the scaffold has no code
-for them (ADR 0015). `load.rb` loads them if they exist, and the guide
-explains them.
+Every role directory is written, whatever the flags, with a `.keep`
+(ADR 0015). Flags add files next to the `.keep`s. `load.rb` skips any
+directory an app deletes.
 
 `config.ru`:
 
@@ -52,10 +55,11 @@ require_relative "jobs"
 require_relative "live"
 
 # The app's code, by role, in the order they call each other: presenters
-# read models, mailers and broadcasts render what models return, and jobs
-# call all of them. Everything is loaded before Monk.boot freezes the app,
-# since nothing can be loaded later from a worker Ractor.
-%w[models presenters mailers broadcasts jobs].each do |role|
+# read models, helpers, mailers and broadcasts use both, and jobs call all
+# of them. Everything is loaded before Monk.boot freezes the app, since
+# nothing can be loaded later from a worker Ractor. Order only matters for
+# code that runs while a file loads; methods may use any role.
+%w[models presenters helpers mailers broadcasts jobs].each do |role|
   Dir[File.expand_path("../app/#{role}/**/*.rb", __dir__)].sort.each { |file| require file }
 end
 ```
@@ -68,8 +72,10 @@ end
    or auth, mail, jobs), plus `live` for `--live` (today `live/config.ru`
    requires it itself). The loop over roles is in the template after the
    anchor and is the same for every flag.
-2. **Module configs stop loading app code.** `config/jobs.rb` loses its
-   `jobs/*.rb` glob. `config/persistence.rb` doesn't gain one.
+2. **Module configs stop loading app code by folder** (ADR 0015).
+   `config/jobs.rb` loses its `jobs/*.rb` glob. `config/persistence.rb`
+   doesn't gain one. A config that needs specific app files requires
+   them itself (`config/auth.rb` → `app/mailers/app_mailer`).
 3. **`app/app.rb` is not required by `load.rb`.** `config.ru` and
    `test/test_helper.rb` require it. `bin/jobs` then doesn't define routes
    or start the `--live` demo's `StateRactor`.
@@ -87,8 +93,11 @@ end
    `deliver: AppMailer::MAGIC_LINK`. `load.rb`'s glob requires the same
    file again by its absolute path, which Ruby skips. Phase 2 checks that
    with a test rather than assuming it.
-6. **`app/models/` ships as `.keep`**, since there's no demo model, and
-   only with `--postgres`.
+6. **Every role directory ships with a `.keep`, whatever the flags**
+   (ADR 0015). `Scaffold::APP_ROLES` lists them in `load.rb`'s order, and
+   a test keeps the two lists in step. The `.keep` stays when a flag adds a
+   real file to the directory. The template `.keep`s must be tracked in
+   git, since the gemspec's file list is `git ls-files`.
 7. **`views "app/views"`** in `app/app.rb`, relative to the working
    directory like `assets "public"` (ADR 0015, Considered Options).
 8. **Existing apps aren't migrated.** A CHANGELOG entry lists the moves by
@@ -116,10 +125,15 @@ end
   checks the file users actually get.
 - A test that `load.rb` loads a file dropped into `app/presenters/` and
   `app/broadcasts/`, and that a missing role directory is fine.
+- Added after Phase 1 with the `helpers/` role: that test also covers
+  `app/helpers/`, and a test that a helper module in `app/helpers/`
+  (`Monk::Context.include`) is callable from a template in the booted
+  generated app.
+- Added after Phase 1: every role directory with its `.keep`
+  (decision 6), and a test that they all exist.
 
 ### Phase 2: `--postgres` and `--auth`
 
-- `POSTGRES_FILES` adds `app/models/.keep`.
 - `bin/console` requires `config/load` (decision 4).
 - New `templates/auth/app/mailers/app_mailer.rb`, with the module moved
   out of `templates/auth/config/auth.rb` and renamed (decision 5).
@@ -178,8 +192,11 @@ end
 - `docs/guides/scaffolding.md`: the new tree, and a "Where code goes"
   section with ADR 0015's role table, the rule for code that fits no role
   (a new role name, never `services/`/`utils/`; `lib/` if it isn't
-  specific to the app), and the load order and `require_relative`
-  rule for class-body references.
+  specific to the app), `helpers/` as `Monk::Context` mixins only (and
+  how a helper differs from a presenter), the load order (methods may
+  use any role; only load-time references need `require_relative`), and
+  configs requiring the specific app files they need (the `config/auth.rb`
+  and monk_talk `config/live.rb` examples).
 - `docs/guides/mail.md` and `auth.md`: `app/mailers/app_mailer.rb`,
   `AppMailer::MAGIC_LINK`, and the `require_relative` from
   `config/auth.rb`.

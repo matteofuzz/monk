@@ -10,18 +10,26 @@ module Monk
   class Scaffold
     TEMPLATES_DIR = File.expand_path("templates", __dir__)
 
+    # The role directories under app/, in config/load.rb's load order.
+    APP_ROLES = %w[models presenters helpers mailers broadcasts jobs].freeze
+
     BASE_FILES = {
       "Gemfile" => "base/Gemfile",
       "config.ru" => "base/config.ru",
       "config/settings.rb" => "base/config/settings.rb",
+      "config/load.rb" => "base/config/load.rb",
+      "app/app.rb" => "base/app/app.rb",
       ".ruby-version" => "base/.ruby-version",
       ".gitignore" => "base/.gitignore",
       ".dockerignore" => "base/.dockerignore",
       "Dockerfile" => "base/Dockerfile",
       "bin/server" => "base/bin/server",
       "bin/websocket_server" => "base/bin/websocket_server",
-      "views/layouts/app.erb" => "base/views/layouts/app.erb",
-      "views/index.erb" => "base/views/index.erb",
+      "app/views/layouts/app.erb" => "base/app/views/layouts/app.erb",
+      "app/views/index.erb" => "base/app/views/index.erb",
+      # Every role directory, whatever the flags (docs/adr/0015): the tree
+      # shows where each kind of code goes. Flags add files next to these.
+      **APP_ROLES.to_h { |role| ["app/#{role}/.keep", "base/app/#{role}/.keep"] },
       "public/css/app.css" => "base/public/css/app.css",
       "public/js/app.js" => "base/public/js/app.js",
     }.freeze
@@ -45,9 +53,11 @@ module Monk
       "config/auth.rb" => "auth/config/auth.rb",
       "db/migrate/00000000000001_create_auth_tables.up.sql" => "auth/db/migrate/00000000000001_create_auth_tables.up.sql",
       "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
-      # The magic link's HTML part -- config/auth.rb's AppMailer::DELIVER
-      # renders it and sends through Monk::Mail (MAIL_FILES, implied by --auth).
-      "views/mail/magic_link.erb" => "auth/views/mail/magic_link.erb",
+      # The magic link's sender, Monk::Auth's deliver: hook -- config/auth.rb
+      # requires it -- and the HTML part it renders and sends through
+      # Monk::Mail (MAIL_FILES, implied by --auth).
+      "app/mailers/app_mailer.rb" => "auth/app/mailers/app_mailer.rb",
+      "app/views/mail/magic_link.erb" => "auth/app/views/mail/magic_link.erb",
     }.freeze
 
     # --mail, or implied by --auth: Monk::Mail's config. Its Gemfile line
@@ -79,7 +89,7 @@ module Monk
     JOBS_REQUIRE_ANCHOR = %(require "monk/jobs"\n).freeze
     JOBS_MAIL_REQUIRE = %(require "monk/mail/later"\n).freeze
 
-    # --jobs's demo route, added right after this line in config.ru (the
+    # --jobs's demo route, added right after this line in app/app.rb (the
     # base and the --live one both end their routes with it), so the
     # round trip -- enqueue from a request, run in bin/jobs -- works out of
     # the box.
@@ -93,20 +103,20 @@ module Monk
 
     # --live: Monk::Live's demo (a counter whose open tabs update when
     # another request changes it). These replace three base files outright
-    # rather than patching them -- a live config.ru and index are different
-    # files, not one line of diff -- and add two. config.ru's first line stays
-    # the settings require, so --postgres/--auth wiring still finds it.
+    # rather than patching them -- a live app and index are different
+    # files, not one line of diff -- and add two. config.ru stays the base
+    # one: config/load.rb is where --live's config gets wired in.
     LIVE_OVERRIDES = {
-      "config.ru" => "live/config.ru",
+      "app/app.rb" => "live/app/app.rb",
       "bin/websocket_server" => "live/bin/websocket_server",
-      "views/index.erb" => "live/views/index.erb",
+      "app/views/index.erb" => "live/app/views/index.erb",
     }.freeze
 
     # config/live.rb itself isn't here -- #write_live! picks between
     # LIVE_CONFIG_TEMPLATES[@live_transport] instead, since which one gets
     # written depends on --redis vs --postgres, not a fixed mapping.
     LIVE_FILES = {
-      "views/live/_hits.erb" => "live/views/live/_hits.erb",
+      "app/views/live/_hits.erb" => "live/app/views/live/_hits.erb",
     }.freeze
 
     LIVE_CONFIG_TEMPLATES = {
@@ -235,7 +245,7 @@ module Monk
         add_deliver_later! if @mail
       end
 
-      wire_config_ru! if @postgres || @mail
+      wire_load! if @postgres || @mail || @live
       append_gemfile_extra("redis/Gemfile.extra") if @redis
 
       # --postgres, --redis and --mail are the flags with anything worth
@@ -307,7 +317,7 @@ module Monk
     end
 
     def add_live_to_layout!
-      path = File.join(@dir, "views/layouts/app.erb")
+      path = File.join(@dir, "app/views/layouts/app.erb")
       content = File.read(path)
       raise "layout wiring failed: </head> not found" unless content.include?("  </head>\n")
 
@@ -337,36 +347,37 @@ module Monk
       File.write(path, content.sub(DOTENV_COMMENTED_LINE, DOTENV_LINE))
     end
 
-    # config.ru ships in BASE_FILES unconditionally (it has to -- it's the
-    # only rackup entrypoint), so --postgres/--auth can't gate whether it
-    # exists, only what it requires. Unlike BASE_FILES/POSTGRES_FILES/
+    # config/load.rb ships in BASE_FILES unconditionally (config.ru and the
+    # tests require it), so the flags can't gate whether it exists, only
+    # which module configs it requires. Unlike BASE_FILES/POSTGRES_FILES/
     # AUTH_FILES, this is a post-write edit rather than a verbatim copy --
-    # the alternative (a second, fuller config.ru template per flag
-    # combination) would duplicate the whole file for one line of diff.
-    def wire_config_ru!
-      path = File.join(@dir, "config.ru")
-      settings_require = %(require_relative "config/settings"\n)
+    # the alternative (a second, fuller load.rb template per flag
+    # combination) would duplicate the whole file for a few lines of diff.
+    def wire_load!
+      path = File.join(@dir, "config/load.rb")
+      settings_require = %(require_relative "settings"\n)
       requires = +""
       if @postgres
-        target = @auth ? "config/auth" : "config/persistence" # config/auth.rb itself require_relative "persistence"
+        target = @auth ? "auth" : "persistence" # config/auth.rb itself require_relative "persistence"
         requires << "require_relative \"#{target}\"\n"
       end
-      # config/mail.rb from config.ru only, never from config/auth.rb:
+      # config/mail.rb from config/load.rb only, never from config/auth.rb:
       # bin/websocket_server loads config/auth.rb too and never sends mail,
       # so it shouldn't need MAIL_URL to boot.
-      requires << "require_relative \"config/mail\"\n" if @mail
-      requires << "require_relative \"config/jobs\"\n" if @jobs
+      requires << "require_relative \"mail\"\n" if @mail
+      requires << "require_relative \"jobs\"\n" if @jobs
+      requires << "require_relative \"live\"\n" if @live
 
       content = File.read(path)
-      raise "config.ru wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
+      raise "config/load.rb wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
 
       File.write(path, content.sub(settings_require, "#{settings_require}#{requires}"))
     end
 
     def add_jobs_route!
-      path = File.join(@dir, "config.ru")
+      path = File.join(@dir, "app/app.rb")
       content = File.read(path)
-      raise "config.ru wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
+      raise "app/app.rb wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
 
       File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
@@ -951,8 +962,8 @@ module Monk
     def auth_mail_sentence
       return "" unless @auth
 
-      " `config/auth.rb`'s `AppMailer::DELIVER` sends each login link through it " \
-        "(HTML part: `views/mail/magic_link.erb`)."
+      " `AppMailer::MAGIC_LINK` (`app/mailers/app_mailer.rb`) sends each login link through it " \
+        "(HTML part: `app/views/mail/magic_link.erb`)."
     end
 
     def sample_test_body

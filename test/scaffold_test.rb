@@ -15,16 +15,34 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/Gemfile"), read(dest, "Gemfile")
       assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("base/config/settings.rb"), read(dest, "config/settings.rb")
+      assert_equal template("base/config/load.rb"), read(dest, "config/load.rb")
+      assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
       assert_equal template("base/.ruby-version"), read(dest, ".ruby-version")
       assert_equal template("base/.gitignore"), read(dest, ".gitignore")
       assert_equal template("base/.dockerignore"), read(dest, ".dockerignore")
       assert_equal template("base/Dockerfile"), read(dest, "Dockerfile")
       assert_equal template("base/bin/server"), read(dest, "bin/server")
       assert_equal template("base/bin/websocket_server"), read(dest, "bin/websocket_server")
-      assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
-      assert_equal template("base/views/index.erb"), read(dest, "views/index.erb")
+      assert_equal template("base/app/views/layouts/app.erb"), read(dest, "app/views/layouts/app.erb")
+      assert_equal template("base/app/views/index.erb"), read(dest, "app/views/index.erb")
       assert_equal template("base/public/css/app.css"), read(dest, "public/css/app.css")
       assert_equal template("base/public/js/app.js"), read(dest, "public/js/app.js")
+    end
+  end
+
+  # Every role directory ships, whatever the flags, each with a .keep so
+  # git keeps it while it's empty -- and in the order config/load.rb loads
+  # them, so the two lists can't drift apart.
+  def test_write_bang_creates_every_app_role_directory
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest).write!
+
+      %w[models presenters helpers mailers broadcasts jobs].each do |role|
+        assert File.exist?(File.join(dest, "app/#{role}/.keep")), "expected app/#{role}/.keep"
+      end
+      assert_includes read(dest, "config/load.rb"), "%w[#{Monk::Scaffold::APP_ROLES.join(" ")}]"
     end
   end
 
@@ -54,31 +72,37 @@ class ScaffoldTest < Minitest::Test
   end
 
   # The generated app has to actually boot and serve its own page --
-  # a scaffold whose templates don't compile is worse than none.
+  # a scaffold whose templates don't compile is worse than none. Loads
+  # the generated config/load.rb and app/app.rb the way config.ru does,
+  # from the app's root (views/assets are relative to it, as under
+  # bin/server). app/app.rb goes into a throwaway module so its top-level
+  # App doesn't leak into other tests.
   def test_the_generated_app_boots_and_renders_its_index_page
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
       Monk::Scaffold.new(dest).write!
 
-      app = Class.new(Monk::Base) do
-        get("/") { @title = "App"; render "index" }
+      with_settings do
+        Dir.chdir(dest) do
+          require File.join(dest, "config/load")
+          wrapper = Module.new
+          load File.join(dest, "app/app.rb"), wrapper
+          app = wrapper::App
+          Monk.boot(app)
+
+          status, headers, body = app.call(env_for("GET", "/"))
+
+          assert_equal 200, status
+          assert_equal "text/html; charset=utf-8", headers["content-type"]
+          assert_includes body.join, "<h1>It works</h1>"
+          assert_includes body.join, %(<link rel="stylesheet" href="/css/app.css)
+
+          css_status, css_headers, _css_body = app.call(env_for("GET", "/css/app.css"))
+
+          assert_equal 200, css_status
+          assert_equal "text/css; charset=utf-8", css_headers["content-type"]
+        end
       end
-      app.views(File.join(dest, "views"))
-      app.layout("layouts/app")
-      app.assets(File.join(dest, "public"))
-      Monk.boot(app)
-
-      status, headers, body = app.call(env_for("GET", "/"))
-
-      assert_equal 200, status
-      assert_equal "text/html; charset=utf-8", headers["content-type"]
-      assert_includes body.join, "<h1>It works</h1>"
-      assert_includes body.join, %(<link rel="stylesheet" href="/css/app.css)
-
-      css_status, css_headers, _css_body = app.call(env_for("GET", "/css/app.css"))
-
-      assert_equal 200, css_status
-      assert_equal "text/css; charset=utf-8", css_headers["content-type"]
     ensure
       Monk::Views.reset!
       Monk::Assets.reset!
@@ -86,11 +110,10 @@ class ScaffoldTest < Minitest::Test
   end
 
   # config/settings.rb ships in the base skeleton regardless of
-  # --postgres (MONK_ENV/dotenv apply either way), and config.ru requires
-  # it before anything else -- this loads the actual generated file
-  # (not a fresh Class.new(Monk::Base) app, unlike the boot test above),
-  # proving it works standalone: a missing dotenv gem is a no-op, and
-  # Monk::Settings' built-in :monk_env is readable afterward.
+  # --postgres (MONK_ENV/dotenv apply either way), and config/load.rb
+  # requires it before anything else -- this loads the generated file on
+  # its own, proving it works standalone: a missing dotenv gem is a no-op,
+  # and Monk::Settings' built-in :monk_env is readable afterward.
   def test_the_generated_config_settings_file_loads_standalone_without_dotenv_installed
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -143,7 +166,7 @@ class ScaffoldTest < Minitest::Test
 
   # Dockerfile ships unconditionally (base skeleton, like config.ru) --
   # --postgres overrides it with one that installs libpq for the pg gem's
-  # native extension, the same override mechanism --live uses for config.ru.
+  # native extension, the same override mechanism --live uses for app/app.rb.
   def test_write_bang_with_postgres_overrides_the_dockerfile_for_libpq
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -165,44 +188,111 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # config.ru ships unconditionally (base skeleton), so --postgres can only
-  # edit what's already there, not add/remove the file itself -- this is
-  # what actually makes a scaffolded app boot with persistence registered,
-  # instead of silently never loading config/persistence.rb at all.
-  def test_write_bang_with_postgres_wires_config_ru_to_require_persistence
+  # config/load.rb ships unconditionally (base skeleton), so --postgres can
+  # only edit what's already there, not add/remove the file itself -- this
+  # is what actually makes a scaffolded app boot with persistence
+  # registered, instead of silently never loading config/persistence.rb.
+  def test_write_bang_with_postgres_wires_config_load_to_require_persistence
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest, postgres: true).write!
 
-      config_ru = read(dest, "config.ru")
-      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/persistence"\n)
-      assert_includes config_ru, "class App < Monk::Base"
+      assert_includes read(dest, "config/load.rb"), %(require_relative "settings"\nrequire_relative "persistence"\n)
     end
   end
 
   # auth: true implies postgres: true, and config/auth.rb itself
-  # require_relative "persistence" -- so config.ru only needs to reach
+  # require_relative "persistence" -- so config/load.rb only needs to reach
   # config/auth to pull in both.
-  def test_write_bang_with_auth_wires_config_ru_to_require_auth_instead_of_persistence
+  def test_write_bang_with_auth_wires_config_load_to_require_auth_instead_of_persistence
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest, auth: true).write!
 
-      config_ru = read(dest, "config.ru")
-      assert_includes config_ru, %(require_relative "config/settings"\nrequire_relative "config/auth"\n)
-      refute_includes config_ru, %(require_relative "config/persistence")
+      load_rb = read(dest, "config/load.rb")
+      assert_includes load_rb, %(require_relative "settings"\nrequire_relative "auth"\n)
+      refute_includes load_rb, %(require_relative "persistence")
     end
   end
 
-  def test_write_bang_without_postgres_leaves_config_ru_untouched
+  def test_write_bang_without_postgres_leaves_config_load_untouched
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest).write!
 
+      assert_equal template("base/config/load.rb"), read(dest, "config/load.rb")
+    end
+  end
+
+  # Every flag is wired in config/load.rb, so config.ru is the same three
+  # lines whatever monk new was given.
+  def test_config_ru_is_the_base_one_for_every_flag
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true, jobs: true, live: true, redis: true).write!
+
       assert_equal template("base/config.ru"), read(dest, "config.ru")
+    end
+  end
+
+  # config/load.rb loads each role directory under app/ that exists, in
+  # role order, and skips the ones an app hasn't created.
+  def test_the_generated_config_load_loads_app_code_by_role_in_order
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest).write!
+      %w[broadcasts helpers presenters models].each do |role|
+        FileUtils.mkdir_p(File.join(dest, "app/#{role}"))
+        File.write(File.join(dest, "app/#{role}/probe.rb"), "$monk_load_order << #{role.inspect}\n")
+      end
+
+      $monk_load_order = []
+      with_settings { require File.join(dest, "config/load") }
+
+      assert_equal %w[models presenters helpers broadcasts], $monk_load_order
+    ensure
+      $monk_load_order = nil
+    end
+  end
+
+  # An app's own helper: a module in app/helpers/ that includes itself into
+  # Monk::Context, so every template can call it bare -- loaded by
+  # config/load.rb before Boot, like Monk::Auth's and Monk::Live's. The
+  # include is global and can't be undone, hence the one-off names.
+  def test_a_helper_in_app_helpers_is_callable_from_the_generated_apps_templates
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest).write!
+      FileUtils.mkdir_p(File.join(dest, "app/helpers"))
+      File.write(File.join(dest, "app/helpers/scaffold_probe_helpers.rb"), <<~RUBY)
+        module ScaffoldProbeHelpers
+          def scaffold_probe_greeting = "hello from app/helpers"
+        end
+
+        Monk::Context.include(ScaffoldProbeHelpers)
+      RUBY
+      File.write(File.join(dest, "app/views/index.erb"), "<p><%= scaffold_probe_greeting %></p>\n")
+
+      with_settings do
+        Dir.chdir(dest) do
+          require File.join(dest, "config/load")
+          wrapper = Module.new
+          load File.join(dest, "app/app.rb"), wrapper
+          app = wrapper::App
+          Monk.boot(app)
+
+          _status, _headers, body = app.call(env_for("GET", "/"))
+
+          assert_includes body.join, "<p>hello from app/helpers</p>"
+        end
+      end
+    ensure
+      Monk::Views.reset!
+      Monk::Assets.reset!
     end
   end
 
@@ -420,20 +510,20 @@ class ScaffoldTest < Minitest::Test
 
       assert_equal template("mail/config/mail.rb"), read(dest, "config/mail.rb")
       assert_includes read(dest, "Gemfile"), template("mail/Gemfile.extra")
-      refute File.exist?(File.join(dest, "views/mail/magic_link.erb"))
+      refute File.exist?(File.join(dest, "app/views/mail/magic_link.erb"))
       refute File.exist?(File.join(dest, "config/auth.rb"))
       refute File.exist?(File.join(dest, "config/persistence.rb"))
       refute_includes read(dest, "Gemfile"), %(gem "pg")
     end
   end
 
-  def test_write_bang_with_mail_wires_config_ru_right_after_settings
+  def test_write_bang_with_mail_wires_config_load_right_after_settings
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest, mail: true).write!
 
-      assert_includes read(dest, "config.ru"), %(require_relative "config/settings"\nrequire_relative "config/mail"\n)
+      assert_includes read(dest, "config/load.rb"), %(require_relative "settings"\nrequire_relative "mail"\n)
     end
   end
 
@@ -481,7 +571,7 @@ class ScaffoldTest < Minitest::Test
       Monk::Scaffold.new(dest, auth: true).write!
 
       assert_equal template("mail/config/mail.rb"), read(dest, "config/mail.rb")
-      assert_equal template("auth/views/mail/magic_link.erb"), read(dest, "views/mail/magic_link.erb")
+      assert_equal template("auth/app/views/mail/magic_link.erb"), read(dest, "app/views/mail/magic_link.erb")
       assert_includes read(dest, "Gemfile"), template("mail/Gemfile.extra")
       assert_equal 1, read(dest, "Gemfile").scan("net-smtp").size
     end
@@ -494,22 +584,80 @@ class ScaffoldTest < Minitest::Test
       Monk::Scaffold.new(dest, auth: true, mail: true).write!
 
       assert_equal 1, read(dest, "Gemfile").scan("net-smtp").size
-      assert_equal 1, read(dest, "config.ru").scan("config/mail").size
+      assert_equal 1, read(dest, "config/load.rb").scan(%(require_relative "mail")).size
       assert_equal 1, read(dest, ".env.test").scan("MAIL_URL").size
     end
   end
 
-  # config/mail.rb is required by config.ru only, not by config/auth.rb:
-  # bin/websocket_server loads config/auth.rb as well, and never sends mail,
-  # so it shouldn't need MAIL_URL set to boot.
-  def test_write_bang_with_auth_wires_config_ru_to_require_mail_after_auth
+  # --auth's magic-link sender lives in app/mailers/, and config/auth.rb
+  # requires it itself (docs/adr/0015): Monk::Auth.configure checks
+  # deliver: right away, before config/load.rb reaches app/.
+  def test_write_bang_with_auth_writes_the_mailer_that_config_auth_requires
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
       Monk::Scaffold.new(dest, auth: true).write!
 
-      assert_includes read(dest, "config.ru"),
-        %(require_relative "config/settings"\nrequire_relative "config/auth"\nrequire_relative "config/mail"\n)
+      assert_equal template("auth/app/mailers/app_mailer.rb"), read(dest, "app/mailers/app_mailer.rb")
+      assert_includes read(dest, "config/auth.rb"), %(require_relative "../app/mailers/app_mailer")
+      assert_includes read(dest, "config/auth.rb"), "deliver: AppMailer::MAGIC_LINK"
+      assert File.exist?(File.join(dest, "app/mailers/.keep"))
+    end
+  end
+
+  # config/auth.rb loads on its own, without config/mail.rb, as
+  # bin/websocket_server loads it; then config/load.rb, as config.ru loads
+  # it, requires the mailer again through its app/ glob -- which Ruby
+  # skips, so AppMailer is defined once (no "already initialized constant").
+  # The tmpdir path goes through a symlink on macOS (/var -> /private/var),
+  # so this also covers require_relative and the glob spelling it
+  # differently.
+  def test_config_auth_loads_the_mailer_alone_and_config_load_doesnt_load_it_again
+    require "monk/auth"
+    require "monk/mail"
+
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+      Monk::Scaffold.new(dest, auth: true).write!
+      Object.send(:remove_const, :AppMailer) if defined?(AppMailer)
+
+      _out, err = capture_io do
+        with_settings do
+          with_env("AUTH_SECRET", "s3cr3t") do
+            with_env("MAIL_URL", "log://") do
+              Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+              require File.join(dest, "config/settings")
+              require File.join(dest, "config/auth")
+
+              assert_same AppMailer::MAGIC_LINK, Monk::Auth.config[:deliver]
+
+              require File.join(dest, "config/load")
+            end
+          end
+        end
+      end
+
+      refute_match(/already initialized constant/, err)
+      mailer = File.join(dest, "app/mailers/app_mailer.rb")
+      assert_equal 1, $LOADED_FEATURES.count { |path| File.identical?(path, mailer) }
+    end
+  ensure
+    Monk::Auth.reset!
+    Monk::Mail.reset!
+    Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
+  end
+
+  # config/mail.rb is required by config/load.rb only, not by
+  # config/auth.rb: bin/websocket_server loads config/auth.rb as well, and
+  # never sends mail, so it shouldn't need MAIL_URL set to boot.
+  def test_write_bang_with_auth_wires_config_load_to_require_mail_after_auth
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "demo_app")
+
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      assert_includes read(dest, "config/load.rb"),
+        %(require_relative "settings"\nrequire_relative "auth"\nrequire_relative "mail"\n)
       refute_includes read(dest, "config/auth.rb"), %(require_relative "mail")
     end
   end
@@ -522,7 +670,7 @@ class ScaffoldTest < Minitest::Test
 
       refute File.exist?(File.join(dest, "config/mail.rb"))
       refute_includes read(dest, "Gemfile"), "net-smtp"
-      refute_includes read(dest, "config.ru"), "config/mail"
+      refute_includes read(dest, "config/load.rb"), %(require_relative "mail")
     end
   end
 
@@ -556,7 +704,7 @@ class ScaffoldTest < Minitest::Test
   end
 
   # The scaffolded pieces working together, as a generated app would load
-  # them: settings, then mail, then auth (config.ru's order), views frozen,
+  # them: settings, then mail, then auth, views frozen,
   # then Monk::Auth's deliver: called from a worker Ractor under log://.
   def test_scaffolded_auth_delivers_the_magic_link_through_monk_mail
     require "monk/auth"
@@ -579,7 +727,7 @@ class ScaffoldTest < Minitest::Test
                 Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
                 require File.join(dest, "config/auth")
                 Monk::Views.reset!
-                Monk::Views.root = File.join(dest, "views")
+                Monk::Views.root = File.join(dest, "app/views")
                 # Only what the call below reads from a worker Ractor --
                 # not Monk.freeze!, which would also seal the Pg registry
                 # and Auth's models for every test that runs after this one.

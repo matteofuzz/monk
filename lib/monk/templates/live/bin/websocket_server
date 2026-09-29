@@ -13,7 +13,7 @@ end
 
 # Monk::Live: the browsers' sockets end here. The handler takes their
 # subscribe/unsubscribe messages, checks each topic against the rules in
-# config/live.rb, and relays whatever config.ru's process publishes over
+# config/live.rb, and relays whatever bin/server's process publishes over
 # Redis.
 require_relative "../config/live"
 

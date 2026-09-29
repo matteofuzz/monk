@@ -45,33 +45,30 @@ class ScaffoldJobsTest < Minitest::Test
     in_scaffold(postgres: true) do |dest|
       refute File.exist?(File.join(dest, "config/jobs.rb"))
       refute File.exist?(File.join(dest, "bin/jobs"))
-      refute_includes read(dest, "config.ru"), "config/jobs"
+      refute_includes read(dest, "config/load.rb"), %(require_relative "jobs")
+      refute_includes read(dest, "app/app.rb"), "/jobs/hello"
       refute_includes read(dest, ".env"), "JOBS_"
     end
   end
 
-  def test_config_ru_requires_jobs_after_persistence_and_adds_the_demo_route
+  def test_config_load_requires_jobs_after_persistence_and_the_app_gets_the_demo_route
     in_scaffold(jobs: true) do |dest|
-      config_ru = read(dest, "config.ru")
-
-      assert_includes config_ru, %(require_relative "config/persistence"\nrequire_relative "config/jobs"\n)
-      assert_includes config_ru, %(post("/jobs/hello"))
+      assert_includes read(dest, "config/load.rb"), %(require_relative "persistence"\nrequire_relative "jobs"\n)
+      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
     end
   end
 
-  def test_config_ru_requires_jobs_after_auth_and_mail
+  def test_config_load_requires_jobs_after_auth_and_mail
     in_scaffold(jobs: true, auth: true) do |dest|
-      assert_includes read(dest, "config.ru"),
-        %(require_relative "config/auth"\nrequire_relative "config/mail"\nrequire_relative "config/jobs"\n)
+      assert_includes read(dest, "config/load.rb"),
+        %(require_relative "auth"\nrequire_relative "mail"\nrequire_relative "jobs"\n)
     end
   end
 
-  def test_the_live_config_ru_gets_the_demo_route_too
+  def test_the_live_app_gets_the_demo_route_too
     in_scaffold(jobs: true, live: true) do |dest|
-      config_ru = read(dest, "config.ru")
-
-      assert_includes config_ru, %(post("/jobs/hello"))
-      assert_includes config_ru, %(require_relative "config/jobs")
+      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
+      assert_includes read(dest, "config/load.rb"), %(require_relative "jobs")
     end
   end
 
@@ -238,7 +235,7 @@ class ScaffoldJobsTest < Minitest::Test
   end
 
   # The same, for an --auth --jobs app: settings, mail (log://), auth, then
-  # jobs, config.ru's order, with both generated migrations applied.
+  # jobs, config/load.rb's order, with both generated migrations applied.
   def with_generated_auth_app(dest)
     with_log do |log_dir|
       @log_dir = log_dir
@@ -256,7 +253,7 @@ class ScaffoldJobsTest < Minitest::Test
           load File.join(dest, "config/auth.rb")
           load File.join(dest, "config/jobs.rb")
           Monk::Views.reset!
-          Monk::Views.root = File.join(dest, "views") # as the generated bin/jobs does
+          Monk::Views.root = File.join(dest, "app/views") # as the generated bin/jobs does
           Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.join(dest, "db/migrate")).migrate!
           yield
         ensure

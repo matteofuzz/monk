@@ -16,7 +16,7 @@ require "monk/jobs/runtime"
 
 # The app's templates, so a job can render one (a mail's HTML part, say):
 # there's no App class here to point Monk::Views at them.
-Monk::Views.root = File.expand_path("../views", __dir__)
+Monk::Views.root = File.expand_path("../app/views", __dir__)
 
 workers = Integer(ENV.fetch("JOBS_WORKERS", "5"))
 queues = ENV.fetch("JOBS_QUEUES", "default").split(",").map(&:strip)

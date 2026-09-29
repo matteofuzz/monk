@@ -1,8 +1,5 @@
-require_relative "config/settings"
-require_relative "config/live"
-
 class App < Monk::Base
-  views "views"
+  views "app/views"
   layout "layouts/app"
   assets "public"
 
@@ -23,5 +20,3 @@ class App < Monk::Base
   get("/hello") { "hello from monk" }
   get("/api/hello") { json(message: "hello from monk") }
 end
-
-run Monk.boot(App)

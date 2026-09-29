@@ -12,10 +12,11 @@ class ScaffoldLiveTest < Minitest::Test
   def test_live_writes_the_demo_wiring_from_the_live_templates
     in_app do |dest|
       assert_equal template("live/config/live.rb"), read(dest, "config/live.rb")
-      assert_equal template("live/config.ru"), read(dest, "config.ru")
+      assert_equal template("live/app/app.rb"), read(dest, "app/app.rb")
+      assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("live/bin/websocket_server"), read(dest, "bin/websocket_server")
-      assert_equal template("live/views/index.erb"), read(dest, "views/index.erb")
-      assert_equal template("live/views/live/_hits.erb"), read(dest, "views/live/_hits.erb")
+      assert_equal template("live/app/views/index.erb"), read(dest, "app/views/index.erb")
+      assert_equal template("live/app/views/live/_hits.erb"), read(dest, "app/views/live/_hits.erb")
     end
   end
 
@@ -33,7 +34,7 @@ class ScaffoldLiveTest < Minitest::Test
 
   def test_live_adds_the_meta_tag_and_module_script_to_the_layout_head
     in_app do |dest|
-      layout = read(dest, "views/layouts/app.erb")
+      layout = read(dest, "app/views/layouts/app.erb")
 
       assert_includes layout, %(<meta name="monk-live-url" content="<%= settings[:live_ws_url] %>">)
       assert_includes layout, %(<script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>)
@@ -68,7 +69,7 @@ class ScaffoldLiveTest < Minitest::Test
 
   def test_every_generated_ruby_file_is_syntactically_valid
     in_app(postgres: true) do |dest|
-      %w[config.ru config/live.rb bin/websocket_server].each do |file|
+      %w[config.ru config/load.rb config/live.rb app/app.rb bin/websocket_server].each do |file|
         _out, err, status = Open3.capture3("ruby", "-c", File.join(dest, file))
         assert status.success?, "#{file}: #{err}"
       end
@@ -82,17 +83,18 @@ class ScaffoldLiveTest < Minitest::Test
 
       refute File.exist?(File.join(dest, "config/live.rb"))
       refute File.exist?(File.join(dest, "public/js/monk_live"))
-      assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
-      assert_equal template("base/config.ru"), read(dest, "config.ru")
+      assert_equal template("base/app/views/layouts/app.erb"), read(dest, "app/views/layouts/app.erb")
+      assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
+      refute_includes read(dest, "config/load.rb"), %(require_relative "live")
     end
   end
 
   def test_live_composes_with_postgres_and_auth
     in_app(auth: true) do |dest|
-      config_ru = read(dest, "config.ru")
+      load_rb = read(dest, "config/load.rb")
 
-      assert_includes config_ru, %(require_relative "config/auth")
-      assert_includes config_ru, %(require_relative "config/live")
+      assert_includes load_rb, %(require_relative "auth")
+      assert_includes load_rb, %(require_relative "live")
       assert File.exist?(File.join(dest, "config/auth.rb"))
     end
   end
@@ -101,7 +103,7 @@ class ScaffoldLiveTest < Minitest::Test
   # the magic link, see docs/guides/auth.md) -- now that config/settings.rb
   # declares it unconditionally for every app (live_ws_url and
   # WS_ALLOWED_ORIGINS read it too), a --live --auth app loading both
-  # files in the order config.ru actually uses them must not double-declare
+  # files in the order config/load.rb uses them must not double-declare
   # it and raise Monk::DuplicateSettingError.
   def test_live_and_auth_together_share_one_public_url_setting_without_conflict
     require "monk/auth"
