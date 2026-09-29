@@ -29,7 +29,9 @@ monk new my_app --jobs       # + Monk::Jobs, background jobs, and --postgres, wh
                               #   config/jobs.rb (config.ru requires it), jobs/hello_job.rb and a
                               #   POST /jobs/hello route enqueueing it, bin/jobs (the job process),
                               #   the migration for the queue's tables, JOBS_WORKERS/JOBS_QUEUES in
-                              #   .env/.env.example
+                              #   .env/.env.example. With --mail (or --auth): config/jobs.rb loads
+                              #   Monk::Mail.deliver_later, and JOBS_QUEUES serves "mailers" first.
+                              #   With --auth: jobs/send_login_link.rb, which sends magic links from a job
 ```
 
 Writes a fresh project directory from static templates (never overwrites
@@ -96,6 +98,16 @@ uses it). It loads `config/mail.rb` and `config/auth.rb` when they exist,
 so jobs can send mail. `SETUP.md` shows it running the demo job, and its
 test section adds `config/jobs` to the test helper and a sample test that
 runs jobs with `Monk::Jobs.drain!`. See [`jobs.md`](jobs.md).
+
+With `--mail` (or `--auth`, which implies it), `--jobs` also adds
+`require "monk/mail/later"` to `config/jobs.rb`, so
+`Monk::Mail.deliver_later` is available, and sets
+`JOBS_QUEUES=mailers,default`, so emails go out before other work. With
+`--auth` it adds `jobs/send_login_link.rb`: your login route enqueues it,
+and it creates the login token and sends the link inside the job, so the
+raw token is never stored in the queue. `config/auth.rb`'s `deliver:`
+stays a synchronous send, which now runs inside that job. See
+[`auth.md`](auth.md#sending-the-magic-link-from-a-job).
 
 The base skeleton's home page is a working HTML page, not a bare JSON
 route: a layout and an index template under `views/`, and a stylesheet and

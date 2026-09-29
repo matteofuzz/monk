@@ -91,6 +91,58 @@ typed in.
    forgot to configure `deliver:` finds out the first time someone requests
    a login, not later from a user who never got their email.
 
+### Sending the magic link from a job
+
+With [background jobs](jobs.md), the login request doesn't have to wait
+for the email to go out. Move the whole request into a job, not just the
+send: the job creates the token and sends the link, so the raw token only
+ever exists in memory and in the email. `monk new --auth --jobs` generates
+this job as `jobs/send_login_link.rb`:
+
+```ruby
+class SendLoginLink < Monk::Job
+  queue "mailers"
+  max_attempts 3                           # a login email minutes late is worse than none
+  never_retry Monk::InvalidRedirectError
+
+  def self.perform(email, redirect_to = nil)
+    token = Monk::Auth.request_login(email, redirect_to: redirect_to)
+    link = "#{Monk::Settings[:public_url]}/auth/callback/#{token}"
+    Monk::Auth.deliver_link(email: email, link: link, token: token) # deliver: sends, here in the job
+  end
+end
+```
+
+```ruby
+post("/auth/request") do
+  # your per-email rate limit first
+  SendLoginLink.enqueue(params[:email])
+  json(sent: true)
+end
+```
+
+- **Why not `deliver:` calling `Monk::Mail.deliver_later`?** That would
+  store the link, token included, in the job queue until it's sent. A
+  second or less normally, but minutes while the mail relay is down, and
+  indefinitely in a failed job. `Monk::Auth` stores only token hashes so
+  that reading the database is never enough to log in as someone, and a
+  queued link would undo that for as long as it's valid. With the job
+  above, the queue holds only the email address.
+- **`login_ttl` starts when the email is sent,** not when it was requested.
+  A retry after a failed send creates a fresh token, and the unsent one
+  expires unused.
+- **Check `redirect_to` in the route** before enqueueing, if you pass one.
+  In the job, an invalid one fails at once (`never_retry`), but the user
+  never hears about it.
+- **Failures surface in the job process, not the request.** The route can
+  only say "if that address is registered, a link is on its way", which
+  is the usual reply for a login form anyway.
+- **In development**, the dev link and its QR code print on `bin/jobs`'s
+  console, not `bin/server`'s.
+
+The reasoning, and the options rejected, are in
+[`docs/adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`](../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md).
+
 ### Secure cookies
 
 Both cookies carry the `Secure` flag by default, so browsers only send them

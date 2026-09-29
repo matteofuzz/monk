@@ -29,6 +29,19 @@ in `lib/monk/version.rb`.
   `HelloJob` with a `POST /jobs/hello` route, `bin/jobs`, the queue's
   migration, `JOBS_WORKERS`/`JOBS_QUEUES` in `.env`, and `SETUP.md`
   steps for running and testing jobs.
+- `Monk::Mail.deliver_later` (`require "monk/mail/later"`): `deliver`'s
+  arguments plus `wait:`/`at:`/`conn:`, sent from a job on the `mailers`
+  queue. The message is checked when called, so bad input raises there.
+  Temporary failures are retried, while a refusal the server made final
+  (SMTP 5xx, refused credentials) fails the job at once as the new
+  `Monk::Mail::PermanentDeliveryError`, a `DeliveryError`. `deliver` is
+  unchanged. See ADR 0014.
+- `never_retry *error_classes` on `Monk::Job`: errors that fail a job at
+  once instead of spending its remaining attempts.
+- `monk new --auth --jobs` adds `jobs/send_login_link.rb`, which creates
+  the login token and sends the link inside the job, so the raw token is
+  never stored in the queue. With mail, `--jobs` also loads
+  `deliver_later` and serves the `mailers` queue first.
 
 ### Fixed
 

@@ -5,9 +5,9 @@
 Branch: `main_dev/monk_jobs`. Phases 0 (spikes), 1 (schema), 2 (job
 class and registry), 3 (Postgres enqueue/claim/finish), 4 (failures,
 retries, scheduled jobs), 5 (`drain!` and `clear!` for tests), 6 (the
-Ractor runtime), 8 (`monk new --jobs`) and 9 (docs) done by 2026-09-28;
-Phase 7 (`NOTIFY` wake-up) skipped; Phase 10 (`Monk::Mail` integration),
-a decision to make together, is what's left.
+Ractor runtime), 8 (`monk new --jobs`), 9 (docs) and 10 (`Monk::Mail`
+integration) done by 2026-09-29; Phase 7 (`NOTIFY` wake-up) skipped. The
+plan is complete.
 Companion record: [`../adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md)
 (why the queue is a narrow state table plus a payload table, why workers
 poll, and why no existing gem fits). The ADR's first version chose
@@ -808,7 +808,7 @@ bundle), stopped with `TERM`. Two more tests are in
     **Job state** (available / scheduled / running / failed), **Payload**,
     **Stager**, **Job process**), CHANGELOG.
 
-## Phase 10 — `Monk::Mail` integration — DECIDED 2026-09-28, implementation next
+## Phase 10 — `Monk::Mail` integration — DONE 2026-09-29
 
 The seven questions below were settled one at a time on 2026-09-28 and
 recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`](../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md):
@@ -903,6 +903,13 @@ recorded in [`../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`]
     link" gains the job variant and why the hook mustn't use
     `deliver_later`); `jobs.md` (`never_retry`, the `mailers` queue);
     `scaffolding.md`; CHANGELOG; README's email row.
+    **DONE 2026-09-29:** all of the above.
+    - `mail.md` gains a "Sending from a job: `deliver_later`" section, a
+      warning under "With `Monk::Auth`" against pointing `deliver:` at
+      `deliver_later`, and `drain!` in "In tests".
+    - `auth.md` gains "Sending the magic link from a job".
+    - ADR 0012's note is a dated sentence appended to its paragraph, so
+      the original decision stays readable as it was.
 
 The original questions, kept for the record:
 

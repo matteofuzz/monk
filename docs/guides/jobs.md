@@ -84,6 +84,7 @@ class SendReceipt < Monk::Job
   priority(-10)     # lower runs sooner; default 0
   max_attempts 3    # default 5
   timeout 30        # seconds one run may take; default: no limit
+  never_retry OrderCancelledError  # fail at once on these; see "When a job fails"
 
   def self.perform(order_id)
     # ...
@@ -96,7 +97,12 @@ end
   `define_method`, which only works in the Ractor that defined it
   ([`../design/ractor.md`](../design/ractor.md)).
 - **Settings are inherited**, so shared ones can go on the app's own base
-  class (`class MailerJob < Monk::Job; queue "mailers"; end`).
+  class (`class MailerJob < Monk::Job; queue "mailers"; end`). A
+  subclass's `never_retry` adds to its parent's list.
+- **Sending mail?** Often you don't need a job class of your own:
+  `Monk::Mail.deliver_later` queues the email as a job
+  ([`mail.md`](mail.md#sending-from-a-job-deliver_later)). For login
+  links, see [`auth.md`](auth.md#sending-the-magic-link-from-a-job).
 - **Every job runs in a worker Ractor.** Everything it touches must work
   there: `Monk::Persistence`, `Monk::Mail`, `Monk::Log` and
   `Monk::StateRactor` do. A gem that keeps mutable state in a module or
@@ -182,6 +188,18 @@ another attempt can't help: an unknown job class (a job enqueued by a
 newer deploy, or a renamed class) and a missing `self.perform`. A job that
 runs past its `timeout` fails like any other error and is retried.
 
+For errors of your own that no retry will fix (a declined card, a record
+that's gone), list them with `never_retry`, and the job fails on the first
+one instead of spending its remaining attempts:
+
+```ruby
+class ChargeCard < Monk::Job
+  never_retry CardDeclinedError, OrderCancelledError
+end
+```
+
+A listed class's subclasses count too, the way `rescue` matches.
+
 ```ruby
 Monk::Jobs.retry_failed(id)     # back to the queue, with fresh attempts
 Monk::Jobs.discard_failed(id)   # gone
@@ -242,6 +260,9 @@ The runtime's settings, for a `bin/jobs` of your own
 - **More throughput:** more `JOBS_WORKERS` for CPU-bound jobs, up to about
   the number of cores. For jobs that mostly wait on the network, more
   processes. Each worker runs one job at a time.
+- **Mail first:** `monk new` with mail and jobs sets
+  `JOBS_QUEUES=mailers,default`, so emails (on the `mailers` queue) go out
+  before other work waiting in the queue.
 - **Separating slow work from urgent work:** run a second `bin/jobs` with
   its own `JOBS_QUEUES` (e.g. one process for `mailers`, another for
   `default,reports`), so a backlog of slow jobs never delays a login email.
