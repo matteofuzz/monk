@@ -290,8 +290,13 @@ now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
     `Monk::Auth.request_login` + `redeem`.
   - `bin/websocket_server` has no `TERM` handler, so it ends by the
     signal rather than exiting 0 as `bin/server` and `bin/jobs` do.
+  - Both fixed right after this plan, as their own changes: `769b1b2`
+    (`authenticate: :optional`, so the `--auth --live` demo works for
+    visitors; `docs/design/websocket.md`, "Anonymous connections") and
+    `7d49a7f` (`TERM` exits 0, and `monk_live.js` jitters reconnects;
+    "Stopping the server").
 
-## Open questions## Open questions
+## Open questions
 
 None. The name `config/boot.rb` was dropped for `config/load.rb`, since
 Boot already means the freeze step `Monk.boot` triggers (ADR 0015).
