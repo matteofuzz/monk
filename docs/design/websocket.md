@@ -346,6 +346,37 @@ listening, and moves a connection failure from boot to the first
 subscription. With a single app on Monk, an explicit call at boot was the
 simpler choice.
 
+## Anonymous connections (0.19)
+
+`authenticate:` was `false` (no identity) or `true` (a valid session, or
+`401`). An app with `Monk::Auth` and `Monk::Live` had to pick one for every
+page: with `true`, a visitor's socket was refused at the handshake, so a
+topic whose rule said `anonymous: true` could never reach one, and the
+scaffolded `--auth --live` demo didn't update until the user logged in
+(and `monk new` writes no login routes). The rules already had the right
+model (ADR 0009: deny by default, opt a topic into anonymous subscribers);
+the server's door was deciding first.
+
+`authenticate: :optional` lets the rules decide. A connection with a valid
+session gets its subject; one without comes in with subject `nil`.
+
+- **An invalid session is anonymous, not refused.** A browser that still
+  holds the cookie of a session revoked elsewhere keeps the public topics,
+  and the rules deny the private ones. Refusing it would cut the public
+  updates too, and its client would retry forever.
+- **The Origin check covers anonymous browsers too.** As under `true`, a
+  cookie needs an allowed `Origin`. An anonymous connection that sends an
+  `Origin` needs an allowed one as well: only browsers send it, so another
+  site's page can't open sockets here for its visitors. A client that
+  sends none still connects; Bearer stays exempt.
+- **`reverify_interval:` applies only to connections with a session.**
+- **The scaffold uses it for `--live` only.** The `--live`
+  `bin/websocket_server` picks `:optional` when `Monk::Auth` is configured.
+  The plain chat server stays `true`: its handler has no rules, so
+  anonymous would mean anyone may post.
+- **The cost:** anyone can open anonymous sockets, a Ractor each. An app
+  whose live pages are all private keeps `true`.
+
 ## Explicitly out of scope (for this doc)
 
 - Lobbying for or patching Kino to add hijack — the empirical finding above

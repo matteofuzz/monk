@@ -25,9 +25,20 @@ module Monk
       # docs/history/chat-gap-analysis.md) -- authenticate: true only checks the
       # credential once, at the handshake, so a session revoked or
       # expired afterward would otherwise leave the socket live
-      # indefinitely. Requires authenticate: true (there's no credential
-      # to reverify without it) and defaults to nil (disabled), same as
-      # ping_interval:.
+      # indefinitely. Requires authenticate: true or :optional (there's no
+      # credential to reverify without it) and defaults to nil (disabled),
+      # same as ping_interval:. Under :optional it watches only the
+      # connections that have a session.
+      #
+      # authenticate: :optional is the middle mode (docs/design/websocket.md,
+      # "Anonymous connections"): a connection with a valid session gets its
+      # subject, and one without -- no credential, or a revoked or expired
+      # one -- comes in anonymous (subject nil) instead of being refused.
+      # What an anonymous connection may then do is the handler's call:
+      # Monk::Live's rules deny it everything a rule doesn't open with
+      # `anonymous: true`. The Origin check still applies: to a cookie, as
+      # under true, and to an anonymous connection that sends an Origin,
+      # since only a browser does.
       #
       # max_payload_size: (bytes) -- see Connection::DEFAULT_MAX_PAYLOAD_SIZE
       # for what it guards against (gap 5). Unlike ping_interval:/
@@ -35,6 +46,8 @@ module Monk
       # hostile client on a public endpoint, not an opt-in behavior
       # change, so a server that doesn't mention it still gets the
       # default cap rather than no cap at all.
+      AUTHENTICATE_MODES = [false, true, :optional].freeze
+
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
@@ -43,11 +56,15 @@ module Monk
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
         end
 
+        unless AUTHENTICATE_MODES.include?(authenticate)
+          raise ArgumentError, "authenticate must be false, true or :optional, got #{authenticate.inspect}"
+        end
+
         if reverify_interval
           unless reverify_interval.positive?
             raise ArgumentError, "reverify_interval must be positive, got #{reverify_interval.inspect}"
           end
-          raise ArgumentError, "reverify_interval requires authenticate: true" unless authenticate
+          raise ArgumentError, "reverify_interval requires authenticate: true or :optional" unless authenticate
         end
 
         unless max_payload_size.positive?
@@ -57,8 +74,8 @@ module Monk
         if authenticate
           unless defined?(Monk::Auth) && Monk::Auth.config
             raise Monk::AuthNotConfiguredError,
-              "Monk::WebSocket::Server.new(authenticate: true) requires Monk::Auth to already be " \
-              "configured -- call Monk::Auth.configure first"
+              "Monk::WebSocket::Server.new(authenticate: #{authenticate.inspect}) requires Monk::Auth to " \
+              "already be configured -- call Monk::Auth.configure first"
           end
 
           # Monk::Auth's config is a plain, unfrozen Hash until this runs
@@ -138,9 +155,14 @@ module Monk
           end
 
         subject = nil
-        if authenticate
+        case authenticate
+        when true
           subject = authenticate!(socket, headers, allowed_origins)
           return unless subject
+        when :optional
+          return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
+
+          subject = identify(headers)
         end
 
         socket.write(Handshake.response_for(request))
@@ -148,7 +170,7 @@ module Monk
         connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
         connection.start_heartbeat(ping_interval) if ping_interval
         reverify_thread =
-          if reverify_interval
+          if reverify_interval && subject
             start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval)
           end
         begin
@@ -193,6 +215,34 @@ module Monk
         subject
       end
       private_class_method :authenticate!
+
+      # authenticate: :optional's Origin check, before anything is verified.
+      # A Bearer connection is exempt, as under true. A cookie needs an
+      # allowed Origin, as under true. An anonymous connection that sends an
+      # Origin needs an allowed one too: only a browser sends it, and this
+      # stops another site's page from opening sockets here on its
+      # visitors' behalf; one that sends none (not a browser) gets in.
+      # Writes the 403 itself and returns false when refused.
+      def self.origin_allowed_for_optional?(socket, headers, allowed_origins)
+        return true unless allowed_origins
+
+        credential = Handshake.credential_from(headers)
+        return true if credential&.fetch(:via) == :bearer
+
+        origin = headers["origin"]
+        allowed = credential ? origin && allowed_origins.include?(origin) : origin.nil? || allowed_origins.include?(origin)
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n") unless allowed
+        allowed
+      end
+      private_class_method :origin_allowed_for_optional?
+
+      # The subject of a valid session, or nil -- no credential, or one
+      # Monk::Auth no longer accepts, both mean anonymous under :optional.
+      def self.identify(headers)
+        credential = Handshake.credential_from(headers)
+        credential && Monk::Auth.verify(credential[:token])
+      end
+      private_class_method :identify
 
       # Sleeps in `interval`-sized steps, re-running Monk::Auth.verify
       # against the same raw credential each time, until it comes back

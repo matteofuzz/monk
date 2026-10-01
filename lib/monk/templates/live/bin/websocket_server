@@ -23,7 +23,13 @@ require_relative "../config/live"
 # unreachable Redis/Postgres fails right here.
 Monk::Live.listen!
 
-authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
+# With Monk::Auth (--auth), a socket with a valid session gets its user,
+# and one without -- a visitor, or a session since revoked -- comes in
+# anonymous instead of refused. The rules in config/live.rb decide what
+# each may subscribe to: a topic is open to visitors only if its rule says
+# `anonymous: true`, like the demo's "hits". Without Monk::Auth every
+# socket is anonymous.
+authenticate = defined?(Monk::Auth) && Monk::Auth.config ? :optional : false
 port = ENV.fetch("WS_PORT", "9293").to_i
 # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
 # keeps this in sync with the app's actual origin instead of two vars

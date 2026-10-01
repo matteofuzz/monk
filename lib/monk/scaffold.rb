@@ -509,6 +509,7 @@ module Monk
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
+        #{live_auth_setup_paragraph}
       MARKDOWN
     end
 
@@ -549,7 +550,7 @@ module Monk
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
-
+        #{live_auth_setup_paragraph}
         A single broadcast is capped at just under 8000 bytes
         (`Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES`, Postgres's own
         `NOTIFY` limit) -- far more than this demo ever sends, but worth
@@ -817,6 +818,7 @@ module Monk
     end
 
     def auth_or_redis_confirmation_note
+      return live_auth_confirmation_note if @live
       return "" unless @auth || @redis
 
       flags = [("authenticate: true" if @auth), ("redis fan-out: on" if @redis)].compact.join(", ")
@@ -828,6 +830,34 @@ module Monk
 
       "\n`bin/websocket_server`'s startup line should print `#{flags}` once " \
         "#{visible} visible to it -- that confirms everything's actually wired up.\n"
+    end
+
+    # Who gets which topics once there are users. Interpolated into a
+    # squiggly heredoc, so no indentation of its own.
+    def live_auth_setup_paragraph
+      return "" unless @auth
+
+      <<~MARKDOWN
+
+        **Visitors and logged-in users.** A logged-in user's socket carries
+        their identity (the session cookie reaches `:9293` too); a visitor's
+        comes in anonymous. Each topic's rule in `config/live.rb` decides:
+        `anonymous: true` opens it to visitors (the demo's `hits`), and a
+        rule without it is for logged-in users only, e.g. one topic per user.
+        `monk new` writes no login routes: see `docs/guides/auth.md` in the
+        monk repo, and `docs/guides/live.md`, "Who may subscribe".
+      MARKDOWN
+    end
+
+    # The --live bin/websocket_server prints only `authenticate:`, and with
+    # --auth it's :optional (a visitor's socket is anonymous, not refused).
+    def live_auth_confirmation_note
+      return "" unless @auth
+
+      "\n`bin/websocket_server`'s startup line should print `authenticate: optional` once " \
+        "`AUTH_SECRET` is visible to it: a logged-in user's socket carries their identity, and a " \
+        "visitor's comes in anonymous, so it gets only the topics `config/live.rb` opens with " \
+        "`anonymous: true`.\n"
     end
 
     # Interpolated into a squiggly heredoc, so no leading indentation of

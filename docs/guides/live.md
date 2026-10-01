@@ -146,6 +146,13 @@ Monk::Live.authorize("news", anonymous: true, &AppLive::PUBLIC)
   no rule matches is denied.
 - The block gets the verified subject (from `Monk::Auth`, when the WS server
   authenticates) and the topic. A block that raises denies.
+- **Whether visitors get a socket at all** is the WS server's
+  `authenticate:` ([`websocket.md`](websocket.md)). With `Monk::Auth`, the
+  scaffolded `bin/websocket_server` uses `:optional`: a logged-in user's
+  socket carries their subject, and a visitor's comes in anonymous, so
+  these rules decide per topic. An app whose live pages are all private
+  can use `authenticate: true` instead, which refuses visitors before they
+  reach the rules.
 - **An anonymous connection is denied unless the rule says `anonymous: true`**,
   and the block isn't called for it. Without this,
   `topic == "contacts:#{subject}"` would let a nil subject subscribe to

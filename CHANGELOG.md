@@ -6,6 +6,20 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Added
+
+- `Monk::WebSocket::Server.new(authenticate: :optional)`: a connection
+  with a valid session gets its subject, and one without (none, revoked or
+  expired) comes in anonymous instead of getting a `401`. The handler
+  decides what an anonymous connection may do; under `Monk::Live`, the
+  topic rules (`anonymous: true`). The `Origin` check covers cookies, as
+  under `true`, and anonymous connections that send an `Origin`.
+  `reverify_interval:` works with it, for connections that have a session.
+  `monk new --auth --live`'s `bin/websocket_server` uses it, so the demo
+  updates for visitors too, and SETUP.md explains who gets which topics.
+  The plain chat `bin/websocket_server` keeps `true`. See
+  `docs/design/websocket.md`, "Anonymous connections".
+
 ### Changed
 
 - `monk new` lays the app out under `app/`, by role (ADR 0015):

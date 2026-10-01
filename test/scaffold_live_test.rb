@@ -173,6 +173,30 @@ class ScaffoldLiveTest < Minitest::Test
     Monk::Assets.reset!
   end
 
+  # --live --auth: a visitor's socket comes in anonymous instead of
+  # refused (authenticate: :optional), so the demo's `anonymous: true`
+  # "hits" topic works without logging in. The plain chat server, which
+  # has no subscribe rules, stays strict.
+  def test_with_auth_the_live_websocket_server_lets_visitors_in_anonymously
+    in_app(auth: true) do |dest|
+      server = read(dest, "bin/websocket_server")
+      setup = read(dest, "SETUP.md")
+
+      assert_includes server, "Monk::Auth.config ? :optional : false"
+      assert_includes setup, "authenticate: optional"
+      assert_includes setup, "**Visitors and logged-in users.**"
+      refute_includes setup, "redis fan-out: on" # the live server doesn't print it
+    end
+
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "chat_app")
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      refute_includes read(dest, "bin/websocket_server"), ":optional"
+      refute_includes read(dest, "SETUP.md"), "Visitors and logged-in users"
+    end
+  end
+
   def test_live_ws_url_defaults_to_the_direct_port_in_development
     in_app do |dest|
       with_settings do
