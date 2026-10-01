@@ -6,6 +6,20 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Fixed
+
+- `Monk::WebSocket::Server#run` stops on `TERM` as it does on Ctrl-C: it
+  stops accepting and returns, so `bin/websocket_server` exits 0 on
+  `docker stop` and deploys instead of being ended by the signal (exit
+  143). Open sockets are still dropped without a close frame; see
+  `docs/guides/websocket.md`, "Stopping and restarting", which also warns
+  what other clients have to handle.
+- `monk_live.js` jitters its reconnect delay (50%–150% of the backoff), so
+  the pages that lose their socket together on a WebSocket restart don't
+  all reconnect and refetch at once. An existing app has a copy of the
+  client in `public/js/monk_live/`: copy `lib/monk/live/client/` over it
+  again to get this.
+
 ### Added
 
 - `Monk::WebSocket::Server.new(authenticate: :optional)`: a connection

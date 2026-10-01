@@ -306,6 +306,11 @@ multi-message session.
    way `docs/guides/deploying.md` does for Render/Fly today? Leaning: document,
    not generate — consistent with the existing posture, and proxy config
    varies more by host than the Ruby side of this feature does.
+5. **Should stopping the server close sockets gracefully?** Open since
+   0.19: see "Stopping the server" below. Today a restart drops every open
+   socket without a close frame; Monk's own client doesn't need more.
+   Revisit if Monk supports other clients, or long drain windows behind a
+   load balancer.
 
 ## Who listens (0.19)
 
@@ -376,6 +381,55 @@ session gets its subject; one without comes in with subject `nil`.
   anonymous would mean anyone may post.
 - **The cost:** anyone can open anonymous sockets, a Ractor each. An app
   whose live pages are all private keeps `true`.
+
+## Stopping the server (0.19)
+
+`docker stop`, Kubernetes, Fly, Render and systemd stop a process with
+`TERM`, on every deploy and restart. Until 0.18, `Server#run` rescued only
+`Interrupt` (Ctrl-C): `TERM` ended the process by the signal (exit 143,
+which reads as a crash), while `bin/server` and `bin/jobs` exit 0 on it.
+
+Since 0.19 `#run` treats `TERM` like Ctrl-C: it closes the listening
+socket and returns, and the script ends with exit 0.
+
+**What it still doesn't do: close open sockets gracefully.** When the
+process exits, each connection Ractor dies with it and the OS closes its
+socket. A client sees the connection drop with no close frame (code
+`1006`, "abnormal closure"), exactly as for a crash or a network blip. We
+looked at two further steps and didn't take them:
+
+- **Sending each open socket a close frame ("going away", `1001`)
+  before exiting.** Each socket was moved into its own Ractor, which sits
+  blocked reading it, so the main Ractor can't reach it. Every connection
+  would need a channel it also listens on, plus shutdown ordering and
+  tests. The gain is a close code a client can tell apart from a crash.
+- **Waiting for connections to finish (drain), as HTTP servers do.** A
+  WebSocket stays open until the user leaves the page, so the wait would
+  always run to its timeout. Only useful together with close frames that
+  tell clients to go elsewhere.
+
+`monk_live.js` gains nothing from either: it treats every close the same
+way, reconnecting with backoff and refetching the page to resync (ADR
+0011), so nothing published during the restart is lost. This is an open
+question (5, above) for other clients.
+
+**The reconnect herd.** Every open page loses its socket at the same moment
+and, on reconnect, refetches its page from `bin/server`. With a fixed
+backoff they would all do it together: a thousand tabs, a thousand page
+requests within a second of each deploy. Since 0.19 `monk_live.js` waits a
+random 50%–150% of its backoff delay (`jittered` in `protocol.js`), which
+spreads reconnects and resyncs over the first second or two.
+
+**For any other client** (a native app, a script, another JS client)
+the server promises only this, on a restart:
+
+- The socket can close at any moment without a close frame. Don't rely on
+  a close code to tell a restart from a failure.
+- Reconnect with backoff **and jitter**, or every copy of your client will
+  hit the server at once.
+- Anything published while you were disconnected is lost: there's no
+  replay. Refetch the state you show after reconnecting, as `monk_live.js`
+  does.
 
 ## Explicitly out of scope (for this doc)
 

@@ -48,6 +48,9 @@ module Monk
       # default cap rather than no cap at all.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
 
+      # The signals #run treats as "stop": Ctrl+C and TERM.
+      STOP_SIGNALS = [Signal.list.fetch("INT"), Signal.list.fetch("TERM")].freeze
+
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
@@ -124,15 +127,22 @@ module Monk
           end
           ractor.send(socket, move: true)
         end
-      rescue Interrupt
-        # Ctrl+C's default Ruby behavior: raise Interrupt in the thread
-        # blocked in the syscall, here TCPServer#accept. Unrescued, that's
-        # an unhandled exception -- Ruby prints its backtrace and exits
-        # non-zero, which reads as a crash even though this is the normal,
-        # intended way to stop a long-running server. Registry#ask's
-        # Ractor::ClosedError rescue (registry.rb) guards a different
-        # failure point in this same shutdown -- a live connection's
-        # cleanup racing the registry Ractor's teardown -- not this one.
+      rescue SignalException => e
+        raise unless STOP_SIGNALS.include?(e.signo)
+
+        # Ctrl+C (INT, raised as Interrupt) and TERM (what docker stop,
+        # Kubernetes, Fly, Render and systemd send on every deploy) both
+        # land here: Ruby raises them in the thread blocked in
+        # TCPServer#accept. Unrescued, INT prints a backtrace and TERM ends
+        # the process by the signal (exit 143) -- either reads as a crash
+        # though it's the normal way to stop a long-running server. Here
+        # the server stops accepting and #run returns, so the script ends
+        # with exit 0, as bin/server and bin/jobs do. Open connections are
+        # dropped when the process exits, with no close frame
+        # (docs/design/websocket.md, "Stopping the server").
+        # Registry#ask's Ractor::ClosedError rescue (registry.rb) guards a
+        # different failure point in this same shutdown -- a live
+        # connection's cleanup racing the registry Ractor's teardown.
         @tcp_server.close
       end
 

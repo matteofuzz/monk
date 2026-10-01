@@ -81,6 +81,22 @@ anonymous. Anonymous sockets cost the server a Ractor each, like any
 other, and anyone can open them: an app whose live pages are all private
 should keep `true`, which refuses them at the door.
 
+## Stopping and restarting
+
+`server.run` returns on Ctrl-C or `TERM` (what `docker stop` and every
+platform send on a deploy): the server stops accepting, and the script
+ends with exit 0. Open connections are dropped when the process exits,
+**without a close frame**: a client sees an abnormal close (`1006`), the
+same as a crash or a network blip.
+
+> **Warning for clients other than `monk_live.js`.** On every deploy or
+> restart, expect the socket to drop with no close frame. Reconnect with
+> backoff **and jitter** (otherwise every copy of your client reconnects in
+> the same instant), and refetch whatever state you show: nothing published
+> while you were disconnected is replayed. `monk_live.js` does all three.
+> Graceful close frames and draining are an open question
+> ([`design/websocket.md`](../design/websocket.md), "Stopping the server").
+
 ## Cross-process fan-out — `Monk::WebSocket::RedisFanout`
 
 A `Registry` only reaches connections held by its own process. Once a
