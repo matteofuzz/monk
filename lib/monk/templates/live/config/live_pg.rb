@@ -1,4 +1,4 @@
-# Monk::Live wiring, required by both processes: config.ru (this app
+# Monk::Live wiring, required by both processes: config/load.rb (this app
 # publishes updates, e.g. from a route) and bin/websocket_server (the browsers'
 # sockets terminate there and are handed the updates).
 #

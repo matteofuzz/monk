@@ -16,6 +16,12 @@ class WebSocketAuthTest < Minitest::Test
     connection.write(message) if message
   end
 
+  # Replies with who the server decided this connection belongs to.
+  WHO_AM_I = proc do |connection|
+    connection.read
+    connection.write(connection.subject || "anonymous")
+  end
+
   def setup
     Monk::Persistence::Pg.reset!
   end
@@ -34,6 +40,11 @@ class WebSocketAuthTest < Minitest::Test
 
   def status_line(response)
     response.lines.first.strip
+  end
+
+  def who_am_i(socket)
+    socket.write(Monk::WebSocket::Frame.encode("who?", opcode: 0x1))
+    read_frame(socket)
   end
 
   def test_server_new_requires_monk_auth_to_already_be_configured_when_authenticate_is_true
@@ -194,6 +205,126 @@ class WebSocketAuthTest < Minitest::Test
     assert_equal "still here", read_frame(socket)
   ensure
     socket&.close
+  end
+
+  # authenticate: :optional -- a session, when the connection carries a
+  # valid one, gives it an identity; without one it's anonymous (subject
+  # nil) instead of refused, and the app's own rules (Monk::Live.authorize,
+  # deny by default) decide what an anonymous connection may do.
+
+  def test_optional_lets_a_connection_without_a_credential_in_as_anonymous
+    setup_auth_tables(DB_NAME)
+    server = start_server(authenticate: :optional, &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    response = handshake!(socket)
+
+    assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
+    assert_equal "anonymous", who_am_i(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_optional_gives_a_valid_bearer_connection_its_subject
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: :optional, &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+
+    assert_equal "a@b.com", who_am_i(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_optional_gives_a_valid_cookie_from_an_allowed_origin_its_subject
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://example.com" })
+
+    assert_equal "a@b.com", who_am_i(socket)
+  ensure
+    socket&.close
+  end
+
+  # A revoked or expired session -- a browser still holding the cookie
+  # after logging out elsewhere -- falls back to anonymous rather than 401:
+  # the page keeps its public updates, and the rules deny the private ones.
+  def test_optional_treats_an_invalid_credential_as_anonymous
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    Monk::Auth.revoke(session[:token])
+    server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    response = handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://example.com" })
+
+    assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
+    assert_equal "anonymous", who_am_i(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_optional_still_refuses_a_cookie_from_a_disallowed_origin
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    response = handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://evil.example" })
+
+    assert_equal "HTTP/1.1 403 Forbidden", status_line(response)
+  ensure
+    socket&.close
+  end
+
+  # Browsers always send Origin: another site's page can't open an
+  # anonymous socket to this server on its visitors' behalf. A client that
+  # sends no Origin at all (not a browser) still connects.
+  def test_optional_refuses_an_anonymous_connection_from_a_disallowed_origin
+    setup_auth_tables(DB_NAME)
+    server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
+
+    refused = TCPSocket.new("127.0.0.1", server.port)
+    assert_equal "HTTP/1.1 403 Forbidden", status_line(handshake!(refused, extra_headers: { "Origin" => "https://evil.example" }))
+
+    no_origin = TCPSocket.new("127.0.0.1", server.port)
+    assert_equal "HTTP/1.1 101 Switching Protocols", status_line(handshake!(no_origin))
+    assert_equal "anonymous", who_am_i(no_origin)
+  ensure
+    refused&.close
+    no_origin&.close
+  end
+
+  # reverify_interval only watches connections that have a session: an
+  # anonymous one has nothing to re-check, and stays connected.
+  def test_optional_with_reverify_interval_leaves_an_anonymous_connection_alone
+    setup_auth_tables(DB_NAME)
+    server = start_server(authenticate: :optional, reverify_interval: 0.05, &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket)
+    sleep 0.15
+
+    assert_equal "anonymous", who_am_i(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_optional_requires_monk_auth_to_already_be_configured
+    error = assert_raises(Monk::AuthNotConfiguredError) do
+      Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", authenticate: :optional)
+    end
+    assert_match(/authenticate: :optional/, error.message)
+  end
+
+  def test_an_unknown_authenticate_value_raises
+    error = assert_raises(ArgumentError) { Monk::WebSocket::Server.new(port: 0, authenticate: :sometimes) }
+    assert_match(/authenticate/, error.message)
   end
 
   def test_authenticate_false_skips_the_whole_identity_flow

@@ -11,7 +11,7 @@ Redis, no other gem. The design, and the measurements behind it, are in
 [`scaffolding.md`](scaffolding.md)).
 
 ```ruby
-# jobs/send_receipt.rb
+# app/jobs/send_receipt.rb
 class SendReceipt < Monk::Job
   def self.perform(order_id)
     order = Order.find(order_id)
@@ -23,7 +23,7 @@ end
 ```
 
 ```ruby
-# a route, in config.ru
+# a route, in app/app.rb
 post("/orders") do
   id = Order.create(email: params[:email])[:id]
   SendReceipt.enqueue(id)
@@ -58,8 +58,6 @@ require "monk/jobs"
 require_relative "persistence"
 
 Monk::Jobs.configure(db_name: :primary)
-
-Dir[File.expand_path("../jobs/*.rb", __dir__)].sort.each { |file| require file }
 ```
 
 `db_name:` is a database registered with `Monk::Persistence::Pg`. The
@@ -69,8 +67,10 @@ the queue elsewhere is covered in [Keeping the queue healthy](#keeping-the-queue
 
 Every job class has to be loaded in both processes: the web process
 enqueues by class, and the job process finds the class again by its name.
-Loading them all from `config/jobs.rb`, required by both `config.ru` and
-`bin/jobs`, does that.
+Job classes live in `app/jobs/`, and `config/load.rb` loads them after
+`config/jobs.rb`. `config.ru` and `bin/jobs` both require `config/load`,
+so both processes have every job (see [`scaffolding.md`](scaffolding.md),
+"Where code goes").
 
 The queue's three tables come from the migration `monk new --jobs` writes
 (`db/migrate/00000000000002_create_jobs_tables.{up,down}.sql`).
@@ -154,9 +154,10 @@ out (`Monk::PersistenceTimeoutError`).
 
 ## Running jobs: `bin/jobs`
 
-`bin/jobs` is the job process. It loads the app's settings,
-`config/mail.rb` and `config/auth.rb` when they exist, and
-`config/jobs.rb`, then runs until `TERM` or Ctrl-C:
+`bin/jobs` is the job process. It requires `config/load`, as the web
+process does, so a job sees every config and all of `app/` (models,
+mailers, other jobs), and never boots the app itself. Then it runs until
+`TERM` or Ctrl-C:
 
 - **Worker Ractors** (`JOBS_WORKERS`, default 5) each take a job, run it,
   and take the next. Each has its own database connection.
@@ -273,8 +274,8 @@ In tests, jobs run right in the test, on the app's test database. No job
 process is needed:
 
 ```ruby
-# test/test_helper.rb
-require_relative "../config/jobs"
+# test/test_helper.rb (as monk new's SETUP.md writes it)
+require_relative "../config/load" # config/jobs.rb, then app/jobs/
 ```
 
 ```ruby

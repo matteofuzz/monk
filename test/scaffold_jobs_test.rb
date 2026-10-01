@@ -25,7 +25,7 @@ class ScaffoldJobsTest < Minitest::Test
   def test_jobs_writes_its_config_demo_job_script_and_migration
     in_scaffold(jobs: true) do |dest|
       assert_equal template("jobs/config/jobs.rb"), read(dest, "config/jobs.rb")
-      assert_equal template("jobs/jobs/hello_job.rb"), read(dest, "jobs/hello_job.rb")
+      assert_equal template("jobs/app/jobs/hello_job.rb"), read(dest, "app/jobs/hello_job.rb")
       assert_equal template("jobs/bin/jobs"), read(dest, "bin/jobs")
       %w[up down].each do |direction|
         migration = "db/migrate/00000000000002_create_jobs_tables.#{direction}.sql"
@@ -45,33 +45,30 @@ class ScaffoldJobsTest < Minitest::Test
     in_scaffold(postgres: true) do |dest|
       refute File.exist?(File.join(dest, "config/jobs.rb"))
       refute File.exist?(File.join(dest, "bin/jobs"))
-      refute_includes read(dest, "config.ru"), "config/jobs"
+      refute_includes read(dest, "config/load.rb"), %(require_relative "jobs")
+      refute_includes read(dest, "app/app.rb"), "/jobs/hello"
       refute_includes read(dest, ".env"), "JOBS_"
     end
   end
 
-  def test_config_ru_requires_jobs_after_persistence_and_adds_the_demo_route
+  def test_config_load_requires_jobs_after_persistence_and_the_app_gets_the_demo_route
     in_scaffold(jobs: true) do |dest|
-      config_ru = read(dest, "config.ru")
-
-      assert_includes config_ru, %(require_relative "config/persistence"\nrequire_relative "config/jobs"\n)
-      assert_includes config_ru, %(post("/jobs/hello"))
+      assert_includes read(dest, "config/load.rb"), %(require_relative "persistence"\nrequire_relative "jobs"\n)
+      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
     end
   end
 
-  def test_config_ru_requires_jobs_after_auth_and_mail
+  def test_config_load_requires_jobs_after_auth_and_mail
     in_scaffold(jobs: true, auth: true) do |dest|
-      assert_includes read(dest, "config.ru"),
-        %(require_relative "config/auth"\nrequire_relative "config/mail"\nrequire_relative "config/jobs"\n)
+      assert_includes read(dest, "config/load.rb"),
+        %(require_relative "auth"\nrequire_relative "mail"\nrequire_relative "jobs"\n)
     end
   end
 
-  def test_the_live_config_ru_gets_the_demo_route_too
+  def test_the_live_app_gets_the_demo_route_too
     in_scaffold(jobs: true, live: true) do |dest|
-      config_ru = read(dest, "config.ru")
-
-      assert_includes config_ru, %(post("/jobs/hello"))
-      assert_includes config_ru, %(require_relative "config/jobs")
+      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
+      assert_includes read(dest, "config/load.rb"), %(require_relative "jobs")
     end
   end
 
@@ -92,7 +89,7 @@ class ScaffoldJobsTest < Minitest::Test
 
       assert_includes setup, "bin/jobs"
       assert_includes setup, "/jobs/hello"
-      assert_includes setup, %(require_relative "../config/jobs")
+      assert_includes setup, %(require_relative "../config/load")
       assert_includes setup, "Monk::Jobs.drain!"
       assert_includes setup, "Monk::Jobs.clear!"
     end
@@ -108,13 +105,13 @@ class ScaffoldJobsTest < Minitest::Test
 
   def test_auth_and_jobs_write_the_send_login_link_job
     in_scaffold(jobs: true, auth: true) do |dest|
-      assert_equal template("jobs/jobs/send_login_link.rb"), read(dest, "jobs/send_login_link.rb")
+      assert_equal template("jobs/app/jobs/send_login_link.rb"), read(dest, "app/jobs/send_login_link.rb")
     end
   end
 
   def test_jobs_without_auth_write_no_send_login_link_job
     in_scaffold(jobs: true, mail: true) do |dest|
-      refute File.exist?(File.join(dest, "jobs/send_login_link.rb"))
+      refute File.exist?(File.join(dest, "app/jobs/send_login_link.rb"))
     end
   end
 
@@ -161,8 +158,8 @@ class ScaffoldJobsTest < Minitest::Test
   end
 
   # The generated pieces together, as the app's own tests would use them:
-  # config/jobs.rb (with config/persistence.rb under it) loaded, the
-  # generated migration applied, the demo job enqueued and drained.
+  # config/load.rb loaded (config/jobs.rb, then app/jobs/), the generated
+  # migration applied, the demo job enqueued and drained.
   def test_the_generated_config_enqueues_and_drains_the_demo_job
     skip_unless_postgres_available
 
@@ -201,7 +198,46 @@ class ScaffoldJobsTest < Minitest::Test
     end
   end
 
+  # With --live, bin/jobs's config/load.rb also loads config/live.rb, so a
+  # job can push a Live update. It only publishes, so it never calls
+  # listen!: no LISTEN connection, only the jobs' own.
+  def test_the_generated_bin_jobs_of_a_live_app_runs_jobs_and_stops_on_term
+    skip_unless_postgres_available
+
+    in_scaffold(jobs: true, live: true, postgres: true) do |dest|
+      with_generated_app(dest) do
+        HelloJob.enqueue("Cleo")
+        listeners_before = live_listener_count
+        pid = Process.spawn(generated_app_env, RbConfig.ruby, "-W0", "bin/jobs", chdir: dest, out: File::NULL)
+
+        begin
+          wait_until { count_rows(:primary, "monk_jobs").zero? }
+          assert_equal listeners_before, live_listener_count, "bin/jobs mustn't LISTEN"
+        ensure
+          Process.kill("TERM", pid)
+          _, status = Process.wait2(pid)
+        end
+
+        assert_predicate status, :success?
+        assert_includes File.read(File.join(dest, "log/test.log")), "Hello, Cleo, from a background job"
+      end
+    end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
+  end
+
   private
+
+  # Backends whose last statement was PgFanout's LISTEN (as in
+  # test/websocket_pg_fanout_test.rb).
+  def live_listener_count
+    Monk::Persistence::Pg.checkout(:primary) do |conn|
+      conn.exec_params(
+        "SELECT count(*) FROM pg_stat_activity WHERE query = $1 AND datname = current_database()",
+        ["LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}"],
+      ).getvalue(0, 0).to_i
+    end
+  end
 
   def in_scaffold(**flags)
     Dir.mktmpdir do |tmp|
@@ -211,8 +247,9 @@ class ScaffoldJobsTest < Minitest::Test
     end
   end
 
-  # Loads the generated config against the test database, with the
-  # generated migration applied, and cleans both up afterwards.
+  # Loads the generated app's config/load.rb against the test database --
+  # the configs, then app/ -- with the generated migration applied, and
+  # cleans both up afterwards.
   def with_generated_app(dest)
     with_log do |log_dir|
       @log_dir = log_dir
@@ -220,10 +257,8 @@ class ScaffoldJobsTest < Minitest::Test
         with_env_vars(generated_app_env) do
           Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
           Monk::Jobs.reset! if defined?(Monk::Jobs)
-          require File.join(dest, "config/settings")
-          load File.join(dest, "config/persistence.rb")
+          require File.join(dest, "config/load")
           Monk::Persistence::Pg.checkout(:primary) { |conn| drop_jobs_tables(conn) }
-          load File.join(dest, "config/jobs.rb")
           Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.join(dest, "db/migrate")).migrate!
           yield
         ensure
@@ -237,8 +272,8 @@ class ScaffoldJobsTest < Minitest::Test
     Monk::Views.reset!
   end
 
-  # The same, for an --auth --jobs app: settings, mail (log://), auth, then
-  # jobs, config.ru's order, with both generated migrations applied.
+  # The same, for an --auth --jobs app (mail on log://), with both
+  # generated migrations applied.
   def with_generated_auth_app(dest)
     with_log do |log_dir|
       @log_dir = log_dir
@@ -246,17 +281,13 @@ class ScaffoldJobsTest < Minitest::Test
         with_env_vars(generated_app_env.merge("AUTH_SECRET" => "s3cr3t", "MAIL_URL" => "log://")) do
           Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
           Monk::Jobs.reset! if defined?(Monk::Jobs)
-          require File.join(dest, "config/settings")
-          load File.join(dest, "config/mail.rb")
-          load File.join(dest, "config/persistence.rb")
+          require File.join(dest, "config/load")
           Monk::Persistence::Pg.checkout(:primary) do |conn|
             drop_jobs_tables(conn)
             drop_auth_tables(conn)
           end
-          load File.join(dest, "config/auth.rb")
-          load File.join(dest, "config/jobs.rb")
           Monk::Views.reset!
-          Monk::Views.root = File.join(dest, "views") # as the generated bin/jobs does
+          Monk::Views.root = File.join(dest, "app/views") # as the generated bin/jobs does
           Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.join(dest, "db/migrate")).migrate!
           yield
         ensure

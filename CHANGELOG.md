@@ -4,6 +4,83 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.19.0 - 2026-10-01
+
+### Fixed
+
+- `Monk::WebSocket::Server#run` stops on `TERM` as it does on Ctrl-C: it
+  stops accepting and returns, so `bin/websocket_server` exits 0 on
+  `docker stop` and deploys instead of being ended by the signal (exit
+  143). Open sockets are still dropped without a close frame; see
+  `docs/guides/websocket.md`, "Stopping and restarting", which also warns
+  what other clients have to handle.
+- `monk_live.js` jitters its reconnect delay (50%–150% of the backoff), so
+  the pages that lose their socket together on a WebSocket restart don't
+  all reconnect and refetch at once. An existing app has a copy of the
+  client in `public/js/monk_live/`: copy `lib/monk/live/client/` over it
+  again to get this.
+
+### Added
+
+- `Monk::WebSocket::Server.new(authenticate: :optional)`: a connection
+  with a valid session gets its subject, and one without (none, revoked or
+  expired) comes in anonymous instead of getting a `401`. The handler
+  decides what an anonymous connection may do; under `Monk::Live`, the
+  topic rules (`anonymous: true`). The `Origin` check covers cookies, as
+  under `true`, and anonymous connections that send an `Origin`.
+  `reverify_interval:` works with it, for connections that have a session.
+  `monk new --auth --live`'s `bin/websocket_server` uses it, so the demo
+  updates for visitors too, and SETUP.md explains who gets which topics.
+  The plain chat `bin/websocket_server` keeps `true`. See
+  `docs/design/websocket.md`, "Anonymous connections".
+
+### Changed
+
+- `monk new` lays the app out under `app/`, by role (ADR 0015):
+  `app/app.rb` holds `class App` and its routes, templates are in
+  `app/views/`, and every role directory is created with a `.keep`:
+  `app/models`, `presenters`, `helpers`, `mailers`, `broadcasts`, `jobs`.
+  `config.ru` is the same three lines for every flag set, and the new
+  `config/load.rb` requires the settings and each enabled module's config,
+  then loads `app/` by role. It never boots the app. `bin/jobs`,
+  `bin/console` and the generated test helper require it too. `--auth`'s
+  magic-link sender moves from `config/auth.rb` to
+  `app/mailers/app_mailer.rb` and is renamed `AppMailer::MAGIC_LINK`;
+  `config/auth.rb` requires that file itself. `config/jobs.rb` no longer
+  loads the job classes. The generated SETUP.md's test helper loads and
+  boots the app, with a sample request test. `docs/guides/scaffolding.md`,
+  "Where code goes", says what goes in each directory.
+  **An 0.18 app keeps working as it is.** To move it to the new layout:
+  1. `git mv views app/views` and `git mv jobs app/jobs`; create the other
+     role directories you want.
+  2. Move `class App` and its routes from `config.ru` into `app/app.rb`,
+     and change `views "views"` to `views "app/views"`.
+  3. Create `config/load.rb`: the `require_relative` lines `config.ru` had
+     for `config/*` (without the `config/` prefix), then the loop over
+     `app/` roles from a freshly generated one. Make `config.ru`
+     `require_relative "config/load"`, `require_relative "app/app"`,
+     `run Monk.boot(App)`.
+  4. Remove the `Dir[...]` loop from `config/jobs.rb`. In `bin/jobs`,
+     replace its config requires with `require_relative "../config/load"`
+     and point `Monk::Views.root` at `../app/views`. Do the same in
+     `bin/console`.
+  5. Optional: move `AppMailer` from `config/auth.rb` into
+     `app/mailers/app_mailer.rb` and `require_relative` it from
+     `config/auth.rb`.
+- **Breaking:** `Monk::WebSocket::RedisFanout` and `PgFanout` no longer
+  subscribe when built. The process that holds sockets calls `#listen!`
+  once at boot: `Monk::Live.listen!`, or `REGISTRY.listen!` for plain
+  `Monk::WebSocket`. Publish-only processes (`bin/server`, `bin/jobs`,
+  `bin/console`) then hold no idle subscriber connection. `#listen!`
+  returns once the subscription is in effect and raises
+  `Monk::WebSocket::ListenError` if Redis or Postgres can't be reached.
+  `#register` before `#listen!` raises
+  `Monk::WebSocket::NotListeningError`. `Registry#listen!` is a no-op, so
+  the same line works with either. The scaffolded `bin/websocket_server`
+  calls it. **To upgrade**, add `Monk::Live.listen!` (or
+  `REGISTRY.listen!`) to your `bin/websocket_server` before
+  `server.run`. See `docs/design/websocket.md`, "Who listens".
+
 ## 0.18.0 - 2026-09-29
 
 ### Added

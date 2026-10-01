@@ -45,12 +45,12 @@ module LiveMultiprocessHelpersPg
     nil
   end
 
-  # A publisher in this process, the way an HTTP app would hold one.
+  # A publisher in this process, the way an HTTP app would hold one: it
+  # never calls #listen!, so it publishes without subscribing.
   def build_publisher
     @registry = Monk::WebSocket::Registry.new
     @fanout = Monk::WebSocket::PgFanout.new(@registry, pg_opts: pg_test_opts)
     @publisher = Monk::Live::Publisher.new(@fanout)
-    sleep 0.3 # this process's own subscriber, as in websocket_pg_fanout_test.rb
   end
 
   def unique_topic

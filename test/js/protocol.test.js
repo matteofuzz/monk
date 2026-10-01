@@ -1,9 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  INITIAL_DELAY, MAX_DELAY, nextDelay, topicsFrom, diffTopics,
+  INITIAL_DELAY, MAX_DELAY, nextDelay, jittered, topicsFrom, diffTopics,
   subscribeMessage, unsubscribeMessage, parseMessage, checkSeq, resyncVerdict,
 } from "../../lib/monk/live/client/protocol.js";
+
+// Every browser reconnects when the WS process restarts; without jitter they
+// would all come back, and all refetch their page, at the same instant.
+test("jittered spreads a delay over 50%..150% of it", () => {
+  assert.equal(jittered(1000, () => 0), 500);
+  assert.equal(jittered(1000, () => 0.5), 1000);
+  assert.ok(jittered(1000, () => 0.9999) < 1500);
+  for (let i = 0; i < 100; i++) {
+    const d = jittered(INITIAL_DELAY);
+    assert.ok(d >= 250 && d < 750, `out of range: ${d}`);
+  }
+});
 
 test("nextDelay doubles from the initial delay and caps at 30s", () => {
   assert.equal(INITIAL_DELAY, 500);

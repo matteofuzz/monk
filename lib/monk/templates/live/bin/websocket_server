@@ -13,11 +13,23 @@ end
 
 # Monk::Live: the browsers' sockets end here. The handler takes their
 # subscribe/unsubscribe messages, checks each topic against the rules in
-# config/live.rb, and relays whatever config.ru's process publishes over
+# config/live.rb, and relays whatever bin/server's process publishes over
 # Redis.
 require_relative "../config/live"
 
-authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
+# This process holds the browsers' sockets, so it's the only one that
+# listens for updates published elsewhere (bin/server, bin/jobs): the
+# fanout's subscriber connection is opened here, at boot, and an
+# unreachable Redis/Postgres fails right here.
+Monk::Live.listen!
+
+# With Monk::Auth (--auth), a socket with a valid session gets its user,
+# and one without -- a visitor, or a session since revoked -- comes in
+# anonymous instead of refused. The rules in config/live.rb decide what
+# each may subscribe to: a topic is open to visitors only if its rule says
+# `anonymous: true`, like the demo's "hits". Without Monk::Auth every
+# socket is anonymous.
+authenticate = defined?(Monk::Auth) && Monk::Auth.config ? :optional : false
 port = ENV.fetch("WS_PORT", "9293").to_i
 # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
 # keeps this in sync with the app's actual origin instead of two vars

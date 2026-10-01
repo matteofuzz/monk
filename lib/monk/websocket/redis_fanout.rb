@@ -1,5 +1,7 @@
 require "redis"
 require "securerandom"
+require_relative "errors"
+require_relative "listeners"
 
 module Monk
   module WebSocket
@@ -9,7 +11,7 @@ module Monk
     # LISTEN/NOTIFY per docs/design/websocket.md Open Question 3).
     #
     # Wraps a Registry with the same public interface (#register,
-    # #unregister, #count, #broadcast), so an app swaps which object it
+    # #unregister, #count, #broadcast, #listen!), so an app swaps which object it
     # holds and nothing else changes. #broadcast still delivers to this
     # process's local Registry directly -- same latency and reliability as
     # a plain Registry if Redis is briefly unavailable -- and additionally
@@ -41,13 +43,43 @@ module Monk
         @redis_url = redis_url.dup.freeze
         @origin = SecureRandom.uuid.freeze
 
+        # No live connection lives on this object -- #listen! runs its
+        # subscriber in a Ractor of its own, and #publisher below opens one
+        # client per Ractor, lazily -- so there's nothing left unshareable
+        # and this instance can freeze itself the same way Registry does.
+        # That matters for real use: an app holds this behind a module
+        # constant (e.g. ChatServer::REGISTRY, mirroring Registry's own
+        # existing usage) read from every connection's own Ractor, which
+        # raises Ractor::IsolationError unless the constant's value is
+        # shareable.
+        freeze
+      end
+
+      # Starts relaying other processes' broadcasts into this process's
+      # registry: a subscriber Ractor with its own Redis connection. Only
+      # the process that holds sockets calls this (bin/websocket_server, at
+      # boot, from the main Ractor) -- a publish-only process (bin/server,
+      # bin/jobs) never does, so it holds no subscriber connection at all.
+      # Returns once the psubscribe is in effect, so nothing broadcast
+      # after it can be missed; raises ListenError if Redis can't be
+      # reached. Calling it again is a no-op.
+      def listen!
+        return self if Listeners.listening?(@origin)
+
+        ready = Ractor::Port.new
         # Ractor.new's block args must be shareable: registry is (Registry
         # freezes itself around a Ractor, which is inherently shareable),
-        # redis_url and @origin are plain frozen Strings. The Redis client
-        # itself is built inside the block, never passed in -- mirrors
-        # PG::Connection's per-Ractor pattern (persistence/pg.rb).
-        @subscriber = Ractor.new(registry, @redis_url, @origin) do |registry, url, origin|
+        # the URL and origin are frozen Strings, a Port always is. The
+        # Redis client itself is built inside the block, never passed in --
+        # mirrors PG::Connection's per-Ractor pattern (persistence/pg.rb).
+        Ractor.new(@registry, @redis_url, @origin, ready) do |registry, url, origin, ready|
+          subscribed = false
           Redis.new(url: url).psubscribe("#{Monk::WebSocket::RedisFanout::CHANNEL_PREFIX}*") do |on|
+            on.psubscribe do
+              subscribed = true
+              ready.send(:ok)
+            end
+
             on.pmessage do |_pattern, channel, envelope|
               sender, payload = envelope.split("\0", 2)
               next if sender == origin
@@ -66,19 +98,30 @@ module Monk
               registry.broadcast(key, payload)
             end
           end
+        rescue StandardError => e
+          raise if subscribed
+
+          ready.send("#{e.class}: #{e.message}")
         end
 
-        # No live connection lives on this object -- #publisher below opens
-        # one per Ractor, lazily -- so there's nothing left unshareable and
-        # this instance can freeze itself the same way Registry does. That
-        # matters for real use: an app holds this behind a module constant
-        # (e.g. ChatServer::REGISTRY, mirroring Registry's own existing
-        # usage) read from every connection's own Ractor, which raises
-        # Ractor::IsolationError unless the constant's value is shareable.
-        freeze
+        result = ready.receive
+        raise ListenError, "Monk::WebSocket::RedisFanout#listen! couldn't subscribe: #{result}" unless result == :ok
+
+        Listeners.add(@origin)
+        self
       end
 
-      def register(key, port) = @registry.register(key, port)
+      def register(key, port)
+        unless Listeners.listening?(@origin)
+          raise NotListeningError,
+            "Monk::WebSocket::RedisFanout#register before #listen!: this socket would never get " \
+            "other processes' broadcasts -- call listen! once at boot in the process that holds " \
+            "sockets (bin/websocket_server: Monk::Live.listen!)"
+        end
+
+        @registry.register(key, port)
+      end
+
       def unregister(key, port) = @registry.unregister(key, port)
       def count(key) = @registry.count(key)
 

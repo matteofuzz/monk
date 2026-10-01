@@ -1,10 +1,10 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase at v0.18.0 (LOC recomputed for this version: it adds `Monk::Jobs`, background jobs on Postgres, `Monk::Mail.deliver_later` and `monk new --jobs`). LOC is `wc -l` of every `.rb` file under `lib/` except the `monk new` templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at v0.19.0 (LOC recomputed for this version: it adds the `app/`-by-role layout to `monk new`, `#listen!` on the WebSocket fanouts, `authenticate: :optional` and a clean stop on `TERM`). LOC is `wc -l` of every `.rb` file under `lib/` except the `monk new` templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
-- **Monk**: 6,506 lines of Ruby across 59 files (`lib/monk.rb` plus `lib/monk`, excluding the
+- **Monk**: 6,769 lines of Ruby across 60 files (`lib/monk.rb` plus `lib/monk`, excluding the
   `monk new` scaffold templates) — routing, context, ERB views/layouts,
   a boot-time static-asset manifest, settings/env tiers, auth
   (sessions/tokens/cookies/CSRF/rate-limiting), Postgres persistence + model +
@@ -18,7 +18,7 @@ Complexity and weight comparison, based on the codebase at v0.18.0 (LOC recomput
   vendored, minified idiomorph) for server-rendered live page updates.
   Runtime dependencies: `rack` and `base64` only; `pg`, `redis`, `rqrcode` and
   `net-smtp` are opt-in per app (dev-only for Monk itself), and `kino` is only in the
-  repo's `Gemfile` for the demo app. 12,170 lines of tests.
+  repo's `Gemfile` for the demo app. 12,699 lines of tests.
 - **Sinatra**: core is comparable in size (~2,000 lines), but ships as a
   thin routing DSL only — everything else (sessions/CSRF protection,
   persistence, websockets, live updates, email, background jobs) is a
@@ -38,32 +38,34 @@ that covers each module.
 
 | Module | Files | LOC | Test LOC | What it holds |
 |---|---|---|---|---|
+| WebSocket | 10 | 1,190 | 1,854 | handshake, frames, connection (226), server incl. `authenticate: :optional` and stop on `TERM` (294), registry, Redis fan-out (146), Postgres fan-out (209), which fanouts listen |
+| Scaffold (`monk new`) | 1 | 1,061 | 1,677 (incl. `exe/monk`) | generator for base/auth/mail/postgres/redis/live/jobs apps on the `app/`-by-role layout with `config/load.rb`, Dockerfile, the resolved-flags summary |
 | Jobs | 8 | 1,030 | 1,823 (incl. child job processes) | Postgres adapter (272), runtime/supervisor (239), configure/enqueue/registry/`drain!` (229), `Monk::Job` and its settings (117), worker loop (94), argument check (43), errors, claim value |
-| WebSocket | 9 | 1,012 | 1,595 | handshake, frames, connection (226), server (234), registry, Redis fan-out (103), Postgres fan-out (174) |
-| Scaffold (`monk new`) | 1 | 986 | 1,397 (incl. `exe/monk`) | generator for base/auth/mail/postgres/redis/live/jobs apps, Dockerfile, the resolved-flags summary |
 | Core | 10 | 894 | 1,596 (core + shared helpers) | `Monk::Base` routing/dispatch (323), settings (151), logging (130), context, environment, errors, `StateRactor`, freeze hooks |
 | Mail | 8 | 631 | 1,320 (incl. a fake SMTP server) | MIME builder (124), configure/deliver/render (121), SMTP and log transports (115), `MAIL_URL` parsing (76), message value (66), `deliver_later` and its job (53), address handling (41) |
 | Persistence | 7 | 617 | 875 | Postgres model (233), migrator (165), connection/boot layer incl. a `json`/`jsonb` decoder |
-| Live | 8 | 495 | 1,940 | publisher, session, policy, renderer, envelope, `live_topic` helper |
+| Live | 8 | 505 | 1,930 | publisher, session, policy, renderer, envelope, `live_topic` helper, `listen!` |
 | Auth | 6 | 458 | 1,065 | sessions, tokens, cookies, CSRF, rate limiter, link delivery, helpers |
 | Assets | 1 | 197 | 206 | boot-time static-asset manifest |
 | Views | 1 | 186 | 353 | ERB views/layouts/partials |
-| **Total** | **59** | **6,506** | **12,170** | |
+| **Total** | **60** | **6,769** | **12,699** | |
 
 Not counted above: the Live browser runtime (`monk_live.js` 204,
-`protocol.js` 87, vendored minified idiomorph) and the JS tests under
+`protocol.js` 92, vendored minified idiomorph) and the JS tests under
 `test/js`.
 
-Live has the highest test-to-code ratio (about 3.9:1) because it is covered
+Live has the highest test-to-code ratio (about 3.8:1) because it is covered
 by real-browser and multi-process tests, run against both fan-out
-transports. Jobs is now the largest module, just ahead of WebSocket. Most of
-it is the Postgres adapter's SQL (one statement per operation, so a job's
+transports. WebSocket is now the largest module, ahead of the scaffold and
+Jobs: 0.19 added `#listen!` (only the process holding sockets listens),
+anonymous connections under `authenticate: :optional`, and a clean stop on
+`TERM`. Most of Jobs is the Postgres adapter's SQL (one statement per operation, so a job's
 state never needs a multi-statement transaction) and the supervisor's
 crash recovery: respawning dead worker Ractors, releasing the job a dead
 worker held, and reconnecting after a database restart. Its tests (about
 1.8:1) run real child job processes, stopped with `TERM` and `kill -9`,
 and kill their database connections mid-run. The scaffold is the largest
-single file (986) but is tooling, not runtime. Mail is about 2:1: every
+single file (1,061) but is tooling, not runtime. Mail is about 2:1: every
 SMTP test sends from a real worker Ractor to a fake SMTP server, over plain
 connections, STARTTLS and implicit TLS.
 
@@ -71,7 +73,7 @@ connections, STARTTLS and implicit TLS.
 
 | | Sinatra | Monk | Rails |
 |---|---|---|---|
-| Core LOC | ~2,000 (comparable) | ~6,500 (+ ~300 JS) | hundreds of thousands across railties/AP/AR/AS/etc. |
+| Core LOC | ~2,000 (comparable) | ~6,800 (+ ~300 JS) | hundreds of thousands across railties/AP/AR/AS/etc. |
 | Runtime deps | rack, rack-protection, tilt, mustermann | rack, base64 | ~10 first-party gems, each with their own tree (~30+ total) |
 | Feature scope | routing + DSL only — everything else is a gem you bolt on | routing, views/layouts, static assets, settings/env, auth, Postgres ORM + migrator, websockets incl. Redis or Postgres fan-out, live HTML patching, text/HTML email over SMTP, background jobs on Postgres — all built-in and opinionated (ERB only, Postgres only, one auth scheme) | routing, ORM (multi-DB), views (multi-engine), jobs, mailers, cable, storage, text, i18n, asset pipeline — pluggable at every layer |
 | Concurrency model | none prescribed — thread-safety is your problem | Ractor-safety is load-bearing: routes/handlers are statically checked to be `Ractor.shareable?` at boot | threads/processes; no Ractor-native design |
@@ -86,7 +88,7 @@ Monk carries meaningfully more feature scope than Sinatra ships with while
 staying more than an order of magnitude under Rails, achieved by narrowing choices
 rather than adding abstraction: one template engine, one database, one auth
 pattern, one server-concurrency model. That's the opposite of Rails'
-strategy (breadth via pluggability), which is why Monk stays around 6,500
+strategy (breadth via pluggability), which is why Monk stays around 6,800
 lines of Ruby while doing things Sinatra needs `sinatra-contrib` + `warden` +
 `sequel`/`activerecord` + `faye-websocket` + `mail` + `sidekiq` (and Redis)
 (plus a hand-rolled Redis or Postgres fan-out for cross-process broadcast,

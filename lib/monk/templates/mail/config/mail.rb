@@ -2,8 +2,8 @@ require "monk"
 require "monk/mail"
 
 # Sends email with Monk::Mail.deliver(to:, subject:, text:, html:) from
-# any route -- and, with --auth, the magic links config/auth.rb's AppMailer
-# delivers. See docs/guides/mail.md. Required from config.ru (not from
+# any route -- and, with --auth, the magic links AppMailer::MAGIC_LINK
+# (app/mailers/app_mailer.rb) delivers. See docs/guides/mail.md. Required from config/load.rb (not from
 # config/auth.rb: bin/websocket_server loads that too, and never sends mail).
 Monk::Settings.configure do
   # Where mail goes. Unset in development means log:// (printed to the

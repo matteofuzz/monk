@@ -306,6 +306,130 @@ multi-message session.
    way `docs/guides/deploying.md` does for Render/Fly today? Leaning: document,
    not generate — consistent with the existing posture, and proxy config
    varies more by host than the Ruby side of this feature does.
+5. **Should stopping the server close sockets gracefully?** Open since
+   0.19: see "Stopping the server" below. Today a restart drops every open
+   socket without a close frame; Monk's own client doesn't need more.
+   Revisit if Monk supports other clients, or long drain windows behind a
+   load balancer.
+
+## Who listens (0.19)
+
+Until 0.18, building a `RedisFanout` or `PgFanout` started its subscriber
+Ractor and connection straight away. Every process that loaded
+`config/live.rb` listened: the WebSocket process, which needs to, but also
+`bin/server` and, once it loaded the app's config (ADR 0015), `bin/jobs`
+and `bin/console`. Each of those held an idle Redis subscription or
+Postgres `LISTEN` connection and a Ractor that received every update and
+dropped it, having no sockets.
+
+Since 0.19 a fanout listens only once `#listen!` is called, and only the
+process that holds sockets calls it: `Monk::Live.listen!` (or
+`REGISTRY.listen!` for plain `Monk::WebSocket`) in `bin/websocket_server`,
+at boot, from the main Ractor.
+
+- **`#listen!` returns once the subscription is in effect.** The subscriber
+  Ractor reports back through a `Ractor::Port` after `psubscribe` is
+  confirmed or `LISTEN` has run, so nothing broadcast after `#listen!`
+  can be missed. The old fixed waits in tests went away with it.
+- **An unreachable Redis or Postgres fails at boot.** `#listen!` raises
+  `Monk::WebSocket::ListenError`, where before the subscriber Ractor died
+  silently in the background.
+- **Forgetting it is loud.** `#register` on a fanout that isn't listening
+  raises `Monk::WebSocket::NotListeningError`, since that socket would never
+  get another process's broadcasts.
+- **The fanout stays frozen.** It can't record that it's listening on
+  itself, so `Monk::WebSocket::Listeners` keeps the origin ids of listening
+  fanouts in a frozen list in a module ivar: written from the main Ractor
+  in `#listen!`, read from any Ractor in `#register`.
+- **`Registry#listen!` is a no-op**, so a WebSocket process calls it the
+  same way whether it holds a `Registry` or a fanout.
+
+We considered starting the subscriber automatically on the first
+`#register`, through a small gate Ractor. It needs no line in the app, but
+adds a Ractor and a round trip per subscription, hides when a process starts
+listening, and moves a connection failure from boot to the first
+subscription. With a single app on Monk, an explicit call at boot was the
+simpler choice.
+
+## Anonymous connections (0.19)
+
+`authenticate:` was `false` (no identity) or `true` (a valid session, or
+`401`). An app with `Monk::Auth` and `Monk::Live` had to pick one for every
+page: with `true`, a visitor's socket was refused at the handshake, so a
+topic whose rule said `anonymous: true` could never reach one, and the
+scaffolded `--auth --live` demo didn't update until the user logged in
+(and `monk new` writes no login routes). The rules already had the right
+model (ADR 0009: deny by default, opt a topic into anonymous subscribers);
+the server's door was deciding first.
+
+`authenticate: :optional` lets the rules decide. A connection with a valid
+session gets its subject; one without comes in with subject `nil`.
+
+- **An invalid session is anonymous, not refused.** A browser that still
+  holds the cookie of a session revoked elsewhere keeps the public topics,
+  and the rules deny the private ones. Refusing it would cut the public
+  updates too, and its client would retry forever.
+- **The Origin check covers anonymous browsers too.** As under `true`, a
+  cookie needs an allowed `Origin`. An anonymous connection that sends an
+  `Origin` needs an allowed one as well: only browsers send it, so another
+  site's page can't open sockets here for its visitors. A client that
+  sends none still connects; Bearer stays exempt.
+- **`reverify_interval:` applies only to connections with a session.**
+- **The scaffold uses it for `--live` only.** The `--live`
+  `bin/websocket_server` picks `:optional` when `Monk::Auth` is configured.
+  The plain chat server stays `true`: its handler has no rules, so
+  anonymous would mean anyone may post.
+- **The cost:** anyone can open anonymous sockets, a Ractor each. An app
+  whose live pages are all private keeps `true`.
+
+## Stopping the server (0.19)
+
+`docker stop`, Kubernetes, Fly, Render and systemd stop a process with
+`TERM`, on every deploy and restart. Until 0.18, `Server#run` rescued only
+`Interrupt` (Ctrl-C): `TERM` ended the process by the signal (exit 143,
+which reads as a crash), while `bin/server` and `bin/jobs` exit 0 on it.
+
+Since 0.19 `#run` treats `TERM` like Ctrl-C: it closes the listening
+socket and returns, and the script ends with exit 0.
+
+**What it still doesn't do: close open sockets gracefully.** When the
+process exits, each connection Ractor dies with it and the OS closes its
+socket. A client sees the connection drop with no close frame (code
+`1006`, "abnormal closure"), exactly as for a crash or a network blip. We
+looked at two further steps and didn't take them:
+
+- **Sending each open socket a close frame ("going away", `1001`)
+  before exiting.** Each socket was moved into its own Ractor, which sits
+  blocked reading it, so the main Ractor can't reach it. Every connection
+  would need a channel it also listens on, plus shutdown ordering and
+  tests. The gain is a close code a client can tell apart from a crash.
+- **Waiting for connections to finish (drain), as HTTP servers do.** A
+  WebSocket stays open until the user leaves the page, so the wait would
+  always run to its timeout. Only useful together with close frames that
+  tell clients to go elsewhere.
+
+`monk_live.js` gains nothing from either: it treats every close the same
+way, reconnecting with backoff and refetching the page to resync (ADR
+0011), so nothing published during the restart is lost. This is an open
+question (5, above) for other clients.
+
+**The reconnect herd.** Every open page loses its socket at the same moment
+and, on reconnect, refetches its page from `bin/server`. With a fixed
+backoff they would all do it together: a thousand tabs, a thousand page
+requests within a second of each deploy. Since 0.19 `monk_live.js` waits a
+random 50%–150% of its backoff delay (`jittered` in `protocol.js`), which
+spreads reconnects and resyncs over the first second or two.
+
+**For any other client** (a native app, a script, another JS client)
+the server promises only this, on a restart:
+
+- The socket can close at any moment without a close frame. Don't rely on
+  a close code to tell a restart from a failure.
+- Reconnect with backoff **and jitter**, or every copy of your client will
+  hit the server at once.
+- Anything published while you were disconnected is lost: there's no
+  replay. Refetch the state you show after reconnecting, as `monk_live.js`
+  does.
 
 ## Explicitly out of scope (for this doc)
 

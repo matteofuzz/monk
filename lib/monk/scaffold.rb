@@ -10,18 +10,26 @@ module Monk
   class Scaffold
     TEMPLATES_DIR = File.expand_path("templates", __dir__)
 
+    # The role directories under app/, in config/load.rb's load order.
+    APP_ROLES = %w[models presenters helpers mailers broadcasts jobs].freeze
+
     BASE_FILES = {
       "Gemfile" => "base/Gemfile",
       "config.ru" => "base/config.ru",
       "config/settings.rb" => "base/config/settings.rb",
+      "config/load.rb" => "base/config/load.rb",
+      "app/app.rb" => "base/app/app.rb",
       ".ruby-version" => "base/.ruby-version",
       ".gitignore" => "base/.gitignore",
       ".dockerignore" => "base/.dockerignore",
       "Dockerfile" => "base/Dockerfile",
       "bin/server" => "base/bin/server",
       "bin/websocket_server" => "base/bin/websocket_server",
-      "views/layouts/app.erb" => "base/views/layouts/app.erb",
-      "views/index.erb" => "base/views/index.erb",
+      "app/views/layouts/app.erb" => "base/app/views/layouts/app.erb",
+      "app/views/index.erb" => "base/app/views/index.erb",
+      # Every role directory, whatever the flags (docs/adr/0015): the tree
+      # shows where each kind of code goes. Flags add files next to these.
+      **APP_ROLES.to_h { |role| ["app/#{role}/.keep", "base/app/#{role}/.keep"] },
       "public/css/app.css" => "base/public/css/app.css",
       "public/js/app.js" => "base/public/js/app.js",
     }.freeze
@@ -45,9 +53,11 @@ module Monk
       "config/auth.rb" => "auth/config/auth.rb",
       "db/migrate/00000000000001_create_auth_tables.up.sql" => "auth/db/migrate/00000000000001_create_auth_tables.up.sql",
       "db/migrate/00000000000001_create_auth_tables.down.sql" => "auth/db/migrate/00000000000001_create_auth_tables.down.sql",
-      # The magic link's HTML part -- config/auth.rb's AppMailer::DELIVER
-      # renders it and sends through Monk::Mail (MAIL_FILES, implied by --auth).
-      "views/mail/magic_link.erb" => "auth/views/mail/magic_link.erb",
+      # The magic link's sender, Monk::Auth's deliver: hook -- config/auth.rb
+      # requires it -- and the HTML part it renders and sends through
+      # Monk::Mail (MAIL_FILES, implied by --auth).
+      "app/mailers/app_mailer.rb" => "auth/app/mailers/app_mailer.rb",
+      "app/views/mail/magic_link.erb" => "auth/app/views/mail/magic_link.erb",
     }.freeze
 
     # --mail, or implied by --auth: Monk::Mail's config. Its Gemfile line
@@ -61,7 +71,7 @@ module Monk
     # numbered after auth's so the two sort in order when both are present.
     JOBS_FILES = {
       "config/jobs.rb" => "jobs/config/jobs.rb",
-      "jobs/hello_job.rb" => "jobs/jobs/hello_job.rb",
+      "app/jobs/hello_job.rb" => "jobs/app/jobs/hello_job.rb",
       "bin/jobs" => "jobs/bin/jobs",
       "db/migrate/00000000000002_create_jobs_tables.up.sql" => "jobs/db/migrate/00000000000002_create_jobs_tables.up.sql",
       "db/migrate/00000000000002_create_jobs_tables.down.sql" =>
@@ -71,7 +81,7 @@ module Monk
     # --auth --jobs: the magic link is created and sent inside a job, so the
     # raw token is never stored (docs/adr/0014).
     JOBS_AUTH_FILES = {
-      "jobs/send_login_link.rb" => "jobs/jobs/send_login_link.rb",
+      "app/jobs/send_login_link.rb" => "jobs/app/jobs/send_login_link.rb",
     }.freeze
 
     # --mail --jobs (or --auth --jobs): Monk::Mail.deliver_later, loaded in
@@ -79,34 +89,34 @@ module Monk
     JOBS_REQUIRE_ANCHOR = %(require "monk/jobs"\n).freeze
     JOBS_MAIL_REQUIRE = %(require "monk/mail/later"\n).freeze
 
-    # --jobs's demo route, added right after this line in config.ru (the
+    # --jobs's demo route, added right after this line in app/app.rb (the
     # base and the --live one both end their routes with it), so the
     # round trip -- enqueue from a request, run in bin/jobs -- works out of
     # the box.
     JOBS_ROUTE_ANCHOR = %(  get("/api/hello") { json(message: "hello from monk") }\n).freeze
     JOBS_ROUTE = <<~RUBY.gsub(/^(?!$)/, "  ").freeze
 
-      # Enqueues the demo job (jobs/hello_job.rb) for bin/jobs to run:
+      # Enqueues the demo job (app/jobs/hello_job.rb) for bin/jobs to run:
       #   curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
       post("/jobs/hello") { json(enqueued: HelloJob.enqueue(params[:name] || "world")) }
     RUBY
 
     # --live: Monk::Live's demo (a counter whose open tabs update when
     # another request changes it). These replace three base files outright
-    # rather than patching them -- a live config.ru and index are different
-    # files, not one line of diff -- and add two. config.ru's first line stays
-    # the settings require, so --postgres/--auth wiring still finds it.
+    # rather than patching them -- a live app and index are different
+    # files, not one line of diff -- and add two. config.ru stays the base
+    # one: config/load.rb is where --live's config gets wired in.
     LIVE_OVERRIDES = {
-      "config.ru" => "live/config.ru",
+      "app/app.rb" => "live/app/app.rb",
       "bin/websocket_server" => "live/bin/websocket_server",
-      "views/index.erb" => "live/views/index.erb",
+      "app/views/index.erb" => "live/app/views/index.erb",
     }.freeze
 
     # config/live.rb itself isn't here -- #write_live! picks between
     # LIVE_CONFIG_TEMPLATES[@live_transport] instead, since which one gets
     # written depends on --redis vs --postgres, not a fixed mapping.
     LIVE_FILES = {
-      "views/live/_hits.erb" => "live/views/live/_hits.erb",
+      "app/views/live/_hits.erb" => "live/app/views/live/_hits.erb",
     }.freeze
 
     LIVE_CONFIG_TEMPLATES = {
@@ -235,7 +245,7 @@ module Monk
         add_deliver_later! if @mail
       end
 
-      wire_config_ru! if @postgres || @mail
+      wire_load! if @postgres || @mail || @live
       append_gemfile_extra("redis/Gemfile.extra") if @redis
 
       # --postgres, --redis and --mail are the flags with anything worth
@@ -272,7 +282,7 @@ module Monk
 
     def combinations
       pairs = []
-      pairs << ["--auth + --jobs", "jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
+      pairs << ["--auth + --jobs", "app/jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
       if @mail && @jobs
         pairs << ["--mail + --jobs",
                   "config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first",]
@@ -307,7 +317,7 @@ module Monk
     end
 
     def add_live_to_layout!
-      path = File.join(@dir, "views/layouts/app.erb")
+      path = File.join(@dir, "app/views/layouts/app.erb")
       content = File.read(path)
       raise "layout wiring failed: </head> not found" unless content.include?("  </head>\n")
 
@@ -337,36 +347,37 @@ module Monk
       File.write(path, content.sub(DOTENV_COMMENTED_LINE, DOTENV_LINE))
     end
 
-    # config.ru ships in BASE_FILES unconditionally (it has to -- it's the
-    # only rackup entrypoint), so --postgres/--auth can't gate whether it
-    # exists, only what it requires. Unlike BASE_FILES/POSTGRES_FILES/
+    # config/load.rb ships in BASE_FILES unconditionally (config.ru and the
+    # tests require it), so the flags can't gate whether it exists, only
+    # which module configs it requires. Unlike BASE_FILES/POSTGRES_FILES/
     # AUTH_FILES, this is a post-write edit rather than a verbatim copy --
-    # the alternative (a second, fuller config.ru template per flag
-    # combination) would duplicate the whole file for one line of diff.
-    def wire_config_ru!
-      path = File.join(@dir, "config.ru")
-      settings_require = %(require_relative "config/settings"\n)
+    # the alternative (a second, fuller load.rb template per flag
+    # combination) would duplicate the whole file for a few lines of diff.
+    def wire_load!
+      path = File.join(@dir, "config/load.rb")
+      settings_require = %(require_relative "settings"\n)
       requires = +""
       if @postgres
-        target = @auth ? "config/auth" : "config/persistence" # config/auth.rb itself require_relative "persistence"
+        target = @auth ? "auth" : "persistence" # config/auth.rb itself require_relative "persistence"
         requires << "require_relative \"#{target}\"\n"
       end
-      # config/mail.rb from config.ru only, never from config/auth.rb:
+      # config/mail.rb from config/load.rb only, never from config/auth.rb:
       # bin/websocket_server loads config/auth.rb too and never sends mail,
       # so it shouldn't need MAIL_URL to boot.
-      requires << "require_relative \"config/mail\"\n" if @mail
-      requires << "require_relative \"config/jobs\"\n" if @jobs
+      requires << "require_relative \"mail\"\n" if @mail
+      requires << "require_relative \"jobs\"\n" if @jobs
+      requires << "require_relative \"live\"\n" if @live
 
       content = File.read(path)
-      raise "config.ru wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
+      raise "config/load.rb wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
 
       File.write(path, content.sub(settings_require, "#{settings_require}#{requires}"))
     end
 
     def add_jobs_route!
-      path = File.join(@dir, "config.ru")
+      path = File.join(@dir, "app/app.rb")
       content = File.read(path)
-      raise "config.ru wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
+      raise "app/app.rb wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
 
       File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
@@ -419,12 +430,16 @@ module Monk
         [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=#{queues}") }
       end
 
-      # REDIS_URL is deliberately absent from .env.test -- only a test that
-      # actually exercises RedisFanout needs it, unlike DB_NAME/AUTH_SECRET
-      # which every test touching persistence/auth needs.
+      # REDIS_URL is absent from .env.test for --redis alone -- only a test
+      # that actually exercises RedisFanout needs it. --live --redis is
+      # different: config/live.rb raises without it, and the test helper
+      # loads config/live.rb through config/load.rb. Building the fanout
+      # connects to nothing, so tests still need no Redis running unless
+      # one publishes.
       if @redis
         dev << "REDIS_URL=redis://localhost:6379/0"
         example << "REDIS_URL=redis://localhost:6379/0"
+        test << "REDIS_URL=redis://localhost:6379/0" if live_over_redis?
       end
 
       write_lines(".env", dev)
@@ -480,17 +495,21 @@ module Monk
 
         - `config/live.rb` -- the Redis wiring (`Monk::WebSocket::RedisFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
+        - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
+          only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
+          publish.
         - `public/js/monk_live/` -- the browser runtime, copied from the gem.
           The layout points at it and at `LIVE_WS_URL` (default
           `ws://localhost:9293`; use `wss://` in production).
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
+        #{live_auth_setup_paragraph}
       MARKDOWN
     end
 
@@ -517,18 +536,21 @@ module Monk
 
         - `config/live.rb` -- the Postgres wiring (`Monk::WebSocket::PgFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `config.ru` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
+        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
+        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
+        - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
+          only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
+          publish.
         - `public/js/monk_live/` -- the browser runtime, copied from the gem.
           The layout points at it and at `LIVE_WS_URL` (default
           `ws://localhost:9293`; use `wss://` in production).
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
-
+        #{live_auth_setup_paragraph}
         A single broadcast is capped at just under 8000 bytes
         (`Monk::WebSocket::PgFanout::MAX_NOTIFY_PAYLOAD_BYTES`, Postgres's own
         `NOTIFY` limit) -- far more than this demo ever sends, but worth
@@ -583,8 +605,7 @@ module Monk
 
         ENV["MONK_ENV"] ||= "test"
         #{base_test_dotenv_lines}
-        require "minitest/autorun"
-        require_relative "../config/settings"#{%(\nrequire_relative "../config/mail") if @mail}
+        #{test_helper_app_lines}
         ```
 
         **Rakefile**:
@@ -600,22 +621,7 @@ module Monk
         task default: :test
         ```
 
-        **test/settings_test.rb** -- `config.ru`'s `class App` lives inline in a
-        rackup file, not a plain `.rb` a test could `require_relative`, so this
-        starts with what's actually requirable standalone. Extract `App` into
-        its own file (`require_relative`d from both `config.ru` and
-        `test/test_helper.rb`) once there's real app behavior worth testing
-        against requests:
-
-        ```ruby
-        require_relative "test_helper"
-
-        class SettingsTest < Minitest::Test
-          def test_monk_env_reads_as_test
-            assert_equal "test", Monk::Settings[:monk_env]
-          end
-        end
-        ```
+        #{app_test_sample}
 
         Then:
 
@@ -656,8 +662,9 @@ module Monk
       <<~MARKDOWN
         # Setting up #{app_name} (dev, then test)
 
-        `config.ru`, `.env`, and `.env.test` are already wired up by `monk new`
-        -- `config.ru` requires `config/#{@auth ? "auth" : "persistence"}` before `class App`, and
+        `config/load.rb`, `.env`, and `.env.test` are already wired up by `monk new`
+        -- `config/load.rb` requires `config/#{@auth ? "auth" : "persistence"}` (and every other config
+        you enabled), then loads `app/`, and
         `.env`/`.env.test` are pre-filled with a database name derived from
         this project's directory (`#{app_name}_development` / `#{app_name}_test`), not the
         generic `app_development` fallback baked into `config/persistence.rb`
@@ -719,7 +726,7 @@ module Monk
         ```bash
         bin/server              # HTTP app on :9292
         bin/websocket_server    # WS chat process on :9293, in another terminal
-        #{"bin/jobs                # background jobs (jobs/), in a third terminal\n" if @jobs}```
+        #{"bin/jobs                # background jobs (app/jobs/), in a third terminal\n" if @jobs}```
         #{auth_or_redis_confirmation_note}#{mail_setup_note}#{jobs_setup_note}
         ## Test environment
 
@@ -755,7 +762,7 @@ module Monk
 
         **test/test_helper.rb** -- loads `.env.test` explicitly (not the default
         dotenv-in-`config/settings.rb` path, which only loads plain `.env`), then
-        wires up the app config the same way `config.ru` does:
+        loads and boots the app the same way `config.ru` does:
 
         ```ruby
         $LOAD_PATH.unshift(File.expand_path("..", __dir__))
@@ -765,9 +772,7 @@ module Monk
         require "dotenv"
         Dotenv.load(File.expand_path(".env.test", __dir__ + "/.."))
 
-        require "minitest/autorun"
-        require_relative "../config/settings"
-        require_relative "../config/#{@auth ? "auth" : "persistence"}"#{%(\nrequire_relative "../config/mail") if @mail}#{%(\nrequire_relative "../config/jobs") if @jobs}
+        #{test_helper_app_lines}
         ```
 
         **Rakefile**:
@@ -793,6 +798,8 @@ module Monk
         #{sample_test_body}
         end
         ```
+
+        #{app_test_sample}
         #{jobs_test_sample}
         Then:
 
@@ -811,6 +818,7 @@ module Monk
     end
 
     def auth_or_redis_confirmation_note
+      return live_auth_confirmation_note if @live
       return "" unless @auth || @redis
 
       flags = [("authenticate: true" if @auth), ("redis fan-out: on" if @redis)].compact.join(", ")
@@ -822,6 +830,34 @@ module Monk
 
       "\n`bin/websocket_server`'s startup line should print `#{flags}` once " \
         "#{visible} visible to it -- that confirms everything's actually wired up.\n"
+    end
+
+    # Who gets which topics once there are users. Interpolated into a
+    # squiggly heredoc, so no indentation of its own.
+    def live_auth_setup_paragraph
+      return "" unless @auth
+
+      <<~MARKDOWN
+
+        **Visitors and logged-in users.** A logged-in user's socket carries
+        their identity (the session cookie reaches `:9293` too); a visitor's
+        comes in anonymous. Each topic's rule in `config/live.rb` decides:
+        `anonymous: true` opens it to visitors (the demo's `hits`), and a
+        rule without it is for logged-in users only, e.g. one topic per user.
+        `monk new` writes no login routes: see `docs/guides/auth.md` in the
+        monk repo, and `docs/guides/live.md`, "Who may subscribe".
+      MARKDOWN
+    end
+
+    # The --live bin/websocket_server prints only `authenticate:`, and with
+    # --auth it's :optional (a visitor's socket is anonymous, not refused).
+    def live_auth_confirmation_note
+      return "" unless @auth
+
+      "\n`bin/websocket_server`'s startup line should print `authenticate: optional` once " \
+        "`AUTH_SECRET` is visible to it: a logged-in user's socket carries their identity, and a " \
+        "visitor's comes in anonymous, so it gets only the topics `config/live.rb` opens with " \
+        "`anonymous: true`.\n"
     end
 
     # Interpolated into a squiggly heredoc, so no leading indentation of
@@ -854,9 +890,9 @@ module Monk
 
         `config/jobs.rb` configures `Monk::Jobs` on the app's own database --
         its tables come from `db/migrate/00000000000002_create_jobs_tables`,
-        which `bin/setup_db` already applied -- and loads the job classes in
-        `jobs/`. With `bin/server` and `bin/jobs` both running, enqueue the
-        demo job and watch it run:
+        which `bin/setup_db` already applied. The job classes live in
+        `app/jobs/`, which `config/load.rb` loads. With `bin/server` and
+        `bin/jobs` both running, enqueue the demo job and watch it run:
 
         ```bash
         curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
@@ -892,7 +928,7 @@ module Monk
 
       <<~MARKDOWN.chomp
 
-        Magic links go through a job too, `jobs/send_login_link.rb`: it
+        Magic links go through a job too, `app/jobs/send_login_link.rb`: it
         creates the token and sends the link inside the job, so the raw
         token is never stored, not even in the queue. Your login route,
         after its own per-email rate limit, just enqueues it:
@@ -939,11 +975,12 @@ module Monk
     end
 
     # The no-Postgres test helper normally has nothing to load from
-    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need:
-    # they boot outside development, where an unset MAIL_URL raises.
+    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need
+    # (they boot outside development, where an unset MAIL_URL raises), and
+    # with --live --redis it has REDIS_URL, which config/live.rb needs.
     # Interpolated into a squiggly heredoc, so no indentation of its own.
     def base_test_dotenv_lines
-      return "" unless @mail
+      return "" unless @mail || live_over_redis?
 
       %(\nrequire "dotenv"\nDotenv.load(File.expand_path(".env.test", __dir__ + "/.."))\n)
     end
@@ -951,8 +988,8 @@ module Monk
     def auth_mail_sentence
       return "" unless @auth
 
-      " `config/auth.rb`'s `AppMailer::DELIVER` sends each login link through it " \
-        "(HTML part: `views/mail/magic_link.erb`)."
+      " `AppMailer::MAGIC_LINK` (`app/mailers/app_mailer.rb`) sends each login link through it " \
+        "(HTML part: `app/views/mail/magic_link.erb`)."
     end
 
     def sample_test_body
@@ -974,6 +1011,44 @@ module Monk
           end
         RUBY
       end
+    end
+
+    def live_over_redis? = @live && @live_transport == :redis
+
+    # The end of every SETUP.md test helper: the app loaded the way
+    # config.ru loads it (config/load.rb, then app/app.rb), booted once.
+    # Interpolated into a squiggly heredoc, so no indentation of its own.
+    def test_helper_app_lines
+      <<~RUBY.chomp
+        require "minitest/autorun"
+        require_relative "../config/load"
+        require_relative "../app/app"
+
+        # Booted once, as config.ru does: request tests call APP.
+        APP = Monk.boot(App)
+      RUBY
+    end
+
+    # A request through the booted app. Every generated app, --live's
+    # included, has GET /hello.
+    def app_test_sample
+      <<~MARKDOWN.chomp
+        **test/app_test.rb** -- a request through the booted app:
+
+        ```ruby
+        require_relative "test_helper"
+        require "rack/mock_request"
+
+        class AppTest < Minitest::Test
+          def test_hello
+            status, _headers, body = APP.call(Rack::MockRequest.env_for("/hello"))
+
+            assert_equal 200, status
+            assert_equal "hello from monk", body.join
+          end
+        end
+        ```
+      MARKDOWN
     end
 
     def write_file(relative_path, template_path, executable: false)

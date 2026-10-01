@@ -111,7 +111,7 @@ part goes out as UTF-8.
 `Monk::Mail.render` turns a view into the `html:` String:
 
 ```erb
-<%# views/mail/magic_link.erb %>
+<%# app/views/mail/magic_link.erb %>
 <p><a href="<%= locals[:link] %>">Log in</a></p>
 ```
 
@@ -120,7 +120,7 @@ Monk::Mail.deliver(to: email, subject: "Your login link",
   text: "Log in: #{link}", html: Monk::Mail.render("mail/magic_link", link: link))
 ```
 
-Templates are compiled at boot with the rest of `views/`, and rendered
+Templates are compiled at boot with the rest of the views, and rendered
 without a request behind them: they see only their `locals`, never
 `params` or the session, the same as `Monk::Live` partials. The app's
 page layout is skipped; pass `layout: "mail/layout"` for an email one.
@@ -197,27 +197,35 @@ Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
 ## With `Monk::Auth`
 
 `monk new --auth` wires this for you: `config/mail.rb`,
-`views/mail/magic_link.erb`, `gem "net-smtp"`, and a `deliver:` in
-`config/auth.rb`. By hand, `Monk::Auth.deliver_link` calls a `deliver:`
-callable when one is configured; point it at `Monk::Mail`, built as a
-module constant so it's `Ractor.shareable?` (see [`auth.md`](auth.md)):
+`app/mailers/app_mailer.rb`, `app/views/mail/magic_link.erb`,
+`gem "net-smtp"`, and a `deliver:` in `config/auth.rb`. By hand,
+`Monk::Auth.deliver_link` calls a `deliver:` callable when one is
+configured; point it at `Monk::Mail`, built as a module constant so it's
+`Ractor.shareable?` (see [`auth.md`](auth.md)). A mailer is app code, so
+it lives in `app/mailers/` with the app's other emails:
 
 ```ruby
-# config/auth.rb
+# app/mailers/app_mailer.rb
 module AppMailer
-  DELIVER = lambda do |email:, link:, token:|
+  MAGIC_LINK = lambda do |email:, link:, token:|
     Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
     Monk::Mail.deliver(to: email, subject: "Your login link",
       text: "Log in: #{link}", html: Monk::Mail.render("mail/magic_link", link: link))
   end
 end
-
-Monk::Auth.configure(..., deliver: AppMailer::DELIVER)
 ```
 
-Require `config/mail.rb` from `config.ru`, not from `config/auth.rb`:
+```ruby
+# config/auth.rb
+require_relative "../app/mailers/app_mailer" # configure checks deliver: right away
+
+Monk::Auth.configure(..., deliver: AppMailer::MAGIC_LINK)
+```
+
+Require `config/mail.rb` from `config/load.rb`, not from `config/auth.rb`:
 `bin/websocket_server` loads `config/auth.rb` too, never sends mail, and
-shouldn't need `MAIL_URL` to boot.
+shouldn't need `MAIL_URL` to boot. That's why the mailer touches
+`Monk::Mail` only inside the lambda.
 
 **Don't point `deliver:` at `deliver_later`.** The job would store the
 login link, a working token included, in the queue until it's sent. That
@@ -225,7 +233,7 @@ undoes the reason `Monk::Auth` stores only token hashes: that reading the
 database isn't enough to log in as someone. To send login links from a job,
 move the whole login request into one, so the token is created and sent
 inside the job and never stored. `monk new --auth --jobs` scaffolds it as
-`jobs/send_login_link.rb`; see [`auth.md`](auth.md), "Sending the magic
+`app/jobs/send_login_link.rb`; see [`auth.md`](auth.md), "Sending the magic
 link from a job".
 
 ## In tests

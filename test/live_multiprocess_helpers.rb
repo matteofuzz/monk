@@ -35,12 +35,12 @@ module LiveMultiprocessHelpers
     nil
   end
 
-  # A publisher in this process, the way an HTTP app would hold one.
+  # A publisher in this process, the way an HTTP app would hold one: it
+  # never calls #listen!, so it publishes without subscribing.
   def build_publisher
     @registry = Monk::WebSocket::Registry.new
     @fanout = Monk::WebSocket::RedisFanout.new(@registry, redis_url: redis_test_url)
     @publisher = Monk::Live::Publisher.new(@fanout)
-    sleep 0.3 # this process's own subscriber, as in websocket_redis_fanout_test.rb
   end
 
   def unique_topic

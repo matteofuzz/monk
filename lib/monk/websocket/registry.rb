@@ -67,6 +67,12 @@ module Monk
         ask(:count, key, nil)
       end
 
+      # Nothing to listen to: every broadcast reaching this registry comes
+      # from this process. Here so a WS process calls #listen! the same
+      # way whether it holds a Registry or a RedisFanout/PgFanout around
+      # one.
+      def listen! = self
+
       private
 
       def ask(op, key, arg)

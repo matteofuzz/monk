@@ -21,7 +21,8 @@ class SendLoginLink < Monk::Job
     token = Monk::Auth.request_login(email, redirect_to: redirect_to)
     # Your callback route; config/settings.rb's public_url is the origin.
     link = "#{Monk::Settings[:public_url]}/auth/callback/#{token}"
-    # Calls config/auth.rb's deliver: -- a synchronous send, here in the job.
+    # Calls config/auth.rb's deliver: (AppMailer::MAGIC_LINK) -- a
+    # synchronous send, here in the job.
     Monk::Auth.deliver_link(email: email, link: link, token: token)
   end
 end

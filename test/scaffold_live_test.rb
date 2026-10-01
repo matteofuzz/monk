@@ -7,15 +7,18 @@ require "monk/live"
 # `monk new APP --live`: the Monk::Live wiring, so a fresh app has a page
 # whose open tabs update when another request changes server state.
 class ScaffoldLiveTest < Minitest::Test
+  include RedisTestHelpers
+
   EXE = File.expand_path("../exe/monk", __dir__)
 
   def test_live_writes_the_demo_wiring_from_the_live_templates
     in_app do |dest|
       assert_equal template("live/config/live.rb"), read(dest, "config/live.rb")
-      assert_equal template("live/config.ru"), read(dest, "config.ru")
+      assert_equal template("live/app/app.rb"), read(dest, "app/app.rb")
+      assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("live/bin/websocket_server"), read(dest, "bin/websocket_server")
-      assert_equal template("live/views/index.erb"), read(dest, "views/index.erb")
-      assert_equal template("live/views/live/_hits.erb"), read(dest, "views/live/_hits.erb")
+      assert_equal template("live/app/views/index.erb"), read(dest, "app/views/index.erb")
+      assert_equal template("live/app/views/live/_hits.erb"), read(dest, "app/views/live/_hits.erb")
     end
   end
 
@@ -33,7 +36,7 @@ class ScaffoldLiveTest < Minitest::Test
 
   def test_live_adds_the_meta_tag_and_module_script_to_the_layout_head
     in_app do |dest|
-      layout = read(dest, "views/layouts/app.erb")
+      layout = read(dest, "app/views/layouts/app.erb")
 
       assert_includes layout, %(<meta name="monk-live-url" content="<%= settings[:live_ws_url] %>">)
       assert_includes layout, %(<script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>)
@@ -68,7 +71,7 @@ class ScaffoldLiveTest < Minitest::Test
 
   def test_every_generated_ruby_file_is_syntactically_valid
     in_app(postgres: true) do |dest|
-      %w[config.ru config/live.rb bin/websocket_server].each do |file|
+      %w[config.ru config/load.rb config/live.rb app/app.rb bin/websocket_server].each do |file|
         _out, err, status = Open3.capture3("ruby", "-c", File.join(dest, file))
         assert status.success?, "#{file}: #{err}"
       end
@@ -82,17 +85,18 @@ class ScaffoldLiveTest < Minitest::Test
 
       refute File.exist?(File.join(dest, "config/live.rb"))
       refute File.exist?(File.join(dest, "public/js/monk_live"))
-      assert_equal template("base/views/layouts/app.erb"), read(dest, "views/layouts/app.erb")
-      assert_equal template("base/config.ru"), read(dest, "config.ru")
+      assert_equal template("base/app/views/layouts/app.erb"), read(dest, "app/views/layouts/app.erb")
+      assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
+      refute_includes read(dest, "config/load.rb"), %(require_relative "live")
     end
   end
 
   def test_live_composes_with_postgres_and_auth
     in_app(auth: true) do |dest|
-      config_ru = read(dest, "config.ru")
+      load_rb = read(dest, "config/load.rb")
 
-      assert_includes config_ru, %(require_relative "config/auth")
-      assert_includes config_ru, %(require_relative "config/live")
+      assert_includes load_rb, %(require_relative "auth")
+      assert_includes load_rb, %(require_relative "live")
       assert File.exist?(File.join(dest, "config/auth.rb"))
     end
   end
@@ -101,7 +105,7 @@ class ScaffoldLiveTest < Minitest::Test
   # the magic link, see docs/guides/auth.md) -- now that config/settings.rb
   # declares it unconditionally for every app (live_ws_url and
   # WS_ALLOWED_ORIGINS read it too), a --live --auth app loading both
-  # files in the order config.ru actually uses them must not double-declare
+  # files in the order config/load.rb uses them must not double-declare
   # it and raise Monk::DuplicateSettingError.
   def test_live_and_auth_together_share_one_public_url_setting_without_conflict
     require "monk/auth"
@@ -129,6 +133,68 @@ class ScaffoldLiveTest < Minitest::Test
     # config/live.rb configures Monk::Live; left configured, a later test
     # expecting it unconfigured fails in some random orders.
     Monk::Live.reset! if defined?(Monk::Live)
+  end
+
+  # The generated --live app as config.ru runs it: config/load.rb (settings,
+  # then config/live.rb), app/app.rb, Monk.boot. GET / renders the counter
+  # through app/views; POST /hit publishes through Monk::Live.patch, which
+  # renders app/views/live/_hits.erb and sends it over Redis -- a wrong
+  # template path or wiring would fail the request. app/app.rb goes into a
+  # throwaway module so its top-level App doesn't leak into other tests.
+  def test_the_generated_live_app_boots_renders_and_publishes_a_hit
+    skip_unless_redis_available
+
+    in_app do |dest|
+      with_settings do
+        with_env("REDIS_URL", redis_test_url) do
+          Dir.chdir(dest) do
+            require File.join(dest, "config/load")
+            wrapper = Module.new
+            load File.join(dest, "app/app.rb"), wrapper
+            app = wrapper::App
+            Monk.boot(app)
+
+            _status, _headers, body = app.call(env_for("GET", "/"))
+            assert_includes body.join, %(<strong id="hits">0</strong>)
+
+            status, headers, _body = app.call(env_for("POST", "/hit"))
+            assert_equal 302, status
+            assert_equal "/", headers["location"]
+
+            _status, _headers, body = app.call(env_for("GET", "/"))
+            assert_includes body.join, %(<strong id="hits">1</strong>)
+          end
+        end
+      end
+    end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
+    Monk::Views.reset!
+    Monk::Assets.reset!
+  end
+
+  # --live --auth: a visitor's socket comes in anonymous instead of
+  # refused (authenticate: :optional), so the demo's `anonymous: true`
+  # "hits" topic works without logging in. The plain chat server, which
+  # has no subscribe rules, stays strict.
+  def test_with_auth_the_live_websocket_server_lets_visitors_in_anonymously
+    in_app(auth: true) do |dest|
+      server = read(dest, "bin/websocket_server")
+      setup = read(dest, "SETUP.md")
+
+      assert_includes server, "Monk::Auth.config ? :optional : false"
+      assert_includes setup, "authenticate: optional"
+      assert_includes setup, "**Visitors and logged-in users.**"
+      refute_includes setup, "redis fan-out: on" # the live server doesn't print it
+    end
+
+    Dir.mktmpdir do |tmp|
+      dest = File.join(tmp, "chat_app")
+      Monk::Scaffold.new(dest, auth: true).write!
+
+      refute_includes read(dest, "bin/websocket_server"), ":optional"
+      refute_includes read(dest, "SETUP.md"), "Visitors and logged-in users"
+    end
   end
 
   def test_live_ws_url_defaults_to_the_direct_port_in_development

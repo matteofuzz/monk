@@ -48,6 +48,12 @@ module ChatServer
   end
 end
 
+# This process holds the sockets, so it's the one that listens for other
+# processes' broadcasts: with REDIS_URL, a subscriber connection, opened
+# here at boot (an unreachable Redis fails right here). A plain Registry
+# has nothing to listen to, and listen! does nothing.
+ChatServer::REGISTRY.listen!
+
 authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
 port = ENV.fetch("WS_PORT", "9293").to_i
 # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var

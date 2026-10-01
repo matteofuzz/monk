@@ -1,13 +1,4 @@
-require_relative "config/settings"
+require_relative "config/load" # the configs and app/ (config/load.rb)
+require_relative "app/app"
 
-class App < Monk::Base
-  views "views"
-  layout "layouts/app"
-  assets "public"
-
-  get("/") { @title = "App"; render "index" }
-  get("/hello") { "hello from monk" }
-  get("/api/hello") { json(message: "hello from monk") }
-end
-
-run Monk.boot(App)
+run Monk.boot(App) # Boot: freezes the app and serves it

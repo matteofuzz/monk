@@ -1,4 +1,6 @@
 require_relative "test_helper"
+require "open3"
+require "rbconfig"
 require "monk/websocket"
 require "socket"
 
@@ -122,5 +124,37 @@ class WebSocketServerTest < Minitest::Test
   ensure
     crashing&.close
     healthy&.close
+  end
+
+  # TERM is how docker stop, Kubernetes, Fly, Render and systemd stop a
+  # process -- every deploy. The server handles it like Ctrl-C: it stops
+  # accepting, run returns, and the script ends with exit 0, as bin/server
+  # and bin/jobs do. Open connections are still dropped (no close frame;
+  # docs/design/websocket.md, "Stopping the server").
+  def test_term_makes_run_return_and_the_process_exit_zero
+    script = <<~RUBY
+      $LOAD_PATH.unshift #{File.expand_path("../lib", __dir__).inspect}
+      require "monk/websocket"
+      module TermProbe
+        HANDLER = proc { |connection| loop { break unless connection.read } }
+      end
+      server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
+      puts server.port
+      $stdout.flush
+      server.run(&TermProbe::HANDLER)
+      puts "run returned"
+    RUBY
+    _stdin, out, _err, thread = Open3.popen3(RbConfig.ruby, "-W0", "-e", script)
+    port = Integer(out.gets)
+    client = TCPSocket.new("127.0.0.1", port)
+    handshake!(client)
+
+    Process.kill("TERM", thread.pid)
+    status = thread.value
+
+    assert_equal 0, status.exitstatus, "expected exit 0, got #{status.inspect}"
+    assert_equal "run returned\n", out.read
+  ensure
+    client&.close
   end
 end

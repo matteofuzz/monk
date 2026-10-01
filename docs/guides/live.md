@@ -44,11 +44,25 @@ below.
 # config/live.rb, required by both processes
 Monk::Live.configure(registry: Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: ENV.fetch("REDIS_URL")))
 
+# bin/websocket_server, once at boot, before server.run
+Monk::Live.listen!
+
 # in a route
 Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/_row", contact: contact
 ```
 
-`patch` renders `views/contacts/_row.erb` **once** and pushes the result to
+Both processes build the fanout from the same `config/live.rb`, but only the
+WebSocket process calls `Monk::Live.listen!`. That opens the fanout's
+subscriber connection (a Redis subscription, or a Postgres `LISTEN`), which
+relays updates published anywhere to this process's sockets. It returns once
+the subscription is in effect, and raises `Monk::WebSocket::ListenError`
+right there if Redis or Postgres can't be reached. Every other process
+(`bin/server`, `bin/jobs`, `bin/console`) only publishes, and holds no
+subscriber connection. A WebSocket process that forgets `listen!` gets
+`Monk::WebSocket::NotListeningError` at the first subscription, rather than
+sockets that silently never receive anything from other processes.
+
+`patch` renders `app/views/contacts/_row.erb` **once** and pushes the result to
 everyone subscribed to the topic `"contacts:7"`. `to:` is a CSS selector
 matched with `querySelectorAll`, so one call can update every element that
 matches. The same call takes `mode:`:
@@ -132,6 +146,13 @@ Monk::Live.authorize("news", anonymous: true, &AppLive::PUBLIC)
   no rule matches is denied.
 - The block gets the verified subject (from `Monk::Auth`, when the WS server
   authenticates) and the topic. A block that raises denies.
+- **Whether visitors get a socket at all** is the WS server's
+  `authenticate:` ([`websocket.md`](websocket.md)). With `Monk::Auth`, the
+  scaffolded `bin/websocket_server` uses `:optional`: a logged-in user's
+  socket carries their subject, and a visitor's comes in anonymous, so
+  these rules decide per topic. An app whose live pages are all private
+  can use `authenticate: true` instead, which refuses visitors before they
+  reach the rules.
 - **An anonymous connection is denied unless the rule says `anonymous: true`**,
   and the block isn't called for it. Without this,
   `topic == "contacts:#{subject}"` would let a nil subject subscribe to

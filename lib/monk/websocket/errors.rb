@@ -12,5 +12,16 @@ module Monk
     # tradeoff.
     class PayloadTooLargeError < StandardError
     end
+
+    # A fanout's #register before its #listen!: a socket registered there
+    # would never get another process's broadcasts, so this says so at the
+    # first subscription instead of losing them silently.
+    class NotListeningError < StandardError
+    end
+
+    # #listen! couldn't open its subscriber connection (Redis or Postgres
+    # unreachable, bad credentials) -- raised in the WS process's boot.
+    class ListenError < StandardError
+    end
   end
 end
