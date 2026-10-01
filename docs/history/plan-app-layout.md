@@ -2,7 +2,7 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: Phases 1–6 and the `#listen!` change done 2026-09-29. Phase 1 took every `views/` →
+Status: complete 2026-09-29: Phases 1–7 and the `#listen!` change. Phase 1 took every `views/` →
 `app/views/` path move and the `--live` `app/app.rb` override from Phases
 2–4, since a single `config.ru` for every flag needs them at once. Those
 phases keep their other work.
@@ -268,7 +268,30 @@ now also checks that `bin/jobs` doesn't `LISTEN`. monk_talk's
   its repo) and check that every file has an obvious home. It does as of
   this plan: see ADR 0015's table.
 
-## Open questions
+- Done 2026-09-29, all green. The suite: 781 runs, 0 failures, 0 skips,
+  with Postgres and Redis. Two generated apps, pointed at this checkout,
+  run for real (`bin/setup_db`, then `bin/server`, `bin/websocket_server`,
+  `bin/jobs`):
+  - `--auth --jobs --live --redis`: `/` renders the counter from
+    `app/views`; a WebSocket client subscribed to `hits` receives the
+    `<strong id="hits">1</strong>` patch after `POST /hit`; exactly one
+    Redis subscriber exists with all three processes up (0 → 1), and
+    publishing doesn't add one; `POST /jobs/hello` runs `HelloJob` from
+    `app/jobs/`. `bin/console` sees `HelloJob`, `SendLoginLink`,
+    `AppMailer::MAGIC_LINK` and the Live registry; a `SendLoginLink` it
+    enqueued was sent by `bin/jobs` through `AppMailer::MAGIC_LINK`.
+  - `--live --postgres`: the same Live checks over `LISTEN`/`NOTIFY`,
+    with one `LISTEN` session (0 → 1), from `bin/websocket_server` only.
+- Seen along the way, not changed here (both as in 0.18):
+  - With `--auth`, `bin/websocket_server` authenticates every connection,
+    so the `--live` demo's socket needs a session (a Bearer token or the
+    session cookie) even though its `hits` rule allows anonymous
+    subscribers. The check above used a session from
+    `Monk::Auth.request_login` + `redeem`.
+  - `bin/websocket_server` has no `TERM` handler, so it ends by the
+    signal rather than exiting 0 as `bin/server` and `bin/jobs` do.
+
+## Open questions## Open questions
 
 None. The name `config/boot.rb` was dropped for `config/load.rb`, since
 Boot already means the freeze step `Monk.boot` triggers (ADR 0015).
