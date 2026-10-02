@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Fixed
+
+- A route that raises now logs why. With no `error` handler for the
+  exception, `log/<env>.log` gets `ERROR GET /path raised Class: message`
+  and the first 10 backtrace lines; before, only `GET /path -> 500` was
+  logged, in development too. An exception an `error` handler takes care
+  of logs one `INFO ... (handled)` line.
+
 ## 0.19.0 - 2026-10-01
 
 ### Fixed
