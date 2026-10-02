@@ -21,9 +21,13 @@ in `lib/monk/version.rb`.
   in the middle of one fails that request, and the next checkout
   reconnects. While Postgres is down, `checkout` raises
   `PG::ConnectionBad` at once.
-- `Monk::Persistence::Pg` connections get `connect_timeout: 5` unless the
-  app sets one, so a reconnect to a host that doesn't answer fails
-  instead of waiting indefinitely.
+- `Monk::WebSocket::PgFanout`'s publisher reconnects after a dropped
+  connection. Before, every `Monk::Live.patch`/`batch` in that Ractor
+  raised `PG::ConnectionBad` from then on, and no open page updated. A
+  failed `pg_notify` isn't retried; the client's resync recovers it.
+- `Monk::Persistence::Pg` connections and `PgFanout`'s publisher get
+  `connect_timeout: 5` unless the app sets one, so a reconnect to a host
+  that doesn't answer fails instead of waiting indefinitely.
 - A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
   its transaction open for the next checkout in that Ractor: it's rolled
   back.

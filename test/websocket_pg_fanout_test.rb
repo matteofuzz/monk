@@ -209,6 +209,41 @@ class WebSocketPgFanoutTest < Minitest::Test
     port&.close
   end
 
+  # plan-pg-reconnect.md, phase 4: the publisher connection (one per
+  # Ractor that broadcasts) is dropped between two broadcasts, as when
+  # Postgres restarts while a web worker sits idle. The next broadcast
+  # reconnects instead of raising PG::ConnectionBad from then on.
+  def test_broadcast_reconnects_after_the_publishers_backend_is_terminated
+    skip_unless_postgres_available
+
+    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
+    fanout_b = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
+    port = Ractor::Port.new
+    fanout_b.register(:room1, port)
+    received = []
+    reader = Thread.new { loop { received << port.receive } }
+
+    fanout_a.broadcast(:room1, "before the drop")
+    wait_until { received.size == 1 }
+    terminate_backend(publisher_pid)
+
+    fanout_a.broadcast(:room1, "after the drop")
+
+    wait_until { received.size == 2 }
+    assert_equal ["before the drop", "after the drop"], received
+  ensure
+    reader&.kill
+    port&.close
+  end
+
+  def test_the_publisher_connection_gets_the_default_connect_timeout
+    skip_unless_postgres_available
+
+    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).broadcast(:room1, "x")
+
+    assert_equal "5", Ractor.current[:monk_pg_fanout_publisher].conninfo_hash[:connect_timeout]
+  end
+
   private
 
   # Backends whose last statement was this fanout's LISTEN: pg_stat_activity
@@ -221,6 +256,11 @@ class WebSocketPgFanoutTest < Minitest::Test
     ).getvalue(0, 0).to_i
   ensure
     conn&.close
+  end
+
+  # This Ractor's publisher connection, opened by its first #broadcast.
+  def publisher_pid
+    Ractor.current[:monk_pg_fanout_publisher].backend_pid
   end
 
   def wait_until(timeout: 2.0)

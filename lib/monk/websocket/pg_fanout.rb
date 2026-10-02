@@ -1,5 +1,6 @@
 require "pg"
 require "securerandom"
+require_relative "../persistence/pg"
 require_relative "errors"
 require_relative "listeners"
 
@@ -201,8 +202,24 @@ module Monk
       # out for app queries: NOTIFY issued on a connection mid-transaction
       # wouldn't fire until that transaction commits, so this stays a
       # connection of its own, used for nothing but one-off notifies.
+      #
+      # Probed before each notify and reset if Postgres dropped it
+      # (Monk::Persistence::Pg.alive?, plan-pg-reconnect.md), the way
+      # checkout treats an app's connection. A failed pg_notify is never
+      # retried: it may have reached the server, and a patch delivered
+      # twice shows twice, while a missed one is recovered by the client's
+      # resync.
       def publisher
-        Ractor.current[:monk_pg_fanout_publisher] ||= PG.connect(**@pg_opts)
+        conn = Ractor.current[:monk_pg_fanout_publisher] ||= connect
+        Monk::Persistence::Pg.revive(conn) unless Monk::Persistence::Pg.alive?(conn)
+        conn
+      end
+
+      # Same connect_timeout default as Monk::Persistence::Pg's own
+      # connections: a reset runs inside a request's Live.patch, and
+      # mustn't wait indefinitely for a host that doesn't answer.
+      def connect
+        PG.connect(connect_timeout: Monk::Persistence::Pg::DEFAULT_CONNECT_TIMEOUT, **@pg_opts)
       end
     end
   end

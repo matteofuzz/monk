@@ -230,7 +230,9 @@ flake.
    `persistence_ractor_integration_test.rb`:
    terminate a worker Ractor's connection, then the next checkout in that
    Ractor succeeds.
-4. **Publisher.** `websocket_pg_fanout_test.rb`: terminate the
+4. **Publisher.** (Done. The publisher also gets the `connect_timeout: 5`
+   default, since its reset runs inside a request's `Live.patch`.)
+   `websocket_pg_fanout_test.rb`: terminate the
    publisher's backend, then `broadcast` reaches another process's
    listener.
 5. **Listener.** `websocket_pg_fanout_test.rb` and, end to end,
