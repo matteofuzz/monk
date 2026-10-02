@@ -235,8 +235,20 @@ flake.
    `websocket_pg_fanout_test.rb`: terminate the
    publisher's backend, then `broadcast` reaches another process's
    listener.
-5. **Listener.** `websocket_pg_fanout_test.rb` and, end to end,
-   `live_multiprocess_browser_test.rb`:
+5. **Listener.** (Done. How it reaches every socket: `Registry#close_all`
+   sends one `Monk::WebSocket::CloseRequest` value to each registered
+   port, once per port even when a Live page holds several topics, and
+   both relays (`Connection#relay_broadcasts`, `Live::Session#relay`)
+   close their socket with its code. That exposed a latent bug in
+   `Connection#close` when called from a thread other than the reader's
+   (a relay, the reverify thread): `IO#close` waits for the blocked
+   reader, the reader's cleanup kills the closing thread mid-close, and
+   the descriptor stays open, so the client never sees the close.
+   `Connection#close` now shuts the socket down and leaves closing it to
+   `Server.serve`'s `ensure`. The end-to-end test is a new
+   `live_pg_browser_test.rb`, since `live_multiprocess_browser_test.rb`
+   runs on Redis; it fails against the old listener.)
+   `websocket_pg_fanout_test.rb` and, end to end, `live_pg_browser_test.rb`:
    - terminate the `LISTEN` backend, then a later broadcast from another
      process still arrives;
    - an open page is closed with `1011`, reconnects and resyncs, so a
@@ -252,13 +264,6 @@ flake.
 
 ## Open questions
 
-- **How the subscriber reaches every socket.** The Registry maps keys to
-  ports and knows no connections. The likely answer: `WebSocket::Registry`
-  is already an actor (`ask(:broadcast, ...)`), so a new
-  `ask(:close_all, 1011)` message fits better than a sentinel payload
-  that `Live::Session`'s relay would have to recognise. It also keeps
-  `RedisFanout` on the same interface when it gets the same fix. Decide
-  in phase 5.
 - **Silent drops.** When a network path dies without a `FIN` (a NAT or
   load balancer timing out an idle connection), the socket never becomes
   readable, the probe sees nothing, and the next query waits for TCP to

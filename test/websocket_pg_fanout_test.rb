@@ -1,4 +1,5 @@
 require_relative "test_helper"
+require "timeout"
 require "monk/websocket"
 require "monk/websocket/pg_fanout"
 
@@ -244,6 +245,70 @@ class WebSocketPgFanoutTest < Minitest::Test
     assert_equal "5", Ractor.current[:monk_pg_fanout_publisher].conninfo_hash[:connect_timeout]
   end
 
+  # plan-pg-reconnect.md, phase 5: the LISTEN connection is dropped. Its
+  # subscriber reconnects and LISTENs again, so a broadcast from another
+  # process sent after that still arrives.
+  def test_the_listener_reconnects_after_its_backend_is_terminated
+    skip_unless_postgres_available
+
+    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
+    fanout_b, listen_pid = listening_fanout
+    port = Ractor::Port.new
+    fanout_b.register(:room1, port)
+    received = []
+    reader = Thread.new { loop { received << port.receive } }
+
+    terminate_backend(listen_pid)
+    wait_until(timeout: 5) { (listen_pids - [listen_pid]).size > @other_listeners.size }
+    wait_until { received.any? } # the CloseRequest after the reconnect
+    fanout_a.broadcast(:room1, "after the drop")
+
+    wait_until { received.include?("after the drop") }
+  ensure
+    reader&.kill
+    port&.close
+  end
+
+  # Notifies sent while the listener was down are lost, and no client can
+  # tell, so after reconnecting every open socket is asked to close: its
+  # client reconnects and resyncs.
+  def test_after_reconnecting_the_listener_asks_every_open_socket_to_close
+    skip_unless_postgres_available
+
+    fanout, listen_pid = listening_fanout
+    port = Ractor::Port.new
+    fanout.register(:room1, port)
+
+    terminate_backend(listen_pid)
+
+    message = Timeout.timeout(5) { port.receive }
+    assert_equal Monk::WebSocket::CloseRequest.new(code: 1011, reason: "missed broadcasts"), message
+  ensure
+    port&.close
+  end
+
+  def test_a_malformed_notify_is_skipped_and_the_next_one_still_arrives
+    skip_unless_postgres_available
+
+    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
+    fanout_b, = listening_fanout
+    port = Ractor::Port.new
+    fanout_b.register(:room1, port)
+    received = []
+    reader = Thread.new { loop { received << port.receive } }
+
+    conn = PG.connect(**pg_test_opts)
+    conn.exec_params("SELECT pg_notify($1, $2)", [Monk::WebSocket::PgFanout::CHANNEL, "not an envelope"])
+    fanout_a.broadcast(:room1, "after the bad one")
+
+    wait_until { received.any? }
+    assert_equal ["after the bad one"], received
+  ensure
+    conn&.close
+    reader&.kill
+    port&.close
+  end
+
   private
 
   # Backends whose last statement was this fanout's LISTEN: pg_stat_activity
@@ -254,6 +319,25 @@ class WebSocketPgFanoutTest < Minitest::Test
       "SELECT count(*) FROM pg_stat_activity WHERE query = $1 AND datname = current_database()",
       ["LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}"],
     ).getvalue(0, 0).to_i
+  ensure
+    conn&.close
+  end
+
+  # A fanout that has called #listen!, and its LISTEN backend's pid --
+  # told apart from the listeners earlier tests left running in this
+  # process, which are kept in @other_listeners.
+  def listening_fanout
+    @other_listeners = listen_pids
+    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
+    [fanout, (listen_pids - @other_listeners).first]
+  end
+
+  def listen_pids
+    conn = PG.connect(**pg_test_opts)
+    conn.exec_params(
+      "SELECT pid FROM pg_stat_activity WHERE query = $1 AND datname = current_database()",
+      ["LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}"],
+    ).column_values(0)
   ensure
     conn&.close
   end

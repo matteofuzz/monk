@@ -25,12 +25,30 @@ in `lib/monk/version.rb`.
   connection. Before, every `Monk::Live.patch`/`batch` in that Ractor
   raised `PG::ConnectionBad` from then on, and no open page updated. A
   failed `pg_notify` isn't retried; the client's resync recovers it.
+- `Monk::WebSocket::PgFanout`'s `LISTEN` connection reconnects after a
+  drop, with backoff (500 ms doubling to 30 s). Before, its Ractor ended
+  silently and the WebSocket process never got another process's
+  broadcast again. Once listening again it closes every open socket with
+  `1011`, so each page reconnects and resyncs the broadcasts it missed. A
+  notify that can't be decoded or relayed is logged and skipped instead
+  of ending the listener.
+- `Monk::WebSocket::Connection#close` called from a thread other than the
+  handler's (a relay, the `reverify_interval` check) could leave the
+  socket open, so the client never saw the close. It now shuts the
+  socket down; `Server.serve` closes it.
+
 - `Monk::Persistence::Pg` connections and `PgFanout`'s publisher get
   `connect_timeout: 5` unless the app sets one, so a reconnect to a host
   that doesn't answer fails instead of waiting indefinitely.
 - A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
   its transaction open for the next checkout in that Ractor: it's rolled
   back.
+
+### Added
+
+- `Monk::WebSocket::Registry#close_all(code, reason)` closes every
+  registered connection's socket with that code, through a
+  `Monk::WebSocket::CloseRequest` sent to each port.
 
 ## 0.19.0 - 2026-10-01
 

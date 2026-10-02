@@ -85,11 +85,22 @@ module Monk
 
       # The server-initiated close path (step 14): send a close frame
       # carrying the 2-byte status code + reason RFC 6455 expects, then
-      # close the socket outright -- no wait for the client's own close
-      # frame in reply.
+      # end the connection -- no wait for the client's own close frame in
+      # reply.
+      #
+      # Shut down, not closed: this runs from other threads too (a relay
+      # on Registry#close_all, the reverify thread) while the handler's
+      # thread is blocked reading. IO#close would wait for that reader,
+      # and the reader's cleanup kills the closing thread mid-close,
+      # leaving the descriptor open: the client never sees the close.
+      # shutdown tells the client at once and ends the blocked read (it
+      # returns nil, as on any disconnect); Server.serve's ensure closes
+      # the socket.
       def close(code: 1000, reason: "")
         write_frame([code].pack("n") + reason.to_s, 0x8)
-        @socket.close
+        @socket.shutdown(:RDWR)
+      rescue Errno::ENOTCONN
+        # The client went away first: nothing left to shut down.
       end
 
       # Registers this connection's own Ractor::Port -- the "connection
@@ -154,9 +165,17 @@ module Monk
       private
 
       def relay_broadcasts
-        loop { write(@port.receive) }
-      rescue Ractor::ClosedError
-        # #unsubscribe! closed the port out from under a pending #receive.
+        loop do
+          message = @port.receive
+          next write(message) unless message.is_a?(CloseRequest)
+
+          # Registry#close_all: the read loop then sees the socket closed
+          # and Server.serve's cleanup runs as on any other close.
+          return close(code: message.code, reason: message.reason)
+        end
+      rescue Ractor::ClosedError, IOError, SystemCallError
+        # #unsubscribe! closed the port out from under a pending #receive,
+        # or the socket went away first.
       end
 
       def write_frame(payload, opcode)

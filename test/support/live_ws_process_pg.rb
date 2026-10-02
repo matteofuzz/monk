@@ -19,6 +19,8 @@ pg_opts = {
   user: ENV.fetch("MONK_TEST_PG_USER"),
   password: ENV.fetch("MONK_TEST_PG_PASSWORD"),
   dbname: ENV.fetch("MONK_TEST_PG_DATABASE"),
+  # Lets a test find this process's LISTEN backend in pg_stat_activity.
+  application_name: ENV.fetch("MONK_TEST_PG_APPLICATION_NAME", "monk_live_ws_process"),
 }
 
 registry = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_opts)

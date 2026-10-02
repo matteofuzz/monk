@@ -55,6 +55,84 @@ module Monk
         [origin, key, payload]
       end
 
+      # Reconnect backoff for the LISTEN connection: 500 ms doubling to
+      # 30 s, the same curve as monk_live.js's reconnect.
+      LISTEN_RETRY_INITIAL = 0.5
+      LISTEN_RETRY_MAX = 30
+
+      # The body of #listen!'s subscriber Ractor. A class method, like
+      # .decode_envelope, because the Ractor has no PgFanout instance to
+      # call into. Reports :ok, or why it couldn't LISTEN, on `ready`, then
+      # relays notifies for the rest of the process's life.
+      #
+      # A dropped LISTEN connection (a Postgres restart, a failover) is
+      # reconnected with backoff (plan-pg-reconnect.md). Notifies sent
+      # while it was down are lost, and no client can tell: its seq counts
+      # what this process sent it. So once listening again, every open
+      # socket is closed with 1011, and each client reconnects and resyncs
+      # (ADR 0011); their jittered reconnect spreads the refetches.
+      def self.subscribe(registry, pg_opts, own_origin, ready)
+        begin
+          conn = listen_connection(pg_opts)
+        rescue StandardError => e
+          ready.send("#{e.class}: #{e.message}")
+          return
+        end
+        ready.send(:ok)
+
+        loop do
+          conn.wait_for_notify { |_channel, _pid, raw| relay(registry, own_origin, raw) }
+        rescue PG::ConnectionBad => e
+          log(:error, "lost the LISTEN connection (#{e.message.lines.first&.strip}); reconnecting")
+          conn = reconnect(pg_opts)
+          closed = registry.close_all(1011, "missed broadcasts")
+          log(:info, "listening again; closed #{closed} socket(s) so their pages resync")
+        end
+      end
+
+      # One notify into this process's registry. Anything that goes wrong
+      # here (a payload that isn't an envelope, a failing broadcast) drops
+      # this notify only: escaping, it would end the subscriber Ractor, and
+      # with it every later broadcast, silently.
+      def self.relay(registry, own_origin, raw)
+        sender, key, payload = decode_envelope(raw)
+        return if sender == own_origin
+
+        registry.broadcast(key.to_sym, payload)
+      rescue StandardError => e
+        log(:error, "dropped a notify: #{e.class}: #{e.message}")
+      end
+
+      def self.listen_connection(pg_opts)
+        conn = PG.connect(connect_timeout: Monk::Persistence::Pg::DEFAULT_CONNECT_TIMEOUT, **pg_opts)
+        conn.exec("LISTEN #{CHANNEL}")
+        conn
+      rescue StandardError
+        conn&.close
+        raise
+      end
+
+      def self.reconnect(pg_opts)
+        delay = LISTEN_RETRY_INITIAL
+        begin
+          listen_connection(pg_opts)
+        rescue PG::Error => e
+          log(:warn, "can't LISTEN yet (#{e.class}: #{e.message.lines.first&.strip}); retrying in #{delay}s")
+          sleep delay
+          delay = [delay * 2, LISTEN_RETRY_MAX].min
+          retry
+        end
+      end
+
+      # Monk::Log writes to log/<env>.log once Monk has booted. Logging
+      # must never end the subscriber, whatever state Monk::Log is in.
+      def self.log(level, message)
+        Monk::Log.public_send(level, "Monk::WebSocket::PgFanout: #{message}")
+      rescue StandardError
+        nil
+      end
+      private_class_method :relay, :listen_connection, :reconnect, :log
+
       def initialize(registry, pg_opts:)
         # Checked upfront, on the argument -- RedisFanout has no equivalent
         # check (freezing self never raises on its own, even when an ivar
@@ -106,23 +184,7 @@ module Monk
         # subscriber and Monk::Persistence::Pg's per-Ractor connection
         # pattern.
         Ractor.new(@registry, @pg_opts, @origin, ready) do |registry, pg_opts, own_origin, ready|
-          begin
-            conn = PG.connect(**pg_opts)
-            conn.exec("LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}")
-          rescue StandardError => e
-            ready.send("#{e.class}: #{e.message}")
-            next
-          end
-          ready.send(:ok)
-
-          loop do
-            conn.wait_for_notify do |_channel, _pid, raw|
-              sender, key, payload = Monk::WebSocket::PgFanout.decode_envelope(raw)
-              next if sender == own_origin
-
-              registry.broadcast(key.to_sym, payload)
-            end
-          end
+          Monk::WebSocket::PgFanout.subscribe(registry, pg_opts, own_origin, ready)
         end
 
         result = ready.receive
