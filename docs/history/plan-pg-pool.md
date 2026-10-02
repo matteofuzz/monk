@@ -240,7 +240,17 @@ Small red → green slices against a real Postgres, as in the other plans.
    `start_pools!` raises "declared but not started in this process".
    After `Monk.freeze!`, a worker Ractor can read a pool's options.
    `reset!` clears pools.
-2. **Start and `call`.** `start_pools!` spawns the dispatcher and workers,
+2. **Start and `call`.** (Done. `start_pools!` freezes the registry
+   first: a worker's `checkout` reads the registered databases from
+   another Ractor, which needs them frozen. So every `register` and pool
+   declaration has to come before `start_pools!`, which boot order
+   already gives (config, then start). A failed start raises
+   `Monk::PoolStartError` and leaves nothing running. `reset!` stops
+   running pools and closes their connections; a worker closes its own
+   with the new `disconnect_all`. Until phase 3, an error or value that
+   can't leave the pool reaches the caller as a `RuntimeError` naming
+   it, so a worker never dies of one. A test also pins down that calls
+   run in parallel across workers.) `start_pools!` spawns the dispatcher and workers,
    waits for their connections, and raises if Postgres is unreachable (a
    port nothing listens on). `call` with positional and keyword arguments
    returns the value. A connection count shows `size` connections, however

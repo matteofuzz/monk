@@ -13,4 +13,8 @@ module Monk
   # in this process (start_pools!).
   class PoolNotStartedError < StandardError
   end
+
+  # start_pools! couldn't connect a pool's workers.
+  class PoolStartError < StandardError
+  end
 end

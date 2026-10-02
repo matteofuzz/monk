@@ -51,10 +51,41 @@ module Monk
       def pool(name, **options)
         return declare_pool(name, **options) unless options.empty?
 
+        handle = @running && @running[name]
+        return handle if handle
+
         pool_config(name)
         raise Monk::PoolNotStartedError,
           "pool #{name.inspect} is declared but not started in this process -- call " \
           "#{self}.start_pools!(#{name.inspect}) at boot in the process that uses it"
+      end
+
+      # Starts declared pools in this process: each pool's dispatcher and
+      # `size` workers, each worker with its own connection. Returns once
+      # every worker has connected; raises Monk::PoolStartError if any
+      # can't, and starts nothing for that pool. Main Ractor only, at boot,
+      # after every register and pool declaration: it freezes the
+      # registry, since the workers read it. A pool already started is
+      # left alone.
+      def start_pools!(*names)
+        unless Ractor.current == Ractor.main
+          raise ArgumentError, "#{self}.start_pools! runs in the main Ractor, at boot"
+        end
+
+        freeze_registry!
+        names.each { |name| start_pool(name) unless @running&.key?(name) }
+        self
+      end
+
+      # This Ractor's own connections, closed and forgotten. A pool worker
+      # runs it as it stops; the next checkout in this Ractor reconnects.
+      def disconnect_all
+        Ractor.current[:monk_persistence]&.each_value do |e|
+          disconnect(e.conn)
+        rescue StandardError
+          nil
+        end
+        Ractor.current[:monk_persistence] = {}
       end
 
       # A declared pool's options (a frozen Pool::Config).
@@ -106,11 +137,8 @@ module Monk
       # Test-only: drops all registered configs and this Ractor's cached
       # connections. Not part of the app-facing API.
       def reset!
-        Ractor.current[:monk_persistence]&.each_value do |e|
-          disconnect(e.conn)
-        rescue StandardError
-        end
-        Ractor.current[:monk_persistence] = {}
+        stop_pools
+        disconnect_all
         @configs = {}
         @pools = {}
       end
@@ -123,6 +151,61 @@ module Monk
 
       def pools
         @pools ||= {}
+      end
+
+      # The started pools' Ractors and ports, which only this (the main)
+      # Ractor uses: to stop them. Kept apart from @running, the frozen
+      # handles every Ractor reads.
+      def pool_ractors
+        @pool_ractors ||= {}
+      end
+
+      def start_pool(name)
+        config = pool_config(name)
+        ready = Ractor::Port.new
+        dispatcher = Ractor.new(ready, name: "monk-pool-#{name}") { |r| Monk::Persistence::Pool::Dispatcher.run(r) }
+        inbox = ready.receive
+        workers = Array.new(config.size) do |index|
+          Ractor.new(self, config, inbox, ready, name: "monk-pool-#{name}-#{index}") do |backend, c, i, r|
+            Monk::Persistence::Pool::Worker.run(backend, c, i, r)
+          end
+        end
+        results = workers.map { ready.receive }
+        ports = results.filter_map { |status, value| value if status == :ok }
+        pool_ractors[name] = { ractors: [dispatcher, *workers], inbox: inbox, ports: ports }
+
+        failure = results.find { |status, _| status == :error }
+        if failure
+          stop_pool(name)
+          raise Monk::PoolStartError, "pool #{name.inspect} couldn't connect its workers: #{failure.last}"
+        end
+
+        handle = Pool::Handle.new(config: config, inbox: inbox)
+        @running = Ractor.make_shareable((@running || {}).merge(name => handle))
+      ensure
+        ready&.close
+      end
+
+      # Test-only path (reset!), and a failed start. A busy worker finishes
+      # its call first.
+      def stop_pools
+        pool_ractors.each_key { |name| stop_pool(name) }
+        @running = nil
+      end
+
+      def stop_pool(name)
+        stopping = pool_ractors.delete(name)
+        return unless stopping
+
+        send_stop(stopping[:inbox], [:stop])
+        stopping[:ports].each { |port| send_stop(port, :stop) }
+        stopping[:ractors].each(&:join)
+      end
+
+      def send_stop(port, message)
+        port.send(message)
+      rescue Ractor::ClosedError
+        nil # already ended
       end
 
       def declare_pool(name, **options)
