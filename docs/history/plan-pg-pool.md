@@ -180,7 +180,7 @@ connections, and other Ractors send them calls through ports.
      no deadline and always runs.
    - **Queue limit** (`queue:`, default 1000 per pool): when that many
      calls are waiting, `call` and `call_async` raise
-     `Monk::Persistence::PoolFullError` at once. Normally 4 workers clear
+     `Monk::PoolFullError` at once. Normally 4 workers clear
      1000 calls in under 0.1 s, so a full queue means a stalled database,
      not a busy one.
 10. **A call made from inside a pool worker runs inline**, on the
@@ -227,7 +227,14 @@ caller ◀────────────── [:ok, value] or [:error, ex
 
 Small red → green slices against a real Postgres, as in the other plans.
 
-1. **Declaration.** `pool(name, ...)` validates its options (positive
+1. **Declaration.** (Done. The errors follow the existing top-level
+   persistence errors: `Monk::UnknownPoolError` (never declared) and
+   `Monk::PoolNotStartedError`; phase 4's is `Monk::PoolFullError`.
+   `pool_config(name)` returns a declaration's frozen `Pool::Config`.
+   Declaring a name twice or passing an unknown option raises. Since
+   `pool(:auth)` with no options is a lookup, the "never declared" error
+   shows how to declare one, so a config line with all defaults written
+   as `pool(:auth)` fails at boot with a clear message.) `pool(name, ...)` validates its options (positive
    `size`, `timeout`, `queue`; `db:` must be registered) and stores them.
    `pool(:missing)` raises "never declared". `pool(:declared)` before
    `start_pools!` raises "declared but not started in this process".

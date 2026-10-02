@@ -1,4 +1,5 @@
 require_relative "freeze_hooks"
+require_relative "persistence/pool"
 
 module Monk
   # Backend-agnostic persistence. Concrete backends (e.g.
@@ -37,6 +38,35 @@ module Monk
         entry(name).conn
       end
 
+      # With options, declares a named pool (docs/history/plan-pg-pool.md):
+      # `size` worker Ractors, each with its own connection to the
+      # registered database `db`, that run calls sent from any other
+      # Ractor. Nothing connects until #start_pools! runs, in the process
+      # that uses it. Every process loads the declarations
+      # (config/persistence.rb), next to #register.
+      #
+      # Without options, returns the started pool, from any Ractor.
+      # Raises if it was never declared, or declared but not started in
+      # this process.
+      def pool(name, **options)
+        return declare_pool(name, **options) unless options.empty?
+
+        pool_config(name)
+        raise Monk::PoolNotStartedError,
+          "pool #{name.inspect} is declared but not started in this process -- call " \
+          "#{self}.start_pools!(#{name.inspect}) at boot in the process that uses it"
+      end
+
+      # A declared pool's options (a frozen Pool::Config).
+      def pool_config(name)
+        pools.fetch(name) do
+          raise Monk::UnknownPoolError,
+            "pool #{name.inspect} was never declared -- declare it once at boot with " \
+            "#{self}.pool(#{name.inspect}, size: #{Pool::DEFAULTS[:size]}); " \
+            "pool(#{name.inspect}) with no options only looks one up"
+        end
+      end
+
       def checkout(name, timeout: DEFAULT_CHECKOUT_TIMEOUT)
         e = entry(name)
         token = e.slot.pop(timeout: timeout)
@@ -70,6 +100,7 @@ module Monk
       # the value (not the module) fixes it, the same way it did there.
       def freeze_registry!
         @configs = Ractor.make_shareable(configs)
+        @pools = Ractor.make_shareable(pools)
       end
 
       # Test-only: drops all registered configs and this Ractor's cached
@@ -81,12 +112,43 @@ module Monk
         end
         Ractor.current[:monk_persistence] = {}
         @configs = {}
+        @pools = {}
       end
 
       private
 
       def configs
         @configs ||= {}
+      end
+
+      def pools
+        @pools ||= {}
+      end
+
+      def declare_pool(name, **options)
+        unknown = options.keys - Pool::DEFAULTS.keys
+        raise ArgumentError, "unknown pool option(s) #{unknown.join(", ")} for #{name.inspect}" if unknown.any?
+        raise ArgumentError, "pool #{name.inspect} is already declared" if pools.key?(name)
+
+        config = Pool::Config.new(name: name, **Pool::DEFAULTS, **options)
+        validate_pool!(config)
+        pools[name] = Ractor.make_shareable(config)
+      end
+
+      def validate_pool!(config)
+        unless configs.key?(config.db)
+          raise Monk::UnknownPersistenceError,
+            "pool #{config.name.inspect} uses db: #{config.db.inspect}, but no database is registered as " \
+            "#{config.db.inspect} -- call #{self}.register(#{config.db.inspect}, ...) before declaring the pool"
+        end
+
+        { size: Integer, queue: Integer, timeout: Numeric }.each do |option, type|
+          value = config.public_send(option)
+          next if value.is_a?(type) && value.positive?
+
+          raise ArgumentError,
+            "pool #{config.name.inspect}: #{option}: must be a positive #{type}, got #{value.inspect}"
+        end
       end
 
       def ractor_local
