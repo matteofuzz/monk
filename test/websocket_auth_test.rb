@@ -3,6 +3,7 @@ require "monk/auth"
 require "monk/websocket"
 require "socket"
 require "open3"
+require "securerandom"
 
 class WebSocketAuthTest < Minitest::Test
   include WebSocketTestHelpers
@@ -336,5 +337,106 @@ class WebSocketAuthTest < Minitest::Test
     assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
   ensure
     socket&.close
+  end
+
+  # -- db_pool: (docs/history/plan-pg-pool.md, phase 7) --
+  # Each socket runs in a Ractor of its own. Without a pool, verifying its
+  # session opens a connection in that Ractor and holds it for as long as
+  # the socket is open: one connection per open page.
+
+  def test_with_db_pool_open_sockets_share_the_pools_connections
+    setup_pooled_auth(size: 2)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: true, db_pool: :auth, &WHO_AM_I)
+
+    sockets = Array.new(20) do
+      TCPSocket.new("127.0.0.1", server.port).tap do |socket|
+        handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+      end
+    end
+
+    assert_equal(["a@b.com"] * 20, sockets.map { |socket| who_am_i(socket) })
+    assert_equal 2, pooled_connection_count
+  ensure
+    sockets&.each(&:close)
+  end
+
+  def test_with_db_pool_an_invalid_token_still_gets_a_401
+    setup_pooled_auth(size: 1)
+    server = start_server(authenticate: true, db_pool: :auth, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    response = handshake!(socket, extra_headers: { "Authorization" => "Bearer not-a-real-token" })
+
+    assert_equal "HTTP/1.1 401 Unauthorized", status_line(response)
+  ensure
+    socket&.close
+  end
+
+  def test_with_db_pool_optional_identifies_through_the_pool
+    setup_pooled_auth(size: 1)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: :optional, db_pool: :auth, &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+
+    assert_equal "a@b.com", who_am_i(socket)
+    assert_equal 1, pooled_connection_count
+  ensure
+    socket&.close
+  end
+
+  def test_with_db_pool_reverify_runs_through_the_pool
+    setup_pooled_auth(size: 1)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: true, reverify_interval: 0.05, db_pool: :auth, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+    sleep 0.15 # a few reverify cadences
+    assert_equal 1, pooled_connection_count
+
+    Monk::Auth.revoke(session[:token])
+
+    assert_equal 0x8, read_raw_frame(socket)[:opcode]
+  ensure
+    socket&.close
+  end
+
+  def test_db_pool_requires_authenticate
+    error = assert_raises(ArgumentError) { Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", db_pool: :auth) }
+
+    assert_match(/db_pool requires authenticate/, error.message)
+  end
+
+  def test_db_pool_must_be_started_before_the_server
+    setup_auth_tables(DB_NAME)
+    Monk::Persistence::Pg.pool(:auth, db: DB_NAME, size: 1)
+
+    assert_raises(Monk::PoolNotStartedError) do
+      Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", authenticate: true, db_pool: :auth)
+    end
+  end
+
+  private
+
+  # Monk::Auth on DB_NAME, re-registered under an application_name of its
+  # own so pooled_connection_count sees only the pool's connections (the
+  # tables were made on the test's own connection, opened before).
+  def setup_pooled_auth(size:)
+    setup_auth_tables(DB_NAME)
+    @application_name = "monk_ws_pool_test_#{SecureRandom.hex(4)}"
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts, application_name: @application_name)
+    Monk::Persistence::Pg.pool(:auth, db: DB_NAME, size: size)
+    Monk::Persistence::Pg.start_pools!(:auth)
+  end
+
+  def pooled_connection_count
+    conn = PG.connect(**pg_test_opts)
+    result = conn.exec_params("SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", [@application_name])
+    result.getvalue(0, 0).to_i
+  ensure
+    conn&.close
   end
 end

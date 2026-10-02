@@ -40,6 +40,15 @@ module Monk
       # under true, and to an anonymous connection that sends an Origin,
       # since only a browser does.
       #
+      # db_pool: (a pool name, docs/history/plan-pg-pool.md) runs those
+      # Monk::Auth.verify calls -- the handshake's and reverify_interval's
+      # -- in that Monk::Persistence::Pg pool instead of in the socket's
+      # own Ractor. Without it, each socket's Ractor opens a connection of
+      # its own on the first verify and holds it while the socket is open:
+      # one Postgres connection per open page. With it, the server holds
+      # the pool's. Requires authenticate:, and the pool started
+      # (start_pools!) before the server.
+      #
       # max_payload_size: (bytes) -- see Connection::DEFAULT_MAX_PAYLOAD_SIZE
       # for what it guards against (gap 5). Unlike ping_interval:/
       # reverify_interval:, always on: this is insurance against a
@@ -53,7 +62,7 @@ module Monk
 
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
-        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
+        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -69,6 +78,8 @@ module Monk
           end
           raise ArgumentError, "reverify_interval requires authenticate: true or :optional" unless authenticate
         end
+
+        raise ArgumentError, "db_pool requires authenticate: true or :optional" if db_pool && !authenticate
 
         unless max_payload_size.positive?
           raise ArgumentError, "max_payload_size must be positive, got #{max_payload_size.inspect}"
@@ -91,12 +102,17 @@ module Monk
           Monk.freeze!
         end
 
+        # Raises now, not on the first connection, if the pool was never
+        # declared or isn't started in this process.
+        Monk::Persistence::Pg.pool(db_pool) if db_pool
+
         @tcp_server = TCPServer.new(bind, port)
         @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
         @authenticate = authenticate
         @ping_interval = ping_interval
         @reverify_interval = reverify_interval
         @max_payload_size = max_payload_size
+        @db_pool = db_pool
       end
 
       def port
@@ -117,12 +133,13 @@ module Monk
         loop do
           socket = @tcp_server.accept
           ractor = Ractor.new(
-            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size|
+            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
+            @db_pool
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
-              authenticate: authenticate, allowed_origins: origins,
-              ping_interval: ping_interval, reverify_interval: reverify_interval, max_payload_size: max_payload_size
+              authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
+              reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool
             )
           end
           ractor.send(socket, move: true)
@@ -152,7 +169,7 @@ module Monk
       # TCPServer) is never Ractor-shareable and can't cross into here.
       def self.serve(
         socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
-        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
+        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil
       )
         request = read_handshake_request(socket)
         return socket.close unless request
@@ -167,12 +184,12 @@ module Monk
         subject = nil
         case authenticate
         when true
-          subject = authenticate!(socket, headers, allowed_origins)
+          subject = authenticate!(socket, headers, allowed_origins, db_pool)
           return unless subject
         when :optional
           return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
 
-          subject = identify(headers)
+          subject = identify(headers, db_pool)
         end
 
         socket.write(Handshake.response_for(request))
@@ -181,7 +198,7 @@ module Monk
         connection.start_heartbeat(ping_interval) if ping_interval
         reverify_thread =
           if reverify_interval && subject
-            start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval)
+            start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval, db_pool)
           end
         begin
           block.call(connection)
@@ -209,7 +226,7 @@ module Monk
       # by construction (mirrors require_csrf!'s own Bearer exemption in
       # docs/history/plan-auth.md). Returns the verified subject, or nil after writing
       # the appropriate 403/401 response itself.
-      def self.authenticate!(socket, headers, allowed_origins)
+      def self.authenticate!(socket, headers, allowed_origins, db_pool)
         credential = Handshake.credential_from(headers)
 
         if credential&.fetch(:via) == :cookie && allowed_origins
@@ -220,7 +237,7 @@ module Monk
           end
         end
 
-        subject = credential && Monk::Auth.verify(credential[:token])
+        subject = credential && verify(credential[:token], db_pool)
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n") unless subject
         subject
       end
@@ -248,9 +265,9 @@ module Monk
 
       # The subject of a valid session, or nil -- no credential, or one
       # Monk::Auth no longer accepts, both mean anonymous under :optional.
-      def self.identify(headers)
+      def self.identify(headers, db_pool)
         credential = Handshake.credential_from(headers)
-        credential && Monk::Auth.verify(credential[:token])
+        credential && verify(credential[:token], db_pool)
       end
       private_class_method :identify
 
@@ -263,11 +280,11 @@ module Monk
       # own Thread rather than blocking the handler's own read loop,
       # mirroring Connection#start_heartbeat's shape; killed from #serve's
       # ensure the same way.
-      def self.start_reverify(connection, raw_token, interval)
+      def self.start_reverify(connection, raw_token, interval, db_pool)
         Thread.new do
           loop do
             sleep interval
-            break unless Monk::Auth.verify(raw_token)
+            break unless verify(raw_token, db_pool)
           end
           connection.close(code: 1008, reason: "session no longer valid")
         rescue IOError, Errno::EPIPE, Errno::ECONNRESET
@@ -277,6 +294,14 @@ module Monk
         end
       end
       private_class_method :start_reverify
+
+      # Monk::Auth.verify, here or in the db_pool: pool (Server.new).
+      def self.verify(raw_token, db_pool)
+        return Monk::Auth.verify(raw_token) unless db_pool
+
+        Monk::Persistence::Pg.pool(db_pool).call(Monk::Auth, :verify, raw_token)
+      end
+      private_class_method :verify
 
       def self.read_handshake_request(socket)
         request = +""

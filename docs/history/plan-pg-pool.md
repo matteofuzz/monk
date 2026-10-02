@@ -305,7 +305,15 @@ Small red → green slices against a real Postgres, as in the other plans.
    of a thread report on stderr.) A method that calls its own
    pool runs inline. A worker killed mid-call is replaced, and the pool
    keeps serving.
-7. **`Monk::WebSocket::Server.new(db_pool:)`.** Authentication runs
+7. **`Monk::WebSocket::Server.new(db_pool:)`.** (Done. Measured
+   2026-10-02 on Postgres 16, authenticated sockets: 20 open sockets
+   held 20 connections without `db_pool:` and 2 with a pool of 2; 1,000
+   sockets opened in 1.6 s, one after another, every one verified, on 4
+   connections with a pool of 4. `db_pool:` needs `authenticate:` and a
+   pool already started; `Server.new` checks both, so a missing
+   `start_pools!` fails at boot, not at the first connection. The
+   handshake check, the `:optional` identify, and every reverify all go
+   through one `Server.verify`.) Authentication runs
    `Monk::Auth.verify` in the pool (and the `reverify_interval` checks
    too). The monk_talk measurement repeated: with 20, then 1,000 open
    sockets, the server holds `size` connections plus `LISTEN`. Socket
