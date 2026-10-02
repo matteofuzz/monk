@@ -24,6 +24,15 @@ module Monk
   class PoolFullError < StandardError
   end
 
+  # The pool worker running a call died (not an exception from the called
+  # method, which the caller gets): the call may or may not have finished.
+  class PoolWorkerDiedError < StandardError
+  end
+
+  # The pool has stopped: calls waiting when it stopped, and calls after.
+  class PoolStoppedError < StandardError
+  end
+
   # start_pools! couldn't connect a pool's workers.
   class PoolStartError < StandardError
   end

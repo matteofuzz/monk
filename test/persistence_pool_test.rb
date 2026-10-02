@@ -1,6 +1,7 @@
 require_relative "test_helper"
 require "monk/persistence/pg"
 require "securerandom"
+require_relative "support/tcp_proxy"
 
 # Methods the pool's workers run. Module methods named by the call, as a
 # real app's models are: a call carries no block.
@@ -47,6 +48,19 @@ module PoolTestCalls
   def self.append(db, number)
     Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("INSERT INTO pool_test_log (n) VALUES ($1)", [number]) }
     nil
+  end
+
+  # Not a StandardError, like a failure deep in a C extension: it gets
+  # past the worker's rescue and ends the worker's Ractor.
+  class Fatal < Exception # rubocop:disable Lint/InheritException
+  end
+
+  def self.die = raise(Fatal, "the worker goes down with this")
+
+  # A method that calls its own pool: from inside a worker, that runs
+  # inline instead of queueing on a pool it occupies.
+  def self.nested_backend_pid(db)
+    [Monk::Persistence::Pg.checkout(db, &:backend_pid), Monk::Persistence::Pg.pool(:p).call(self, :backend_pid, db)]
   end
 
   def self.raw_result(db) = Monk::Persistence::Pg.checkout(db) { |conn| conn.exec("SELECT 1") }
@@ -451,6 +465,90 @@ class PersistencePoolTest < Minitest::Test
     end
   end
 
+  # -- Phase 6: inside a worker, and a dying worker --
+
+  # With one worker, queueing the inner call would wait for the very
+  # worker running the outer one, forever.
+  def test_a_call_made_inside_a_worker_of_the_same_pool_runs_inline
+    start_pool(:p, size: 1, timeout: 1)
+
+    outer, inner = Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :nested_backend_pid, DB_NAME)
+
+    assert_equal outer, inner
+  end
+
+  def test_a_worker_that_dies_mid_call_fails_that_call_at_once_and_is_replaced
+    start_pool(:p, size: 1, timeout: 5)
+    pool = Monk::Persistence::Pg.pool(:p)
+    started = monotonic
+
+    error, log = with_log do |dir|
+      with_settings do
+        Monk::Settings.freeze_registry!
+        Monk::Log.freeze_registry!
+        raised = assert_raises(Monk::PoolWorkerDiedError) { pool.call(PoolTestCalls, :die) }
+        [raised, File.read(File.join(dir, "test.log"))]
+      end
+    end
+
+    assert_operator monotonic - started, :<, 1, "the caller waited for its timeout"
+    assert_match(/PoolTestCalls\.die/, error.message)
+    assert_match(/ERROR .*pool :p: worker 0 died \(aborted\) while running PoolTestCalls\.die/, log)
+    assert_match(/PoolTestCalls::Fatal: the worker goes down with this/, log)
+    assert_equal ["back", 1, {}], pool.call(PoolTestCalls, :echo, "back", keyword: 1)
+    assert_equal 1, connection_count
+  end
+
+  def test_a_worker_killed_by_an_async_call_is_replaced
+    start_pool(:p, size: 2)
+    pool = Monk::Persistence::Pg.pool(:p)
+
+    with_log { pool.call_async(PoolTestCalls, :die) }
+
+    wait_for { connection_count == 2 && pool.call(PoolTestCalls, :echo, "ok", keyword: 1) }
+  end
+
+  # The replacement can't connect while the database is away; it retries
+  # with backoff, and calls made meanwhile wait in the queue.
+  def test_a_replacement_retries_until_the_database_is_back
+    skip_unless_postgres_available
+    proxy = TcpProxy.new(pg_test_opts[:host], pg_test_opts[:port]).start
+    start_pool_through(proxy, size: 1)
+    pool = Monk::Persistence::Pg.pool(:p)
+
+    proxy.stop
+    with_log do
+      assert_raises(Monk::PoolWorkerDiedError) { pool.call(PoolTestCalls, :die) }
+      sleep 0.7 # at least one failed attempt
+      proxy.start
+
+      assert_equal ["back", 1, {}], pool.call(PoolTestCalls, :echo, "back", keyword: 1)
+    end
+  ensure
+    proxy&.stop
+  end
+
+  # Stopping the pool (reset!, or a dispatcher that ends) answers every
+  # caller still waiting, so none hangs, and refuses calls after it.
+  def test_stopping_a_pool_answers_waiting_callers_and_refuses_later_calls
+    start_pool(:p, size: 1, timeout: 5)
+    pool = Monk::Persistence::Pg.pool(:p)
+    busy = occupy_the_worker(0.5)
+    queued = Thread.new do
+      pool.call(PoolTestCalls, :echo, "queued", keyword: 1)
+    rescue Monk::PoolStoppedError => e
+      e
+    end
+    sleep 0.1
+
+    Monk::Persistence::Pg.reset!
+
+    assert_instance_of Monk::PoolStoppedError, queued.value
+    busy.join
+    assert_raises(Monk::PoolStoppedError) { pool.call(PoolTestCalls, :echo, "late", keyword: 1) }
+    assert_raises(Monk::PoolStoppedError) { pool.call_async(PoolTestCalls, :echo, "late", keyword: 1) }
+  end
+
   private
 
   # Registers DB_NAME against the test Postgres under an application_name
@@ -462,6 +560,16 @@ class PersistencePoolTest < Minitest::Test
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts, application_name: @application_name)
     Monk::Persistence::Pg.pool(name, db: DB_NAME, size: size, **)
     Monk::Persistence::Pg.start_pools!(name)
+  end
+
+  def start_pool_through(proxy, size:)
+    Monk::Persistence::Pg.reset!
+    @application_name = "monk_pool_test_#{SecureRandom.hex(4)}"
+    Monk::Persistence::Pg.register(
+      DB_NAME, **pg_test_opts, host: "127.0.0.1", port: proxy.port, application_name: @application_name,
+    )
+    Monk::Persistence::Pg.pool(:p, db: DB_NAME, size: size)
+    Monk::Persistence::Pg.start_pools!(:p)
   end
 
   # Keeps the pool's one worker in pg_sleep from a background thread; that

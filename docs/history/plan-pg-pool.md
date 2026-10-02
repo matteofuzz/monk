@@ -291,7 +291,18 @@ Small red → green slices against a real Postgres, as in the other plans.
    full or the pool isn't started, and logs a failure inside the method.
    With `size: 1`, a sender's calls run in its order (numbered writes read
    back in sequence).
-6. **Inside a worker, and a dying worker.** A method that calls its own
+6. **Inside a worker, and a dying worker.** (Done, with three changes
+   from the plan. The dispatcher, not the main Ractor, starts the
+   workers and watches each with `Ractor#monitor` (it delivers `:exited`
+   or `:aborted`, even for a Ractor already ended), so it can replace one
+   at once; a replacement that can't connect retries with backoff, 0.5 s
+   doubling to 30 s, while calls wait in the queue. A dead worker's
+   caller gets `Monk::PoolWorkerDiedError` at once, not its timeout:
+   sooner, and it says the call may or may not have finished. Only `call`
+   runs inline inside its own pool's worker; `call_async` never waits,
+   so it can't deadlock, and still queues. A worker that dies tells the
+   dispatcher why before it ends, and the log line carries it, instead
+   of a thread report on stderr.) A method that calls its own
    pool runs inline. A worker killed mid-call is replaced, and the pool
    keeps serving.
 7. **`Monk::WebSocket::Server.new(db_pool:)`.** Authentication runs
@@ -327,12 +338,15 @@ Small red → green slices against a real Postgres, as in the other plans.
 
 ## Open questions
 
-- **A caller whose dispatcher has died.** Callers rely on the dispatcher
-  for timeouts, so a dead dispatcher would leave them waiting. Options: the
-  process that started the pool monitors the dispatcher and restarts it,
-  or callers keep a long-stop timer of their own. Leaning towards the
-  first: the main Ractor already monitors workers, and a timer per caller
-  brings back the per-call timer the design avoids. Decide in phase 6.
+- **A caller whose dispatcher has died.** Decided in phase 6: the
+  dispatcher is never restarted, because every handle holds its inbox and
+  may be kept in a constant, so a new dispatcher would leave those
+  handles pointing at a closed port. Instead it survives a failure
+  handling any one message (logged, and it carries on), and if it ends
+  anyway its `ensure` stops the workers and answers every caller still
+  waiting `:stopped`; a call after that hits the closed inbox. Both raise
+  `Monk::PoolStoppedError`. `reset!` takes the same path, which is how
+  it's tested.
 - **Per-call options.** Options are set per pool. If a real case needs a
   different timeout for one call, add `pool(:auth).with(timeout: 10)`,
   which returns a new handle, rather than options on `call`.

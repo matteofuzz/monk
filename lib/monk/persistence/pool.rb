@@ -5,10 +5,12 @@ module Monk
     # shared across Ractors, so a pool lends nothing: a few worker Ractors
     # own connections, and other Ractors send them calls to run.
     #
-    #   caller --[:call, receiver, method, args, kwargs, reply]--> dispatcher's inbox
+    #   caller --[:call, receiver, method, args, kwargs, reply, deadline]--> dispatcher's inbox
     #   dispatcher --> an idle worker (or the queue, until one is idle)
     #   worker: receiver.public_send(method, *args, **kwargs), on its own connection
     #   worker --[:ok, value] or [:error, exception]--> reply; [:idle, port] --> inbox
+    #
+    # The dispatcher starts the workers and replaces one that dies.
     module Pool
       # A pool as declared with Registry#pool(name, ...). Frozen, so any
       # Ractor can read it once boot has frozen the registry.
@@ -40,16 +42,27 @@ module Monk
         # passes, whether the call is still queued (it then never runs) or
         # running (it runs to the end: a timeout undoes nothing). Raises
         # Monk::PoolFullError at once when the pool's queue is full.
+        #
+        # Raises Monk::PoolWorkerDiedError at once if the worker running it
+        # dies, and Monk::PoolStoppedError if the pool stops first.
+        #
+        # Made from inside one of this pool's own workers, it runs inline,
+        # on that worker's connection: queued, it could wait for the very
+        # worker making it.
         def call(receiver, method, *args, **kwargs)
+          return receiver.public_send(method, *args, **kwargs) if Ractor.current[:monk_pool] == config.name
+
           reply = Ractor::Port.new
           deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + config.timeout
-          inbox.send([:call, receiver, method, args, kwargs, reply, deadline])
+          submit([:call, receiver, method, args, kwargs, reply, deadline])
           status, value = reply.receive
           case status
           when :ok then value
           when :error then raise_from_worker(value)
           when :timeout then raise Monk::PersistenceTimeoutError, timeout_message(receiver, method)
           when :full then raise Monk::PoolFullError, full_message
+          when :died then raise Monk::PoolWorkerDiedError, died_message(receiver, method)
+          when :stopped then raise Monk::PoolStoppedError, stopped_message
           end
         ensure
           reply&.close
@@ -65,9 +78,10 @@ module Monk
         # of size 1; a larger pool runs them side by side.
         def call_async(receiver, method, *args, **kwargs)
           ack = Ractor::Port.new
-          inbox.send([:call, receiver, method, args, kwargs, ack, nil])
+          submit([:call, receiver, method, args, kwargs, ack, nil])
           status, = ack.receive
           raise Monk::PoolFullError, full_message if status == :full
+          raise Monk::PoolStoppedError, stopped_message if status == :stopped
 
           nil
         ensure
@@ -75,6 +89,20 @@ module Monk
         end
 
         private
+
+        # The dispatcher's inbox closes when it ends.
+        def submit(call)
+          inbox.send(call)
+        rescue Ractor::ClosedError
+          raise Monk::PoolStoppedError, stopped_message
+        end
+
+        def died_message(receiver, method)
+          "the pool #{config.name.inspect} worker running #{receiver}.#{method} died; " \
+            "the call may or may not have finished (the worker has been replaced)"
+        end
+
+        def stopped_message = "pool #{config.name.inspect} has stopped"
 
         # The worker's frames, then the caller's: a port drops a
         # backtrace, so the worker sent its own as strings.
@@ -103,44 +131,102 @@ module Monk
       # :timeout to every caller whose deadline has passed, so a caller
       # needs no timer of its own. A queued call that timed out is dropped
       # and never runs.
+      #
+      # It starts the workers, and watches them: one that dies is logged
+      # and replaced at once, and its caller answered :died. A replacement
+      # that can't connect is retried with backoff, calls waiting in the
+      # queue meanwhile. It is never restarted itself, since every handle,
+      # possibly kept in a constant, holds its inbox: it survives a
+      # failure handling a message, and if it ends anyway, it answers
+      # every caller still waiting :stopped, so none hangs.
       class Dispatcher
-        def self.run(config, ready)
-          inbox = Ractor::Port.new
-          ready.send(inbox)
-          new(config, inbox).run
+        RETRY_INITIAL = 0.5
+        RETRY_MAX = 30
+
+        # Reports [:ok, inbox] on `ready` once every worker has connected,
+        # or [:error, why] after stopping them.
+        def self.run(backend, config, ready)
+          dispatcher = new(backend, config, Ractor::Port.new)
+          failure = dispatcher.start_workers
+          return dispatcher.report_failure(ready, failure) if failure
+
+          ready.send([:ok, dispatcher.inbox])
+          dispatcher.run
         end
 
-        def initialize(config, inbox)
+        attr_reader :inbox
+
+        def initialize(backend, config, inbox)
+          @backend = backend
           @config = config
           @inbox = inbox
+          @workers = {} # index => { ractor:, port:, failure: }
           @idle = []
           @waiting = []
           @running = {} # worker port => its call, or nil once its caller timed out
+          @retry_delay = {} # index => seconds before the next attempt
+          @respawn_at = {} # index => when to try again
+        end
+
+        # Blocks until each worker has connected or failed to; returns the
+        # first failure, or nil.
+        def start_workers
+          @config.size.times { |index| spawn_worker(index) }
+          pending = @config.size
+          failure = nil
+          while pending.positive?
+            message = @inbox.receive
+            case message.first
+            when :ready then ready(*message.drop(1))
+            when :failed then failure ||= message[2]
+            when :idle then @idle.push(message[1])
+            end
+            pending -= 1 if %i[ready failed].include?(message.first)
+          end
+          failure
+        end
+
+        def report_failure(ready, failure)
+          stop_workers
+          ready.send([:error, failure])
         end
 
         def run
           ticker = start_ticker
           loop do
             message = @inbox.receive
-            case message.first
-            when :call then accept(message)
-            when :idle then idle(message[1])
-            when :tick then expire
-            when :stop then break
-            end
+            break if message.first == :stop
+
+            handle(message)
             dispatch
+          rescue StandardError => e
+            log(:error, "dispatcher: #{e.class}: #{e.message}; carrying on")
           end
         ensure
           ticker&.kill
+          stop_workers
+          release_callers
         end
 
         private
+
+        def handle(message)
+          case message.first
+          when :call then accept(message)
+          when :idle then idle(message[1])
+          when :tick then tick
+          when :ready then ready(*message.drop(1))
+          when :failed then @workers[message[1]]&.store(:failure, message[2])
+          when :died then died(*message.drop(1))
+          end
+        end
 
         # A call message: [:call, receiver, method, args, kwargs, reply,
         # deadline]. An async call has no deadline, and its reply port only
         # hears whether it was accepted.
         def reply_of(call) = call[5]
         def deadline_of(call) = call[6]
+        def describe(call) = "#{call[1]}.#{call[2]}"
 
         def accept(call)
           return answer(call, [:full]) if @waiting.size >= @config.queue
@@ -172,8 +258,17 @@ module Monk
           end
         end
 
-        def expire
-          now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        def tick
+          now = monotonic
+          expire(now)
+          due = @respawn_at.select { |_, at| at <= now }.keys
+          due.each do |index|
+            @respawn_at.delete(index)
+            spawn_worker(index)
+          end
+        end
+
+        def expire(now)
           expired, @waiting = @waiting.partition { |call| past?(call, now) }
           expired.each { |call| answer(call, [:timeout]) }
           @running.each do |worker, call|
@@ -182,6 +277,72 @@ module Monk
             answer(call, [:timeout])
             @running[worker] = nil
           end
+        end
+
+        def spawn_worker(index)
+          ractor = Ractor.new(@backend, @config, @inbox, index, name: "monk-pool-#{@config.name}-#{index}") do |*args|
+            Monk::Persistence::Pool::Worker.run(*args)
+          end
+          @workers[index] = { ractor: ractor, port: nil, failure: nil }
+          watch(index, ractor)
+        end
+
+        def ready(index, port)
+          worker = @workers[index]
+          return unless worker
+
+          log(:info, "worker #{index} connected again") if @retry_delay.delete(index)
+          worker[:port] = port
+        end
+
+        # A thread per worker turns its Ractor ending into a message here.
+        def watch(index, ractor)
+          inbox = @inbox
+          Thread.new do
+            port = Ractor::Port.new
+            ractor.monitor(port)
+            inbox.send([:died, index, ractor, port.receive])
+          rescue Ractor::ClosedError
+            nil
+          end
+        end
+
+        def died(index, ractor, reason)
+          worker = @workers[index]
+          return if @stopping || worker.nil? || !worker[:ractor].equal?(ractor)
+
+          port = worker[:port]
+          return retry_later(index, worker[:failure]) unless port
+
+          @idle.delete(port)
+          call = @running.delete(port)
+          doing = call ? "running #{describe(call)}" : "idle"
+          log(:error, "worker #{index} died (#{reason}) while #{doing}, starting a new one: #{worker[:failure]}")
+          answer(call, [:died]) if call && deadline_of(call)
+          spawn_worker(index)
+        end
+
+        def retry_later(index, failure)
+          delay = @retry_delay[index] || RETRY_INITIAL
+          log(:warn, "worker #{index} couldn't connect (#{failure}); retrying in #{delay}s")
+          @retry_delay[index] = [delay * 2, RETRY_MAX].min
+          @respawn_at[index] = monotonic + delay
+        end
+
+        # Every worker finishes the call in hand first. Two loops: all are
+        # told before any is waited for, so they stop side by side.
+        def stop_workers
+          @stopping = true
+          @workers.each_value do |worker|
+            worker[:port]&.send(:stop)
+          rescue Ractor::ClosedError
+            nil
+          end
+          @workers.each_value { |worker| worker[:ractor].join } # rubocop:disable Style/CombinableLoops
+        end
+
+        def release_callers
+          (@waiting + @running.values.compact).each { |call| answer(call, [:stopped]) }
         end
 
         def start_ticker
@@ -210,21 +371,28 @@ module Monk
         rescue Ractor::ClosedError
           false
         end
+
+        def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+        def log(level, message) = Pool.log(level, "pool #{@config.name.inspect}: #{message}")
       end
 
       # The body of a pool's worker Ractor: an ordinary Ractor whose
       # connection the ordinary checkout opens and keeps, with its
       # reconnect and rollback. A called method's own checkout gets it.
       module Worker
-        def self.run(backend, config, inbox, ready)
+        def self.run(backend, config, inbox, index)
+          # The dispatcher logs why a worker died, from what it sends
+          # below; don't also dump it to stderr.
+          Thread.current.report_on_exception = false
           Ractor.current[:monk_pool] = config.name
           port = Ractor::Port.new
           begin
             backend.checkout(config.db) { nil }
           rescue StandardError => e
-            return ready.send([:error, "#{e.class}: #{e.message}"])
+            return inbox.send([:failed, index, "#{e.class}: #{e.message}"])
           end
-          ready.send([:ok, port])
+          inbox.send([:ready, index, port])
 
           loop do
             inbox.send([:idle, port])
@@ -238,8 +406,21 @@ module Monk
           end
         rescue Ractor::ClosedError
           nil # the dispatcher has stopped
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          # Not a called method's StandardError (its caller gets those): a
+          # bug, or an Exception from deep in a C extension. Tell the
+          # dispatcher why, then end: it starts a new worker.
+          report_death(inbox, index, e)
+          raise
         ensure
           backend.disconnect_all
+        end
+
+        def self.report_death(inbox, index, error)
+          trace = Array(error.backtrace).first(5).map { |frame| "\n  #{frame}" }.join
+          inbox.send([:failed, index, "#{error.class}: #{error.message}#{trace}"])
+        rescue Ractor::ClosedError
+          nil
         end
 
         def self.perform(backend, receiver, method, args, kwargs, reply)

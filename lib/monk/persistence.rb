@@ -158,43 +158,33 @@ module Monk
         @pools ||= {}
       end
 
-      # The started pools' Ractors and ports, which only this (the main)
-      # Ractor uses: to stop them. Kept apart from @running, the frozen
-      # handles every Ractor reads.
+      # The started pools' dispatchers and inboxes, which only this (the
+      # main) Ractor uses: to stop them. Kept apart from @running, the
+      # frozen handles every Ractor reads.
       def pool_ractors
         @pool_ractors ||= {}
       end
 
       def start_pool(name)
-        config = pool_config(name)
         ready = Ractor::Port.new
-        dispatcher = Ractor.new(config, ready, name: "monk-pool-#{name}") do |c, r|
-          Monk::Persistence::Pool::Dispatcher.run(c, r)
+        dispatcher = Ractor.new(self, pool_config(name), ready, name: "monk-pool-#{name}") do |backend, config, r|
+          Monk::Persistence::Pool::Dispatcher.run(backend, config, r)
         end
-        inbox = ready.receive
-        workers = Array.new(config.size) do |index|
-          Ractor.new(self, config, inbox, ready, name: "monk-pool-#{name}-#{index}") do |backend, c, i, r|
-            Monk::Persistence::Pool::Worker.run(backend, c, i, r)
-          end
-        end
-        results = workers.map { ready.receive }
-        ports = results.filter_map { |status, value| value if status == :ok }
-        pool_ractors[name] = { ractors: [dispatcher, *workers], inbox: inbox, ports: ports }
-
-        failure = results.find { |status, _| status == :error }
-        if failure
-          stop_pool(name)
-          raise Monk::PoolStartError, "pool #{name.inspect} couldn't connect its workers: #{failure.last}"
+        status, value = ready.receive
+        unless status == :ok
+          dispatcher.join
+          raise Monk::PoolStartError, "pool #{name.inspect} couldn't connect its workers: #{value}"
         end
 
-        handle = Pool::Handle.new(config: config, inbox: inbox)
+        pool_ractors[name] = { dispatcher: dispatcher, inbox: value }
+        handle = Pool::Handle.new(config: pool_config(name), inbox: value)
         @running = Ractor.make_shareable((@running || {}).merge(name => handle))
       ensure
         ready&.close
       end
 
-      # Test-only path (reset!), and a failed start. A busy worker finishes
-      # its call first.
+      # Test-only path (reset!). The dispatcher stops its workers, each
+      # finishing the call in hand, and answers every caller still waiting.
       def stop_pools
         pool_ractors.each_key { |name| stop_pool(name) }
         @running = nil
@@ -205,8 +195,7 @@ module Monk
         return unless stopping
 
         send_stop(stopping[:inbox], [:stop])
-        stopping[:ports].each { |port| send_stop(port, :stop) }
-        stopping[:ractors].each(&:join)
+        stopping[:dispatcher].join
       end
 
       def send_stop(port, message)
