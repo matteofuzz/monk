@@ -11,6 +11,36 @@ module PoolTestCalls
 
   def self.raise_argument_error(message) = raise(ArgumentError, message)
 
+  class TaggedError < StandardError
+    attr_reader :tag
+
+    def initialize(message, tag:)
+      super(message)
+      @tag = tag
+    end
+  end
+
+  def self.raise_tagged
+    raise ArgumentError, "the cause"
+  rescue ArgumentError
+    raise TaggedError.new("tagged", tag: "kept")
+  end
+
+  def self.insert_duplicate(db)
+    Monk::Persistence::Pg.checkout(db) do |conn|
+      conn.exec("INSERT INTO pool_test_items (id) VALUES (1) ON CONFLICT DO NOTHING")
+      conn.exec("INSERT INTO pool_test_items (id) VALUES (1)")
+    end
+  end
+
+  def self.insert_duplicate_wrapped(db)
+    insert_duplicate(db)
+  rescue PG::Error
+    raise "saving the item failed"
+  end
+
+  def self.raw_result(db) = Monk::Persistence::Pg.checkout(db) { |conn| conn.exec("SELECT 1") }
+
   def self.sleep_in_postgres(db, seconds)
     Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("SELECT pg_sleep($1)", [seconds]) }
     nil
@@ -208,6 +238,81 @@ class PersistencePoolTest < Minitest::Test
     assert_equal 0, connection_count
   end
 
+  # -- Phase 3: errors and return values --
+
+  def test_an_ordinary_exception_arrives_whole_with_its_cause
+    start_pool(:p, size: 1)
+
+    error = assert_raises(PoolTestCalls::TaggedError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :raise_tagged) }
+
+    assert_equal ["tagged", "kept"], [error.message, error.tag]
+    assert_equal [ArgumentError, "the cause"], [error.cause.class, error.cause.message]
+  end
+
+  # rescue PG::UniqueViolation must work the same whether the method ran
+  # here or in a pool: wrapping the error in a pool error class would
+  # silently stop it matching.
+  def test_a_pg_error_keeps_its_class_message_and_diagnostic_fields
+    start_pool(:p, size: 1)
+    with_items_table do
+      error = assert_raises(PG::UniqueViolation) do
+        Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :insert_duplicate, DB_NAME)
+      end
+
+      assert_match(/duplicate key/, error.message)
+      assert_equal "pool_test_items_pkey", error.result.error_field(PG::PG_DIAG_CONSTRAINT_NAME)
+      assert_equal "23505", error.result.error_field(PG::PG_DIAG_SQLSTATE)
+      assert_match(/duplicate key/, error.result.error_message)
+      assert_nil error.connection
+      assert_raises(NoMethodError) { error.result.ntuples }
+    end
+  end
+
+  def test_a_pg_error_as_the_cause_of_another_crosses_too
+    start_pool(:p, size: 1)
+    with_items_table do
+      error = assert_raises(RuntimeError) do
+        Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :insert_duplicate_wrapped, DB_NAME)
+      end
+
+      assert_equal "saving the item failed", error.message
+      assert_instance_of PG::UniqueViolation, error.cause
+      assert_equal "pool_test_items_pkey", error.cause.result.error_field(PG::PG_DIAG_CONSTRAINT_NAME)
+    end
+  end
+
+  def test_the_backtrace_shows_the_worker_then_the_caller
+    start_pool(:p, size: 1)
+
+    error = assert_raises(PoolTestCalls::TaggedError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :raise_tagged) }
+
+    worker_frame = error.backtrace.index { |line| line.include?("raise_tagged") }
+    marker = error.backtrace.index { |line| line.include?("pool :p") }
+    caller_frame = error.backtrace.index { |line| line.include?("test_the_backtrace_shows_the_worker_then_the_caller") }
+    assert worker_frame && marker && caller_frame, error.backtrace.join("\n")
+    assert_operator worker_frame, :<, marker
+    assert_operator marker, :<, caller_frame
+    refute_empty error.cause.backtrace
+  end
+
+  def test_a_return_value_that_cannot_leave_the_pool_names_the_method
+    start_pool(:p, size: 1)
+
+    error = assert_raises(Monk::PoolReturnError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :raw_result, DB_NAME) }
+
+    assert_match(/PoolTestCalls\.raw_result/, error.message)
+    assert_match(/PG::Result/, error.message)
+  end
+
+  def test_the_worker_keeps_serving_after_errors
+    start_pool(:p, size: 1)
+    pool = Monk::Persistence::Pg.pool(:p)
+    assert_raises(Monk::PoolReturnError) { pool.call(PoolTestCalls, :raw_result, DB_NAME) }
+    assert_raises(PoolTestCalls::TaggedError) { pool.call(PoolTestCalls, :raise_tagged) }
+
+    assert_equal ["ok", 1, {}], pool.call(PoolTestCalls, :echo, "ok", keyword: 1)
+  end
+
   private
 
   # Registers DB_NAME against the test Postgres under an application_name
@@ -226,6 +331,16 @@ class PersistencePoolTest < Minitest::Test
     result = conn.exec_params("SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", [@application_name])
     result.getvalue(0, 0).to_i
   ensure
+    conn&.close
+  end
+
+  def with_items_table
+    conn = PG.connect(**pg_test_opts)
+    conn.exec("DROP TABLE IF EXISTS pool_test_items")
+    conn.exec("CREATE TABLE pool_test_items (id int PRIMARY KEY)")
+    yield
+  ensure
+    conn&.exec("DROP TABLE IF EXISTS pool_test_items")
     conn&.close
   end
 end

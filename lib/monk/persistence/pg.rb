@@ -42,7 +42,43 @@ module Monk
       # app's own connect_timeout: wins.
       DEFAULT_CONNECT_TIMEOUT = 5
 
+      # Every diagnostic field libpq reports for an error (SQLSTATE,
+      # constraint, table, detail, hint, ...).
+      DIAG_FIELDS = PG.constants.grep(/\APG_DIAG_/).map { |name| PG.const_get(name) }.freeze
+
+      # What a PG::Error's #result becomes when the error leaves a pool's
+      # worker (#make_portable): a PG::Result is tied to its connection and
+      # can't be copied to another Ractor. Keeps what reading an error
+      # needs; anything else raises NoMethodError.
+      ErrorResult = Data.define(:fields, :error_message, :result_status, :res_status) do
+        def self.from(result)
+          fields = DIAG_FIELDS.to_h { |code| [code, result.error_field(code)] }.compact
+          new(
+            fields: fields, error_message: result.error_message,
+            result_status: result.result_status, res_status: result.res_status,
+          )
+        end
+
+        def error_field(code) = fields[code]
+        alias_method :result_error_field, :error_field
+        alias_method :result_error_message, :error_message
+      end
+
       class << self
+        # A copy of an exception about to leave a pool's worker
+        # (Pool::Portable): a PG::Error holds its connection and result,
+        # which can't be copied to another Ractor. The connection goes (no
+        # use in another Ractor anyway), and the result becomes an
+        # ErrorResult, so error_field still answers. The error keeps its
+        # class, so `rescue PG::UniqueViolation` matches as it would here.
+        def make_portable(error)
+          return unless error.is_a?(PG::Error)
+
+          result = error.result
+          error.instance_variable_set(:@connection, nil)
+          error.instance_variable_set(:@result, result && ErrorResult.from(result))
+        end
+
         # Detects a connection the server has closed (a restart, a
         # failover, pg_terminate_backend). libpq still reports
         # CONNECTION_OK, but the socket is readable: a healthy idle

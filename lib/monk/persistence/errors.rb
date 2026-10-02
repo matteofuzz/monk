@@ -14,6 +14,11 @@ module Monk
   class PoolNotStartedError < StandardError
   end
 
+  # A pool call's method returned a value that can't be copied to the
+  # caller's Ractor (a PG::Result, say).
+  class PoolReturnError < StandardError
+  end
+
   # start_pools! couldn't connect a pool's workers.
   class PoolStartError < StandardError
   end

@@ -31,9 +31,12 @@ module Monk
           reply = Ractor::Port.new
           inbox.send([:call, receiver, method, args, kwargs, reply])
           status, value = reply.receive
-          raise value if status == :error
+          return value unless status == :error
 
-          value
+          # The worker's frames, then the caller's: a port drops a
+          # backtrace, so the worker sent its own as strings.
+          value.set_backtrace([*value.backtrace, "(in pool #{config.name.inspect}; called from)", *caller])
+          raise value
         ensure
           reply&.close
         end
@@ -100,7 +103,7 @@ module Monk
             call = port.receive
             break if call == :stop
 
-            perform(*call.drop(1))
+            perform(backend, *call.drop(1))
           end
         rescue Ractor::ClosedError
           nil # the dispatcher has stopped
@@ -108,25 +111,79 @@ module Monk
           backend.disconnect_all
         end
 
-        def self.perform(receiver, method, args, kwargs, reply)
+        def self.perform(backend, receiver, method, args, kwargs, reply)
           result =
             begin
               [:ok, receiver.public_send(method, *args, **kwargs)]
             rescue StandardError => e
-              [:error, e]
+              [:error, Portable.exception(e, backend)]
             end
-          deliver(reply, result)
+          return if deliver(reply, result)
+
+          # The copy to the caller's Ractor failed: answer with something
+          # that can always be copied, so the caller isn't left waiting.
+          status, value = result
+          fallback = status == :ok ? Portable.return_error(receiver, method, value) : Portable.summary(value)
+          deliver(reply, [:error, fallback])
         end
 
-        # A value or exception that can't be copied to another Ractor still
-        # gets the caller an answer. (Phase 3 of the plan makes PG errors
-        # cross with their class.)
+        # False when the result can't be copied to the caller's Ractor.
+        # Not only Ractor::Error: copying a PG::Result raises TypeError
+        # ("allocator undefined"), and an escape here would end the worker
+        # with its caller still waiting.
         def self.deliver(reply, result)
           reply.send(result)
+          true
         rescue Ractor::ClosedError
-          nil # the caller stopped waiting
-        rescue Ractor::Error => e
-          reply.send([:error, RuntimeError.new("#{result.last.class} can't leave the pool: #{e.message}")])
+          true # the caller stopped waiting: nothing to answer
+        rescue StandardError
+          false
+        end
+      end
+
+      # Copies of what a worker sends back, fit to cross to the caller's
+      # Ractor.
+      module Portable
+        # Longer cause chains are cut to a summary of the next cause.
+        MAX_CAUSES = 5
+
+        # A copy of error with its class, message, own instance variables
+        # and backtrace, and its cause chain copied the same way. The
+        # backend drops what can't be copied (Pg: the connection and
+        # result a PG::Error holds). The backtrace is set as strings: a
+        # port drops it otherwise.
+        def self.exception(error, backend, depth = 0)
+          copy = error.dup
+          backend.make_portable(copy)
+          copy.set_backtrace(Array(error.backtrace))
+          return copy unless error.cause
+
+          cause = depth < MAX_CAUSES ? exception(error.cause, backend, depth + 1) : summary(error.cause)
+          with_cause(copy, cause)
+        rescue StandardError
+          summary(error)
+        end
+
+        # Exception has no cause=: raising sets it, and keeps the backtrace
+        # already set.
+        def self.with_cause(error, cause)
+          raise error, cause: cause
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          e
+        end
+
+        # For an exception that still can't be copied.
+        def self.summary(error)
+          RuntimeError.new("#{error.class}: #{error.message} (it couldn't leave the pool)").tap do |copy|
+            copy.set_backtrace(Array(error.backtrace))
+          end
+        end
+
+        def self.return_error(receiver, method, value)
+          Monk::PoolReturnError.new(
+            "#{receiver}.#{method} returned a #{value.class}, which can't leave the pool: " \
+            "return plain data (rows as Hashes, not a PG::Result)",
+          )
         end
       end
     end

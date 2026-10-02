@@ -255,7 +255,19 @@ Small red → green slices against a real Postgres, as in the other plans.
    port nothing listens on). `call` with positional and keyword arguments
    returns the value. A connection count shows `size` connections, however
    many caller Ractors call.
-3. **Errors and return values.** Ordinary exceptions arrive whole. A
+3. **Errors and return values.** (Done. The Pg-specific part is a backend
+   hook, `make_portable(error)`, so `pool.rb` stays backend-agnostic;
+   `Pg.make_portable` swaps `@result` for a frozen `Pg::ErrorResult`
+   answering `error_field`/`result_error_field`, `error_message`/
+   `result_error_message`, `result_status` and `res_status`. Exception has
+   no `cause=`, so each copy's cause is set by raising it with `cause:`,
+   which keeps the backtrace already set; `cause: nil` doesn't clear a
+   cause, so a chain longer than 5 ends in a `RuntimeError` summary
+   instead of being cut. Measured: copying a `PG::Result` raises
+   `TypeError` ("allocator undefined"), not `Ractor::Error`, and a worker
+   that let it escape ended with its caller waiting forever, so every
+   failure to copy is caught and answered. The value error is
+   `Monk::PoolReturnError`.) Ordinary exceptions arrive whole. A
    `PG::UniqueViolation` arrives with its class, message, `cause`,
    `error_field` and a backtrace showing both sides. A `PG::Result` return
    value raises the named error. The stand-in's `error_message` works;

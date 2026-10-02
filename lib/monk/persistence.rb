@@ -77,6 +77,11 @@ module Monk
         self
       end
 
+      # Hook: makes a copy of an exception fit to leave a pool's worker for
+      # another Ractor, by dropping what can't be copied. A backend whose
+      # errors carry nothing like that keeps this default.
+      def make_portable(_error) = nil
+
       # This Ractor's own connections, closed and forgotten. A pool worker
       # runs it as it stops; the next checkout in this Ractor reconnects.
       def disconnect_all
