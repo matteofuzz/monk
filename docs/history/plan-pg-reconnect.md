@@ -225,7 +225,9 @@ flake.
    - the probe over TLS (`sslmode=require`, when the test server allows
      it): all the measurements above were on a plain socket, and TLS adds
      a buffer between `IO.select` and libpq.
-3. **Same in a worker Ractor.** `persistence_ractor_integration_test.rb`:
+3. **Same in a worker Ractor.** (Done. Phase 2 covered it with no change:
+   the test fails with the probe stubbed out.)
+   `persistence_ractor_integration_test.rb`:
    terminate a worker Ractor's connection, then the next checkout in that
    Ractor succeeds.
 4. **Publisher.** `websocket_pg_fanout_test.rb`: terminate the
