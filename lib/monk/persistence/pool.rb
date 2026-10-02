@@ -27,56 +27,149 @@ module Monk
         # pool's workers, on that worker's connection, and returns its
         # value or raises its exception. Everything after the method name
         # belongs to the target method: call takes no options of its own.
+        #
+        # Raises Monk::PersistenceTimeoutError once the pool's timeout
+        # passes, whether the call is still queued (it then never runs) or
+        # running (it runs to the end: a timeout undoes nothing). Raises
+        # Monk::PoolFullError at once when the pool's queue is full.
         def call(receiver, method, *args, **kwargs)
           reply = Ractor::Port.new
-          inbox.send([:call, receiver, method, args, kwargs, reply])
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + config.timeout
+          inbox.send([:call, receiver, method, args, kwargs, reply, deadline])
           status, value = reply.receive
-          return value unless status == :error
-
-          # The worker's frames, then the caller's: a port drops a
-          # backtrace, so the worker sent its own as strings.
-          value.set_backtrace([*value.backtrace, "(in pool #{config.name.inspect}; called from)", *caller])
-          raise value
+          case status
+          when :ok then value
+          when :error then raise_from_worker(value)
+          when :timeout then raise Monk::PersistenceTimeoutError, timeout_message(receiver, method)
+          when :full then raise Monk::PoolFullError, full_message
+          end
         ensure
           reply&.close
         end
+
+        private
+
+        # The worker's frames, then the caller's: a port drops a
+        # backtrace, so the worker sent its own as strings.
+        def raise_from_worker(error)
+          error.set_backtrace([*error.backtrace, "(in pool #{config.name.inspect}; called from)", *caller(2)])
+          raise error
+        end
+
+        def timeout_message(receiver, method)
+          "#{receiver}.#{method} in pool #{config.name.inspect} didn't finish within #{config.timeout}s " \
+            "(if it was already running, it runs to the end: a timeout undoes nothing)"
+        end
+
+        def full_message
+          "pool #{config.name.inspect} already has #{config.queue} calls waiting for its " \
+            "#{config.size} worker(s): the database is stalled, or the pool is too small"
+        end
       end
 
-      # The body of a pool's dispatcher Ractor. It exists because a port can
-      # only be read by the Ractor that created it: the workers can't share
-      # an inbox, so this one holds it, with the idle workers and the calls
-      # waiting for one.
-      module Dispatcher
-        def self.run(ready)
+      # A pool's dispatcher, inside its own Ractor. It exists because a
+      # port can only be read by the Ractor that created it: the workers
+      # can't share an inbox, so this one holds it, with the idle workers,
+      # the calls waiting for one, and the calls running.
+      #
+      # Timeouts are its job too: a ticker wakes it, and it answers
+      # :timeout to every caller whose deadline has passed, so a caller
+      # needs no timer of its own. A queued call that timed out is dropped
+      # and never runs.
+      class Dispatcher
+        def self.run(config, ready)
           inbox = Ractor::Port.new
           ready.send(inbox)
-          idle = []
-          waiting = []
+          new(config, inbox).run
+        end
 
+        def initialize(config, inbox)
+          @config = config
+          @inbox = inbox
+          @idle = []
+          @waiting = []
+          @running = {} # worker port => its call, or nil once its caller timed out
+        end
+
+        def run
+          ticker = start_ticker
           loop do
-            message = inbox.receive
+            message = @inbox.receive
             case message.first
-            when :call
-              waiting.push(message)
-            when :idle
-              idle.push(message[1])
-            when :stop
-              break
+            when :call then accept(message)
+            when :idle then idle(message[1])
+            when :tick then expire
+            when :stop then break
             end
-            dispatch(idle, waiting)
+            dispatch
           end
+        ensure
+          ticker&.kill
+        end
+
+        private
+
+        # A call message: [:call, receiver, method, args, kwargs, reply, deadline].
+        def reply_of(call) = call[5]
+        def deadline_of(call) = call[6]
+
+        def accept(call)
+          return answer(call, [:full]) if @waiting.size >= @config.queue
+
+          @waiting.push(call)
+        end
+
+        def idle(worker)
+          @running.delete(worker)
+          @idle.push(worker)
         end
 
         # Oldest call first. A worker whose port is closed is dropped, and
         # the call waits for the next one.
-        def self.dispatch(idle, waiting)
-          while idle.any? && waiting.any?
-            waiting.shift if hand(idle.pop, waiting.first)
+        def dispatch
+          while @idle.any? && @waiting.any?
+            worker = @idle.pop
+            call = @waiting.first
+            next unless hand(worker, call)
+
+            @waiting.shift
+            @running[worker] = call
           end
         end
 
+        def expire
+          now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          expired, @waiting = @waiting.partition { |call| deadline_of(call) < now }
+          expired.each { |call| answer(call, [:timeout]) }
+          @running.each do |worker, call|
+            next unless call && deadline_of(call) < now
+
+            answer(call, [:timeout])
+            @running[worker] = nil
+          end
+        end
+
+        def start_ticker
+          interval = (@config.timeout / 10.0).clamp(0.01, 0.1)
+          inbox = @inbox
+          Thread.new do
+            loop do
+              sleep interval
+              inbox.send([:tick])
+            end
+          rescue Ractor::ClosedError
+            nil
+          end
+        end
+
+        def answer(call, message)
+          reply_of(call).send(message)
+        rescue Ractor::ClosedError
+          nil # the caller stopped waiting
+        end
+
         # False when the worker's port is closed (the worker ended).
-        def self.hand(worker, call)
+        def hand(worker, call)
           worker.send(call)
           true
         rescue Ractor::ClosedError
@@ -103,7 +196,8 @@ module Monk
             call = port.receive
             break if call == :stop
 
-            perform(backend, *call.drop(1))
+            _, receiver, method, args, kwargs, reply = call
+            perform(backend, receiver, method, args, kwargs, reply)
           end
         rescue Ractor::ClosedError
           nil # the dispatcher has stopped

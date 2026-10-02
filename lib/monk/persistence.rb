@@ -168,7 +168,9 @@ module Monk
       def start_pool(name)
         config = pool_config(name)
         ready = Ractor::Port.new
-        dispatcher = Ractor.new(ready, name: "monk-pool-#{name}") { |r| Monk::Persistence::Pool::Dispatcher.run(r) }
+        dispatcher = Ractor.new(config, ready, name: "monk-pool-#{name}") do |c, r|
+          Monk::Persistence::Pool::Dispatcher.run(c, r)
+        end
         inbox = ready.receive
         workers = Array.new(config.size) do |index|
           Ractor.new(self, config, inbox, ready, name: "monk-pool-#{name}-#{index}") do |backend, c, i, r|

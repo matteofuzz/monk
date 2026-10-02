@@ -39,6 +39,11 @@ module PoolTestCalls
     raise "saving the item failed"
   end
 
+  def self.record(db, value)
+    Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("INSERT INTO pool_test_items (id) VALUES ($1)", [value]) }
+    nil
+  end
+
   def self.raw_result(db) = Monk::Persistence::Pg.checkout(db) { |conn| conn.exec("SELECT 1") }
 
   def self.sleep_in_postgres(db, seconds)
@@ -313,17 +318,108 @@ class PersistencePoolTest < Minitest::Test
     assert_equal ["ok", 1, {}], pool.call(PoolTestCalls, :echo, "ok", keyword: 1)
   end
 
+  # -- Phase 4: timeouts and the queue --
+
+  def test_a_call_raises_once_its_timeout_passes_while_the_method_still_runs
+    start_pool(:p, size: 1, timeout: 0.3)
+    started = monotonic
+
+    error = assert_raises(Monk::PersistenceTimeoutError) do
+      Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :sleep_in_postgres, DB_NAME, 1.5)
+    end
+
+    assert_operator monotonic - started, :<, 1.0
+    assert_match(/PoolTestCalls\.sleep_in_postgres/, error.message)
+    assert_match(/pool :p/, error.message)
+  end
+
+  # Nobody waits for a call that timed out in the queue, so it never runs:
+  # a stalled database doesn't build a backlog of work to replay.
+  def test_a_call_that_timed_out_while_queued_never_runs
+    start_pool(:p, size: 1, timeout: 0.3)
+    with_items_table do
+      busy = occupy_the_worker(1.0)
+
+      assert_raises(Monk::PersistenceTimeoutError) do
+        Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :record, DB_NAME, 1)
+      end
+      busy.join
+      wait_until_the_worker_is_free
+
+      assert_equal 0, items_count
+    end
+  end
+
+  def test_a_full_queue_refuses_a_call_at_once
+    start_pool(:p, size: 1, timeout: 2, queue: 2)
+    busy = occupy_the_worker(1.0)
+    queued = Array.new(2) { Thread.new { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :echo, "q", keyword: 1) } }
+    sleep 0.1 # let both reach the queue
+    started = monotonic
+
+    error = assert_raises(Monk::PoolFullError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :echo, "x", keyword: 1) }
+
+    assert_operator monotonic - started, :<, 0.1
+    assert_match(/pool :p/, error.message)
+    assert_equal [["q", 1, {}]] * 2, queued.map(&:value)
+    busy.join
+  end
+
+  # The worker finishes the call whose caller gave up, and its late answer
+  # goes nowhere; the next call gets its own answer.
+  def test_after_a_timeout_the_worker_serves_the_next_call
+    start_pool(:p, size: 1, timeout: 0.2)
+    pool = Monk::Persistence::Pg.pool(:p)
+    assert_raises(Monk::PersistenceTimeoutError) { pool.call(PoolTestCalls, :sleep_in_postgres, DB_NAME, 0.4) }
+    sleep 0.3
+
+    assert_equal ["next", 1, {}], pool.call(PoolTestCalls, :echo, "next", keyword: 1)
+  end
+
   private
 
   # Registers DB_NAME against the test Postgres under an application_name
   # of its own, so connection_count sees only this pool's connections.
-  def start_pool(name, size:)
+  def start_pool(name, size:, **)
     skip_unless_postgres_available
     Monk::Persistence::Pg.reset!
     @application_name = "monk_pool_test_#{SecureRandom.hex(4)}"
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts, application_name: @application_name)
-    Monk::Persistence::Pg.pool(name, db: DB_NAME, size: size)
+    Monk::Persistence::Pg.pool(name, db: DB_NAME, size: size, **)
     Monk::Persistence::Pg.start_pools!(name)
+  end
+
+  # Keeps the pool's one worker in pg_sleep from a background thread; that
+  # call's own timeout is ignored. Returns once the worker is busy.
+  def occupy_the_worker(seconds)
+    thread = Thread.new do
+      Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :sleep_in_postgres, DB_NAME, seconds)
+    rescue Monk::PersistenceTimeoutError
+      nil
+    end
+    sleep 0.1
+    thread
+  end
+
+  # occupy_the_worker's own call times out long before its pg_sleep ends;
+  # a call that gets through means the worker has moved on.
+  def wait_until_the_worker_is_free(within: 3)
+    deadline = monotonic + within
+    begin
+      Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :echo, "free?", keyword: 1)
+    rescue Monk::PersistenceTimeoutError
+      retry if monotonic < deadline
+      raise
+    end
+  end
+
+  def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+  def items_count
+    conn = PG.connect(**pg_test_opts)
+    conn.exec("SELECT count(*) FROM pool_test_items").getvalue(0, 0).to_i
+  ensure
+    conn&.close
   end
 
   def connection_count

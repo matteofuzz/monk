@@ -19,6 +19,11 @@ module Monk
   class PoolReturnError < StandardError
   end
 
+  # A pool's queue is full: as many calls as its queue: option allows are
+  # already waiting for a worker.
+  class PoolFullError < StandardError
+  end
+
   # start_pools! couldn't connect a pool's workers.
   class PoolStartError < StandardError
   end

@@ -272,7 +272,12 @@ Small red → green slices against a real Postgres, as in the other plans.
    `error_field` and a backtrace showing both sides. A `PG::Result` return
    value raises the named error. The stand-in's `error_message` works;
    other `PG::Result` methods raise `NoMethodError`.
-4. **Timeouts and the queue.** With every worker stuck on `pg_sleep`: a
+4. **Timeouts and the queue.** (Done. The dispatcher is now a small
+   class whose instance lives in its Ractor, with the idle workers, the
+   queue, and the running calls. Its ticker wakes it every `timeout / 10`
+   seconds, clamped to 10–100 ms; a deadline can be overrun by up to one
+   tick. A running call whose caller timed out keeps its worker busy
+   until it finishes, and is answered only once.) With every worker stuck on `pg_sleep`: a
    `call` raises after `timeout`; a queued call whose caller gave up is
    never run (a counter in the method stays unchanged); with `queue: 2`,
    the third waiting call raises `PoolFullError`. A call that times out
