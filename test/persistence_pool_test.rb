@@ -44,6 +44,11 @@ module PoolTestCalls
     nil
   end
 
+  def self.append(db, number)
+    Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("INSERT INTO pool_test_log (n) VALUES ($1)", [number]) }
+    nil
+  end
+
   def self.raw_result(db) = Monk::Persistence::Pg.checkout(db) { |conn| conn.exec("SELECT 1") }
 
   def self.sleep_in_postgres(db, seconds)
@@ -376,6 +381,76 @@ class PersistencePoolTest < Minitest::Test
     assert_equal ["next", 1, {}], pool.call(PoolTestCalls, :echo, "next", keyword: 1)
   end
 
+  # -- Phase 5: call_async --
+
+  def test_call_async_returns_once_accepted_and_the_method_runs
+    start_pool(:p, size: 1)
+    with_items_table do
+      started = monotonic
+      busy = occupy_the_worker(0.5)
+
+      assert_nil Monk::Persistence::Pg.pool(:p).call_async(PoolTestCalls, :record, DB_NAME, 7)
+
+      assert_operator monotonic - started, :<, 0.3, "call_async waited for the busy worker"
+      busy.join
+      wait_for { items_count == 1 }
+    end
+  end
+
+  def test_call_async_raises_when_the_queue_is_full
+    start_pool(:p, size: 1, queue: 1)
+    busy = occupy_the_worker(0.5)
+    Monk::Persistence::Pg.pool(:p).call_async(PoolTestCalls, :echo, "queued", keyword: 1)
+
+    assert_raises(Monk::PoolFullError) { Monk::Persistence::Pg.pool(:p).call_async(PoolTestCalls, :echo, "x", keyword: 1) }
+    busy.join
+  end
+
+  # Nobody waits for an async call, so its failure is logged.
+  def test_a_failing_async_call_is_logged
+    contents = with_log do |dir|
+      with_settings do
+        # Boot's order: Settings first, so the log level Monk::Log keeps is
+        # frozen and readable from the worker's Ractor.
+        Monk::Settings.freeze_registry!
+        Monk::Log.freeze_registry!
+        start_pool(:p, size: 1)
+
+        Monk::Persistence::Pg.pool(:p).call_async(PoolTestCalls, :raise_argument_error, "lost in the pool")
+
+        wait_for { File.exist?(File.join(dir, "test.log")) && File.read(File.join(dir, "test.log")).include?("lost") }
+        File.read(File.join(dir, "test.log"))
+      end
+    end
+
+    assert_match(/ERROR .*pool :p.*PoolTestCalls\.raise_argument_error.*ArgumentError: lost in the pool/, contents)
+  end
+
+  # Order comes from size: one worker runs one sender's calls in the order
+  # it made them.
+  def test_a_pool_of_one_runs_a_senders_calls_in_order
+    start_pool(:p, size: 1)
+    with_log_table do
+      pool = Monk::Persistence::Pg.pool(:p)
+      (1..50).each { |n| pool.call_async(PoolTestCalls, :append, DB_NAME, n) }
+
+      wait_for { log_table_values.size == 50 }
+      assert_equal (1..50).to_a, log_table_values
+    end
+  end
+
+  # A timed-out async call would have nobody to tell: it has no deadline.
+  def test_an_async_call_runs_even_after_waiting_longer_than_the_timeout
+    start_pool(:p, size: 1, timeout: 0.2)
+    with_items_table do
+      busy = occupy_the_worker(0.6)
+      Monk::Persistence::Pg.pool(:p).call_async(PoolTestCalls, :record, DB_NAME, 9)
+      busy.join
+
+      wait_for(within: 3) { items_count == 1 }
+    end
+  end
+
   private
 
   # Registers DB_NAME against the test Postgres under an application_name
@@ -414,6 +489,29 @@ class PersistencePoolTest < Minitest::Test
   end
 
   def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+  def wait_for(within: 2)
+    deadline = monotonic + within
+    sleep 0.02 until yield || monotonic > deadline
+    assert yield, "condition not met within #{within}s"
+  end
+
+  def with_log_table
+    conn = PG.connect(**pg_test_opts)
+    conn.exec("DROP TABLE IF EXISTS pool_test_log")
+    conn.exec("CREATE TABLE pool_test_log (seq bigserial PRIMARY KEY, n int NOT NULL)")
+    yield
+  ensure
+    conn&.exec("DROP TABLE IF EXISTS pool_test_log")
+    conn&.close
+  end
+
+  def log_table_values
+    conn = PG.connect(**pg_test_opts)
+    conn.exec("SELECT n FROM pool_test_log ORDER BY seq").column_values(0).map(&:to_i)
+  ensure
+    conn&.close
+  end
 
   def items_count
     conn = PG.connect(**pg_test_opts)

@@ -20,6 +20,14 @@ module Monk
       # well under a second, so a full queue means a stalled database.
       DEFAULTS = { db: :primary, size: 4, timeout: 5, queue: 1000 }.freeze
 
+      # Monk::Log writes to log/<env>.log once Monk has booted. A worker
+      # mustn't die of a failure to log, whatever state Monk::Log is in.
+      def self.log(level, message)
+        Monk::Log.public_send(level, "Monk::Persistence #{message}")
+      rescue StandardError
+        nil
+      end
+
       # A started pool, as Registry#pool(name) returns it: frozen, so it can
       # be kept in a constant and used from any Ractor.
       Handle = Data.define(:config, :inbox) do
@@ -45,6 +53,25 @@ module Monk
           end
         ensure
           reply&.close
+        end
+
+        # Like #call, but returns nil as soon as the dispatcher has the call
+        # (microseconds), without waiting for it to run. Raises
+        # Monk::PoolFullError when the queue is full. The call has no
+        # deadline: it always runs, however long it waits. A failure while
+        # it runs is logged, since nobody is waiting for it.
+        #
+        # One sender's calls run in the order it made them only in a pool
+        # of size 1; a larger pool runs them side by side.
+        def call_async(receiver, method, *args, **kwargs)
+          ack = Ractor::Port.new
+          inbox.send([:call, receiver, method, args, kwargs, ack, nil])
+          status, = ack.receive
+          raise Monk::PoolFullError, full_message if status == :full
+
+          nil
+        ensure
+          ack&.close
         end
 
         private
@@ -109,7 +136,9 @@ module Monk
 
         private
 
-        # A call message: [:call, receiver, method, args, kwargs, reply, deadline].
+        # A call message: [:call, receiver, method, args, kwargs, reply,
+        # deadline]. An async call has no deadline, and its reply port only
+        # hears whether it was accepted.
         def reply_of(call) = call[5]
         def deadline_of(call) = call[6]
 
@@ -117,6 +146,12 @@ module Monk
           return answer(call, [:full]) if @waiting.size >= @config.queue
 
           @waiting.push(call)
+          answer(call, [:accepted]) unless deadline_of(call)
+        end
+
+        def past?(call, now)
+          deadline = deadline_of(call)
+          deadline && deadline < now
         end
 
         def idle(worker)
@@ -139,10 +174,10 @@ module Monk
 
         def expire
           now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-          expired, @waiting = @waiting.partition { |call| deadline_of(call) < now }
+          expired, @waiting = @waiting.partition { |call| past?(call, now) }
           expired.each { |call| answer(call, [:timeout]) }
           @running.each do |worker, call|
-            next unless call && deadline_of(call) < now
+            next unless call && past?(call, now)
 
             answer(call, [:timeout])
             @running[worker] = nil
@@ -196,7 +231,9 @@ module Monk
             call = port.receive
             break if call == :stop
 
-            _, receiver, method, args, kwargs, reply = call
+            _, receiver, method, args, kwargs, reply, deadline = call
+            next perform_async(config, receiver, method, args, kwargs) unless deadline
+
             perform(backend, receiver, method, args, kwargs, reply)
           end
         rescue Ractor::ClosedError
@@ -219,6 +256,16 @@ module Monk
           status, value = result
           fallback = status == :ok ? Portable.return_error(receiver, method, value) : Portable.summary(value)
           deliver(reply, [:error, fallback])
+        end
+
+        # Nobody waits for an async call's result: only its failure is
+        # reported, in the log.
+        def self.perform_async(config, receiver, method, args, kwargs)
+          receiver.public_send(method, *args, **kwargs)
+        rescue StandardError => e
+          trace = Array(e.backtrace).first(10).map { |frame| "\n  #{frame}" }.join
+          what = "#{receiver}.#{method} failed: #{e.class}: #{e.message}"
+          Pool.log(:error, "pool #{config.name.inspect}: #{what}#{trace}")
         end
 
         # False when the result can't be copied to the caller's Ractor.

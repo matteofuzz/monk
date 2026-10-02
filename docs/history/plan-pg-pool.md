@@ -283,7 +283,11 @@ Small red → green slices against a real Postgres, as in the other plans.
    the third waiting call raises `PoolFullError`. A call that times out
    while running: its worker's late reply to the closed port doesn't
    crash the worker, and the worker serves the next call.
-5. **`call_async`.** It returns once accepted, raises when the queue is
+5. **`call_async`.** (Done. An async call is a call with no deadline:
+   the dispatcher answers `:accepted` on its port as soon as it's queued,
+   and the ticker never expires it. The worker skips delivering its
+   result and logs a failure, with the first 10 backtrace lines, through
+   a logger that can't end the worker.) It returns once accepted, raises when the queue is
    full or the pool isn't started, and logs a failure inside the method.
    With `size: 1`, a sender's calls run in its order (numbered writes read
    back in sequence).
