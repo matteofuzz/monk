@@ -318,7 +318,15 @@ Small red → green slices against a real Postgres, as in the other plans.
    too). The monk_talk measurement repeated: with 20, then 1,000 open
    sockets, the server holds `size` connections plus `LISTEN`. Socket
    Ractors open none.
-8. **`Monk::Live.authorize(..., db_pool:)`.** A rule's body runs in the
+8. **`Monk::Live.authorize(..., db_pool:)`.** (Done. The pool calls
+   `Policy.check(block, subject, topic)` with the rule's own block as an
+   argument: a shareable proc crosses a port by reference. Pool failures
+   (not started in this process, timed out, full, a worker died, the
+   pool stopped) still deny, failing closed, but are logged with the
+   topic, the rule and the pool, since silently denying every
+   subscription for a missing `start_pools!` would be hard to find; a
+   rule's own exceptions still deny silently, as before. Measured: 10
+   sockets checking a database rule share a pool of 2's connections.) A rule's body runs in the
    pool. Rules are already shareable procs, so nothing new is asked of
    apps.
 9. **The `PgFanout` publisher through a pool of size 1.** It replaces one

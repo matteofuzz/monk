@@ -74,9 +74,11 @@ module Monk
 
       # Boot-time, main Ractor. See Monk::Live::Policy for the semantics:
       # deny by default, first matching rule wins, anonymous subjects need
-      # `anonymous: true`. The block must be Ractor-shareable.
-      def authorize(pattern, anonymous: false, &block)
-        @rules = Ractor.make_shareable([*@rules, Policy.build_rule(pattern, anonymous, block)])
+      # `anonymous: true`. The block must be Ractor-shareable. db_pool:
+      # names a Monk::Persistence::Pg pool to run the block in, for a rule
+      # that queries the database; the WebSocket process must start it.
+      def authorize(pattern, anonymous: false, db_pool: nil, &block)
+        @rules = Ractor.make_shareable([*@rules, Policy.build_rule(pattern, anonymous, block, db_pool)])
       end
 
       def authorized?(subject, topic) = Policy.allowed?(rules, subject, topic)
