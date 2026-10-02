@@ -36,11 +36,66 @@ module Monk
           .tap { |types| %w[json jsonb].each { |name| types.register_type(0, name, nil, JsonDecoder) } },
       )
 
+      # Without a connect_timeout, libpq waits indefinitely for a host that
+      # doesn't answer -- and #checkout's revive does so holding the
+      # Ractor's slot. The same 5 s as Registry's checkout timeout. An
+      # app's own connect_timeout: wins.
+      DEFAULT_CONNECT_TIMEOUT = 5
+
       class << self
+        # Detects a connection the server has closed (a restart, a
+        # failover, pg_terminate_backend). libpq still reports
+        # CONNECTION_OK, but the socket is readable: a healthy idle
+        # connection's isn't. So the common case costs one zero-timeout
+        # select, about 1 µs, and nothing sent.
+        #
+        # A readable socket is either the server's FATAL before it closes,
+        # or a NOTIFY on a connection that LISTENs. Reading on to tell
+        # them apart races the close: the FATAL can arrive a moment before
+        # the end of file, and a second select in between sees nothing.
+        # So a readable socket gets an empty query, one round trip, which
+        # fails on a closed connection and leaves pending notifies queued.
+        #
+        # A network path that dies without closing the socket (a NAT
+        # timing out an idle connection) leaves it unreadable, and this
+        # can't see it: the next query waits for TCP to give up.
+        #
+        # Public: PgFanout probes its own connections with it.
+        def alive?(conn)
+          return false unless conn.status == PG::CONNECTION_OK
+          return true unless conn.socket_io.wait_readable(0)
+
+          conn.exec("")
+          true
+        rescue PG::Error, IOError
+          false
+        end
+
+        # Same connection object, new backend: the result type map set by
+        # #connect survives. Raises PG::ConnectionBad if Postgres is still
+        # unreachable; the next checkout tries again.
+        def revive(conn)
+          conn.reset
+        end
+
         private
 
+        # A block that ran a raw BEGIN and raised leaves the connection in
+        # a transaction, and the next checkout in this Ractor would run
+        # inside it. (conn.transaction rolls back by itself.) Skipped for
+        # PQTRANS_ACTIVE, a query still running: a ROLLBACK would first
+        # wait for it. Monk::Jobs cancels those itself.
+        def release(conn)
+          return unless conn.status == PG::CONNECTION_OK
+          return unless [PG::PQTRANS_INTRANS, PG::PQTRANS_INERROR].include?(conn.transaction_status)
+
+          conn.exec("ROLLBACK")
+        rescue PG::Error
+          nil
+        end
+
         def connect(**opts)
-          conn = PG.connect(**opts)
+          conn = PG.connect(connect_timeout: DEFAULT_CONNECT_TIMEOUT, **opts)
           conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn, registry: RESULT_TYPES)
           conn
         end

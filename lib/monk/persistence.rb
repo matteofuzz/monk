@@ -46,9 +46,18 @@ module Monk
             "(checkout held longer than #{timeout}s)"
         end
 
+        # Checked here, before the block, and never by re-running it: Monk
+        # can't tell whether a failed block's writes reached the server,
+        # so a drop in the middle of a block fails that block, and the
+        # next checkout finds the connection dead and revives it. A
+        # revive that can't reach the server raises from here.
+        revive(e.conn) unless alive?(e.conn)
         yield e.conn
       ensure
-        e.slot << true if token
+        if token
+          release(e.conn)
+          e.slot << true
+        end
       end
 
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks.
@@ -108,6 +117,19 @@ module Monk
       def disconnect(conn)
         raise NotImplementedError, "#{self} must implement #disconnect(conn)"
       end
+
+      # Optional hooks around #checkout's block. A backend that can't tell
+      # a dead connection from a live one keeps these defaults.
+
+      # Whether conn can take a query. Cheap: runs before every checkout.
+      def alive?(_conn) = true
+
+      # Reconnects a connection #alive? said was dead; raises if it can't.
+      def revive(_conn) = nil
+
+      # Runs after every checkout's block, however it ended. Must not
+      # raise: it runs in an ensure, and would hide the block's exception.
+      def release(_conn) = nil
     end
   end
 end

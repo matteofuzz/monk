@@ -13,6 +13,20 @@ in `lib/monk/version.rb`.
   and the first 10 backtrace lines; before, only `GET /path -> 500` was
   logged, in development too. An exception an `error` handler takes care
   of logs one `INFO ... (handled)` line.
+- `Monk::Persistence::Pg` recovers from a dropped connection (a Postgres
+  restart, a failover, `pg_terminate_backend`). Before, every request
+  that touched the database answered `500` until the process restarted.
+  `checkout` now checks the connection first, about 1 µs when it's
+  healthy, and reconnects a dead one. A block is never run twice: a drop
+  in the middle of one fails that request, and the next checkout
+  reconnects. While Postgres is down, `checkout` raises
+  `PG::ConnectionBad` at once.
+- `Monk::Persistence::Pg` connections get `connect_timeout: 5` unless the
+  app sets one, so a reconnect to a host that doesn't answer fails
+  instead of waiting indefinitely.
+- A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
+  its transaction open for the next checkout in that Ractor: it's rolled
+  back.
 
 ## 0.19.0 - 2026-10-01
 

@@ -103,6 +103,16 @@ The fix rests on these, all checked on a real connection:
 
    Cost: 10,000 probes on a healthy connection took 21.9 ms, about
    2 µs each, a zero-timeout `select` and nothing sent.
+
+   **Revised in phase 2:** this probe races the server's close. The
+   FATAL can arrive a moment before the end of file, so the second
+   `select` sees nothing and the probe says alive. Run 10 times, the
+   reconnect test failed 6. The shipped probe stops at the first
+   `select`: an unreadable socket is alive, and a readable one (a FATAL,
+   or a NOTIFY on a connection that LISTENs) gets an empty query, one
+   round trip, which fails on a closed connection and leaves pending
+   notifies queued. Healthy case: 1.1 µs per probe, 2.2 µs for an empty
+   `checkout`. Stable over 20 runs.
 2. **`conn.reset` works inside a worker Ractor** and keeps the
    connection object, so `type_map_for_results` (our `RESULT_TYPES`,
    json decoding) survives: `SELECT 1::int` returns an `Integer` after a
@@ -193,7 +203,12 @@ flake.
 1. **Log the exception behind a `500`.** `error_handling_test.rb`: a
    route that raises logs its class and message, with and without a
    handler.
-2. **Backend hooks and the checkout probe.** `persistence_test.rb`:
+2. **Backend hooks and the checkout probe.** (Done. `conn.reset` also
+   reconnects a connection closed locally with `finish`, so
+   `jobs_runtime_test.rb`'s job that lost its connection to make a
+   worker's finish fail now recovers instead. It was renamed
+   `CantFinish` and sets its session read-only instead, so the test
+   still covers releasing a dead worker's job.) `persistence_test.rb`:
    - a checkout after `pg_terminate_backend` succeeds, on a new backend
      pid;
    - a block that raises `PG::ConnectionBad` mid-way propagates (no
