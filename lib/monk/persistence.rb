@@ -101,6 +101,11 @@ module Monk
         Ractor.current[:monk_persistence] = {}
       end
 
+      # The pools started in this process, name => size (Monk.boot's line).
+      def running_pools
+        (@running || {}).transform_values { |handle| handle.config.size }
+      end
+
       # A declared pool's options (a frozen Pool::Config).
       def pool_config(name)
         pools.fetch(name) do

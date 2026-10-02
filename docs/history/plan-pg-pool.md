@@ -346,7 +346,8 @@ Small red → green slices against a real Postgres, as in the other plans.
    connection options, while a pool's `db:` is a registered database
    name. Add `PgFanout.new(registry, db_pool: :notify)`, and keep
    `pg_opts:` for the per-Ractor publisher; passing both raises.
-10. **Docs.**
+10. **Docs.** (Done. The boot line reads ` - pools=auth(4),notify(1)`,
+    from a new `Registry#running_pools`.)
     - `docs/guides/persistence.md`: a "Pools" section covering when to use
       one (short-lived Ractors, work that shouldn't wait), the rules
       (receiver and method name, data in and out, no caller context,

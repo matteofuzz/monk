@@ -171,6 +171,22 @@ class PersistencePoolTest < Minitest::Test
     assert_raises(Monk::UnknownPoolError) { Monk::Persistence::Pg.pool(:auth) }
   end
 
+  # -- Phase 10: the boot line --
+
+  def test_the_boot_line_lists_the_pools_running_in_this_process
+    start_pool(:p, size: 2)
+    app = Class.new(Monk::Base) { get("/") { "hi" } }
+
+    original = $stdout
+    $stdout = StringIO.new
+    Monk.boot(app)
+    output = $stdout.string
+
+    assert_match(/^ - pools=p\(2\)$/, output)
+  ensure
+    $stdout = original
+  end
+
   # -- Phase 2: starting a pool, and call --
 
   def test_call_runs_the_method_in_the_pool_with_positional_and_keyword_arguments

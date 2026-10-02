@@ -51,6 +51,21 @@ in `lib/monk/version.rb`.
 
 ### Added
 
+- Connection pools for Ractors that shouldn't each hold a connection
+  (`docs/guides/persistence.md`, "Pools"): `Monk::Persistence::Pg.pool(:auth,
+  size: 4)` declares one, `start_pools!(:auth)` starts it in the process that
+  uses it, and `pool(:auth).call(Contacts, :include?, owner, email)` runs that
+  method in one of its worker Ractors, from any Ractor. Errors keep their
+  class (`rescue PG::UniqueViolation` works), calls time out, a full queue
+  refuses calls, dying workers are replaced, and `call_async` doesn't wait.
+  `Monk.boot` lists running pools.
+- `Monk::WebSocket::Server.new(db_pool:)` checks sessions through a pool:
+  open sockets no longer hold a Postgres connection each (1,000 sockets on
+  4 connections).
+- `Monk::Live.authorize(..., db_pool:)` runs a rule in a pool.
+- `Monk::WebSocket::PgFanout.new(registry, db_pool:)` publishes through a
+  pool of size 1: one publishing connection per process, and
+  `Monk::Live.patch` no longer waits for (or raises because of) Postgres.
 - `Monk::WebSocket::Registry#close_all(code, reason)` closes every
   registered connection's socket with that code, through a
   `Monk::WebSocket::CloseRequest` sent to each port.
