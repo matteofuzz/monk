@@ -1,5 +1,6 @@
 require_relative "test_helper"
 require "timeout"
+require "securerandom"
 require "monk/websocket"
 require "monk/websocket/pg_fanout"
 
@@ -17,6 +18,10 @@ require "monk/websocket/pg_fanout"
 # local Postgres.
 class WebSocketPgFanoutTest < Minitest::Test
   include PersistenceTestHelpers
+
+  def teardown
+    Monk::Persistence::Pg.reset!
+  end
 
   def test_a_fanout_instance_is_frozen_and_ractor_shareable
     skip_unless_postgres_available
@@ -309,7 +314,101 @@ class WebSocketPgFanoutTest < Minitest::Test
     port&.close
   end
 
+  # -- db_pool: (docs/history/plan-pg-pool.md, phase 9) --
+  # The publisher through a pool of one worker, instead of one connection
+  # per Ractor that publishes.
+
+  def test_a_fanout_with_db_pool_publishes_through_the_pool
+    start_notify_pool(size: 1)
+    publisher = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
+    listener, = listening_fanout
+    port = Ractor::Port.new
+    listener.register(:room1, port)
+
+    publisher.broadcast(:room1, "through the pool")
+
+    assert_equal "through the pool", Timeout.timeout(3) { port.receive }
+  ensure
+    port&.close
+  end
+
+  def test_ractors_publishing_through_the_pool_share_its_one_connection
+    start_notify_pool(size: 1)
+    publisher = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
+
+    Array.new(4) { Ractor.new(publisher) { |fanout| 5.times { |i| fanout.broadcast(:room1, "n#{i}") } } }.each(&:join)
+
+    assert_equal 1, notify_pool_connection_count
+  end
+
+  # Patches to a page must arrive in the order they were published.
+  def test_one_senders_broadcasts_arrive_in_order
+    start_notify_pool(size: 1)
+    publisher = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
+    listener, = listening_fanout
+    port = Ractor::Port.new
+    listener.register(:room1, port)
+
+    (1..50).each { |n| publisher.broadcast(:room1, n.to_s) }
+
+    assert_equal((1..50).map(&:to_s), Array.new(50) { Timeout.timeout(3) { port.receive } })
+  ensure
+    port&.close
+  end
+
+  def test_a_pool_larger_than_one_is_refused_naming_the_order_rule
+    start_notify_pool(size: 2)
+
+    error = assert_raises(ArgumentError) { Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify) }
+
+    assert_match(/size 1/, error.message)
+    assert_match(/order/, error.message)
+  end
+
+  def test_pg_opts_or_db_pool_but_not_both_nor_neither
+    start_notify_pool(size: 1)
+
+    assert_raises(ArgumentError) do
+      Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts, db_pool: :notify)
+    end
+    assert_raises(ArgumentError) { Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new) }
+  end
+
+  # The WebSocket process builds the same fanout from the same config, and
+  # LISTENs: with db_pool: only, it LISTENs on the pool's database.
+  def test_a_fanout_with_db_pool_can_listen
+    start_notify_pool(size: 1)
+    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify).listen!
+    port = Ractor::Port.new
+    fanout.register(:room1, port)
+
+    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).broadcast(:room1, "heard")
+
+    assert_equal "heard", Timeout.timeout(3) { port.receive }
+  ensure
+    port&.close
+  end
+
   private
+
+  def start_notify_pool(size:)
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.reset!
+    @notify_application_name = "monk_notify_pool_#{SecureRandom.hex(4)}"
+    Monk::Persistence::Pg.register(:notify_db, **pg_test_opts, application_name: @notify_application_name)
+    Monk::Persistence::Pg.pool(:notify, db: :notify_db, size: size)
+    Monk::Persistence::Pg.start_pools!(:notify)
+  end
+
+  def notify_pool_connection_count
+    conn = PG.connect(**pg_test_opts)
+    result = conn.exec_params(
+      "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", [@notify_application_name],
+    )
+    result.getvalue(0, 0).to_i
+  ensure
+    conn&.close
+  end
 
   # Backends whose last statement was this fanout's LISTEN: pg_stat_activity
   # keeps an idle backend's last query text (test/support/live_ws_process_pg.rb).

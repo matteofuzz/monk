@@ -329,7 +329,17 @@ Small red → green slices against a real Postgres, as in the other plans.
    sockets checking a database rule share a pool of 2's connections.) A rule's body runs in the
    pool. Rules are already shareable procs, so nothing new is asked of
    apps.
-9. **The `PgFanout` publisher through a pool of size 1.** It replaces one
+9. **The `PgFanout` publisher through a pool of size 1.** (Done, with
+   `call_async`: size 1 only matters for async calls, since a blocking
+   `call` keeps one sender's publishes in order at any size, so the
+   plan's size rule implied async. The consequence, decided here: with
+   `db_pool:`, a failed `pg_notify` is logged, not raised, so
+   `Live.patch` no longer raises when Postgres is down (it did, failing
+   a request whose write had succeeded); the page catches up at its next
+   resync. An oversized payload and a full queue still raise. `pg_opts:`
+   keeps the old behaviour. With `db_pool:` only, `#listen!` connects
+   with the pool's database's options, through a new
+   `Registry#connection_options`.) It replaces one
    publisher connection per Ractor that pushes. A pool larger than 1
    raises at configuration, naming the ordering rule. This needs a
    constructor change: `PgFanout.new(registry, pg_opts:)` takes raw

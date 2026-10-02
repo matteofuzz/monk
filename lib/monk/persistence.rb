@@ -28,6 +28,14 @@ module Monk
         configs[name] = opts
       end
 
+      # The options a database was registered with, for something that
+      # opens its own connection to it (PgFanout's LISTEN).
+      def connection_options(name)
+        configs.fetch(name) do
+          raise Monk::UnknownPersistenceError, "no database registered as #{name.inspect}"
+        end
+      end
+
       # Registered connection names (e.g. :primary) -- Monk.boot's log
       # line reads this to report which backends an app actually uses.
       def names

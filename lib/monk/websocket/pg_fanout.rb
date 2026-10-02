@@ -122,7 +122,28 @@ module Monk
       def self.log(level, message) = Listeners.log(name, level, message)
       private_class_method :relay, :listen_connection, :reconnect, :log
 
-      def initialize(registry, pg_opts:)
+      # The body of a pooled publish (#broadcast with db_pool:), run in the
+      # pool's worker on its connection. That connection serves nothing
+      # but pool calls, each of which ends its transaction, so a NOTIFY
+      # here is never held back by an app's open transaction.
+      def self.notify(db, envelope)
+        Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("SELECT pg_notify($1, $2)", [CHANNEL, envelope]) }
+        nil
+      end
+
+      # pg_opts: connects the publisher (one connection per Ractor that
+      # publishes) and #listen!'s LISTEN connection. db_pool: (a
+      # Monk::Persistence::Pg pool of size 1, docs/history/plan-pg-pool.md)
+      # publishes through that pool instead, so a process holds one
+      # publishing connection however many Ractors publish, and LISTENs on
+      # the pool's database. Exactly one of the two.
+      #
+      # Through the pool a publish doesn't wait for Postgres (call_async):
+      # a failed pg_notify is logged, not raised, and the page catches up
+      # at its next resync, as it would after any missed patch. Size 1
+      # because only a single worker runs one sender's publishes in the
+      # order they were made, and patches to a page must arrive in order.
+      def initialize(registry, pg_opts: nil, db_pool: nil)
         # Checked upfront, on the argument -- RedisFanout has no equivalent
         # check (freezing self never raises on its own, even when an ivar
         # isn't itself shareable), so a bad registry there only surfaces
@@ -142,7 +163,12 @@ module Monk
         # fails on this Hash's contents, not on the registry argument it's
         # meant to guard, the same trap Server#initialize's
         # allowed_origins already avoids the same way.
-        @pg_opts = Ractor.make_shareable(pg_opts.dup)
+        raise ArgumentError, "Monk::WebSocket::PgFanout.new needs pg_opts: or db_pool:, not both" if pg_opts && db_pool
+        raise ArgumentError, "Monk::WebSocket::PgFanout.new needs pg_opts: or db_pool:" unless pg_opts || db_pool
+
+        @pg_opts = Ractor.make_shareable((pg_opts || pooled_pg_opts(db_pool)).dup)
+        @db_pool = db_pool
+        @db = db_pool && Monk::Persistence::Pg.pool_config(db_pool).db
         # Frozen explicitly, not just a String literal: read from every
         # calling Ractor's own #broadcast and from the subscriber Ractor
         # #listen! starts, both of which raise Ractor::IsolationError on an
@@ -218,10 +244,24 @@ module Monk
         # parameter sidesteps any quoting/injection concern for its bytes
         # entirely, unlike Redis's PUBLISH, which never had that concern
         # in the first place.
+        return Monk::Persistence::Pg.pool(@db_pool).call_async(PgFanout, :notify, @db, envelope) if @db_pool
+
         publisher.exec_params("SELECT pg_notify($1, $2)", [CHANNEL, envelope])
       end
 
       private
+
+      # The pool's database's connection options, for #listen!.
+      def pooled_pg_opts(db_pool)
+        config = Monk::Persistence::Pg.pool_config(db_pool)
+        unless config.size == 1
+          raise ArgumentError,
+            "Monk::WebSocket::PgFanout's db_pool #{db_pool.inspect} has size #{config.size}; it must have size 1: " \
+            "patches to a page must arrive in the order they were published, and only one worker keeps " \
+            "a sender's publishes in order"
+        end
+        Monk::Persistence::Pg.connection_options(config.db)
+      end
 
       # Length-prefixes the origin and key (Netstring-style: "<bytesize>:"
       # then that many bytes) instead of RedisFanout's NUL-separated
