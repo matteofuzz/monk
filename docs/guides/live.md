@@ -196,7 +196,7 @@ with recipient topics.
 - If delivering to a connection fails unexpectedly, the server closes that
   connection (code 1011), and the client reconnects and re-syncs. The
   WebSocket process does the same to every open connection after its
-  `PgFanout` listener reconnects (below).
+  listener reconnects (below).
 
 ## Without Redis: Postgres LISTEN/NOTIFY instead
 
@@ -240,25 +240,24 @@ Two real tradeoffs, not just a syntax swap:
   before ever hitting Postgres if a rendered fragment (plus a small amount of
   internal framing) is too big — shrink the fragment, or use `RedisFanout` if
   your partials can be large.
-- **`PgFanout` recovers from a dropped connection; `RedisFanout`'s
-  listener doesn't yet.** When Postgres restarts or fails over:
-  - The publisher (in `bin/server`, `bin/jobs`) checks its connection
-    before each publish and reconnects it, the way
-    [`persistence.md`](persistence.md#when-the-connection-drops) describes.
-    A publish that fails is not retried, since it may have gone through,
-    and a patch delivered twice shows twice. While Postgres is down,
-    `Monk::Live.patch` raises, after delivering to subscribers in its own
-    process, the same way it does when Redis is down (above).
-  - The WebSocket process's `LISTEN` connection reconnects, retrying after
-    0.5 s, then twice as long each time, up to 30 s. Anything published
-    while it was down is lost, and no page can tell, so once it listens
-    again it closes every open socket with `1011`. Each page reconnects
-    and refetches itself (its jittered reconnect spreads the refetches),
-    which brings back whatever it missed. Both events are logged.
-
-  `RedisFanout`'s listener ends if Redis drops its connection, and the
-  WebSocket process stops receiving other processes' publishes until it
-  restarts.
+- **Both transports recover from a dropped connection.** When Postgres or
+  Redis restarts or fails over:
+  - The publisher (in `bin/server`, `bin/jobs`) reconnects. `PgFanout`'s
+    checks its connection before each publish, the way
+    [`persistence.md`](persistence.md#when-the-connection-drops) describes,
+    and never retries a publish that failed, since it may have gone
+    through. `RedisFanout`'s relies on redis-rb, which reconnects and sends
+    a failed command once more: if the connection drops after Redis has
+    already received a publish, that patch arrives twice. While the server
+    is down, `Monk::Live.patch` raises, after delivering to subscribers in
+    its own process (above).
+  - The WebSocket process's listener (`LISTEN`, or Redis's `PSUBSCRIBE`)
+    reconnects, retrying after 0.5 s, then twice as long each time, up to
+    30 s. Anything published while it was down is lost, and no page can
+    tell, so once it listens again it closes every open socket with
+    `1011`. Each page reconnects and refetches itself (its jittered
+    reconnect spreads the refetches), which brings back whatever it
+    missed. Both events are logged.
 
 ## Cost and limits
 

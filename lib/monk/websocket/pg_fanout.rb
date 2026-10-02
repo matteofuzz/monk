@@ -55,11 +55,6 @@ module Monk
         [origin, key, payload]
       end
 
-      # Reconnect backoff for the LISTEN connection: 500 ms doubling to
-      # 30 s, the same curve as monk_live.js's reconnect.
-      LISTEN_RETRY_INITIAL = 0.5
-      LISTEN_RETRY_MAX = 30
-
       # The body of #listen!'s subscriber Ractor. A class method, like
       # .decode_envelope, because the Ractor has no PgFanout instance to
       # call into. Reports :ok, or why it couldn't LISTEN, on `ready`, then
@@ -67,10 +62,10 @@ module Monk
       #
       # A dropped LISTEN connection (a Postgres restart, a failover) is
       # reconnected with backoff (plan-pg-reconnect.md). Notifies sent
-      # while it was down are lost, and no client can tell: its seq counts
-      # what this process sent it. So once listening again, every open
-      # socket is closed with 1011, and each client reconnects and resyncs
-      # (ADR 0011); their jittered reconnect spreads the refetches.
+      # while it was down are lost, so once listening again every open
+      # socket is closed (Listeners::MISSED_CODE), and each client
+      # reconnects and resyncs; their jittered reconnect spreads the
+      # refetches.
       def self.subscribe(registry, pg_opts, own_origin, ready)
         begin
           conn = listen_connection(pg_opts)
@@ -85,7 +80,7 @@ module Monk
         rescue PG::ConnectionBad => e
           log(:error, "lost the LISTEN connection (#{e.message.lines.first&.strip}); reconnecting")
           conn = reconnect(pg_opts)
-          closed = registry.close_all(1011, "missed broadcasts")
+          closed = registry.close_all(Listeners::MISSED_CODE, Listeners::MISSED_REASON)
           log(:info, "listening again; closed #{closed} socket(s) so their pages resync")
         end
       end
@@ -113,24 +108,18 @@ module Monk
       end
 
       def self.reconnect(pg_opts)
-        delay = LISTEN_RETRY_INITIAL
+        delay = Listeners::RETRY_INITIAL
         begin
           listen_connection(pg_opts)
         rescue PG::Error => e
           log(:warn, "can't LISTEN yet (#{e.class}: #{e.message.lines.first&.strip}); retrying in #{delay}s")
           sleep delay
-          delay = [delay * 2, LISTEN_RETRY_MAX].min
+          delay = Listeners.next_delay(delay)
           retry
         end
       end
 
-      # Monk::Log writes to log/<env>.log once Monk has booted. Logging
-      # must never end the subscriber, whatever state Monk::Log is in.
-      def self.log(level, message)
-        Monk::Log.public_send(level, "Monk::WebSocket::PgFanout: #{message}")
-      rescue StandardError
-        nil
-      end
+      def self.log(level, message) = Listeners.log(name, level, message)
       private_class_method :relay, :listen_connection, :reconnect, :log
 
       def initialize(registry, pg_opts:)

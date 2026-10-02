@@ -38,6 +38,72 @@ module Monk
       # already shareable.
       CHANNEL_PREFIX = "monk:ws:".freeze
 
+      # The body of #listen!'s subscriber Ractor. A class method because
+      # the Ractor has no RedisFanout instance to call into. Reports :ok,
+      # or why it couldn't subscribe, on `ready`, then relays messages for
+      # the rest of the process's life.
+      #
+      # A dropped connection (a Redis restart, a failover) is resubscribed
+      # with backoff. Messages published while it was down are lost, so
+      # once subscribed again every open socket is closed
+      # (Listeners::MISSED_CODE), and each client reconnects and resyncs.
+      def self.subscribe(registry, url, own_origin, ready)
+        listening = false
+        delay = Listeners::RETRY_INITIAL
+        loop do
+          Redis.new(url: url).psubscribe("#{CHANNEL_PREFIX}*") do |on|
+            on.psubscribe do
+              delay = Listeners::RETRY_INITIAL
+              if listening
+                closed = registry.close_all(Listeners::MISSED_CODE, Listeners::MISSED_REASON)
+                log(:info, "subscribed again; closed #{closed} socket(s) so their pages resync")
+              else
+                listening = true
+                ready.send(:ok)
+              end
+            end
+            on.pmessage { |_pattern, channel, envelope| relay(registry, own_origin, channel, envelope) }
+          end
+        rescue StandardError => e
+          # Not narrower: redis-rb lets redis-client's own
+          # RedisClient::ConnectionError out of psubscribe, not a
+          # Redis::BaseConnectionError. #relay rescues its own errors, so
+          # what gets here is the connection.
+          return ready.send("#{e.class}: #{e.message}") unless listening
+
+          log(:error, "subscriber connection failed (#{e.class}: #{e.message}); retrying in #{delay}s")
+          sleep delay
+          delay = Listeners.next_delay(delay)
+        end
+      end
+
+      # One message into this process's registry. Anything that goes wrong
+      # here drops this message only: escaping, it would end the
+      # subscriber Ractor, and with it every later broadcast, silently.
+      #
+      # Redis channel names are always Strings, but Registry's own keys
+      # are ordinary Hash keys the app chooses -- every existing caller
+      # (Registry's own tests, the websocket_server scaffold's :chat
+      # channel) uses a Symbol. #to_sym here is what makes
+      # registry.broadcast(:chat, ...) land on the same Hash key
+      # #register(:chat, port) used -- without it this silently
+      # broadcasts to an unrelated "chat" String key that nothing is ever
+      # registered under, and #broadcast still returns true either way
+      # (Registry#broadcast succeeds whether or not any port is registered
+      # for a key).
+      def self.relay(registry, own_origin, channel, envelope)
+        sender, payload = envelope.split("\0", 2)
+        raise ArgumentError, "no origin separator in the message" unless payload
+        return if sender == own_origin
+
+        registry.broadcast(channel.delete_prefix(CHANNEL_PREFIX).to_sym, payload)
+      rescue StandardError => e
+        log(:error, "dropped a message on #{channel}: #{e.class}: #{e.message}")
+      end
+
+      def self.log(level, message) = Listeners.log(name, level, message)
+      private_class_method :relay, :log
+
       def initialize(registry, redis_url:)
         @registry = registry
         @redis_url = redis_url.dup.freeze
@@ -73,35 +139,7 @@ module Monk
         # Redis client itself is built inside the block, never passed in --
         # mirrors PG::Connection's per-Ractor pattern (persistence/pg.rb).
         Ractor.new(@registry, @redis_url, @origin, ready) do |registry, url, origin, ready|
-          subscribed = false
-          Redis.new(url: url).psubscribe("#{Monk::WebSocket::RedisFanout::CHANNEL_PREFIX}*") do |on|
-            on.psubscribe do
-              subscribed = true
-              ready.send(:ok)
-            end
-
-            on.pmessage do |_pattern, channel, envelope|
-              sender, payload = envelope.split("\0", 2)
-              next if sender == origin
-
-              # Redis channel names are always Strings, but Registry's own
-              # keys are ordinary Hash keys the app chooses -- every
-              # existing caller (Registry's own tests, the websocket_server
-              # scaffold's :chat channel) uses a Symbol. #to_sym here is
-              # what makes registry.broadcast(:chat, ...) land on the same
-              # Hash key #register(:chat, port) used -- without it this
-              # silently broadcasts to an unrelated "chat" String key that
-              # nothing is ever registered under, and #broadcast still
-              # returns true either way (Registry#broadcast succeeds
-              # whether or not any port is registered for a key).
-              key = channel.delete_prefix(Monk::WebSocket::RedisFanout::CHANNEL_PREFIX).to_sym
-              registry.broadcast(key, payload)
-            end
-          end
-        rescue StandardError => e
-          raise if subscribed
-
-          ready.send("#{e.class}: #{e.message}")
+          Monk::WebSocket::RedisFanout.subscribe(registry, url, origin, ready)
         end
 
         result = ready.receive

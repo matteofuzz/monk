@@ -32,6 +32,11 @@ in `lib/monk/version.rb`.
   `1011`, so each page reconnects and resyncs the broadcasts it missed. A
   notify that can't be decoded or relayed is logged and skipped instead
   of ending the listener.
+- `Monk::WebSocket::RedisFanout`'s subscriber resubscribes after Redis
+  drops its connection, the same way `PgFanout`'s `LISTEN` does now:
+  backoff, then every open socket closed with `1011` so pages resync.
+  Before, it ended silently. A message without an origin separator is
+  logged and skipped; it used to reach sockets as `nil`.
 - `Monk::WebSocket::Connection#close` called from a thread other than the
   handler's (a relay, the `reverify_interval` check) could leave the
   socket open, so the client never saw the close. It now shuts the

@@ -272,7 +272,14 @@ flake.
   this (`connect_timeout` is decided, decision 3). Not tested here.
   Measure, then decide whether `Pg.connect` should set defaults or the
   guide should recommend them.
-- **`RedisFanout`** has the same subscriber gap, confirmed by reading
-  the code during phase 6: once subscribed, any error re-raises and ends
-  its Ractor. The publisher wasn't checked. `Registry#close_all` from
-  phase 5 is ready for its fix. Documented in `docs/guides/live.md`.
+- **`RedisFanout`** had the same subscriber gap: once subscribed, any
+  error re-raised and ended its Ractor. Fixed after phase 6, the same way:
+  the subscriber resubscribes with backoff, closes every socket with
+  `1011`, and skips a malformed message, which it used to deliver to
+  sockets as `nil`. The backoff and the log a subscriber can't die from
+  moved to `Listeners`, shared by both fanouts. The publisher needed
+  nothing: redis-rb reconnects and resends a failed command once, so a
+  publish can arrive twice if the drop comes after Redis received it.
+  Turning that resend off would fail the first publish after every idle
+  drop, and redis-rb has no way to check a connection without a round
+  trip, so it stays.

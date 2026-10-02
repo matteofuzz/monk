@@ -53,4 +53,21 @@ class LiveMultiprocessBrowserTest < Minitest::Test
     assert_equal "still here", evaluate("document.querySelector('#c-1').textContent")
     assert_empty events("stopped")
   end
+
+  # Redis dropping the WS process's subscriber connection: it resubscribes
+  # and closes every socket with 1011, so the page refetches the change it
+  # missed, and later patches arrive as usual.
+  def test_a_dropped_subscriber_connection_makes_open_pages_resync
+    topic = unique_topic
+    open_page(%(<ul data-live-topic="#{topic}"><li id="c-1">before</li></ul>))
+    @pages.serve_page(page_html(%(<ul data-live-topic="#{topic}"><li id="c-1">missed</li></ul>)))
+
+    Redis.new(url: redis_test_url).tap { |redis| redis.call("CLIENT", "KILL", "TYPE", "pubsub") }.close
+
+    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    assert_equal "missed", evaluate("document.querySelector('#c-1').textContent")
+
+    @publisher.remove(topic, to: "#c-1")
+    wait_for("a patch after the resync") { evaluate("document.querySelector('#c-1') === null") }
+  end
 end

@@ -121,7 +121,7 @@ Redis- or Postgres-specific.
   retrying a failed one, and its `LISTEN` Ractor reconnects with backoff,
   then closes every open socket with `1011` through
   `Registry#close_all`, so pages resync what was published while it was
-  down. `RedisFanout`'s listener still ends on a dropped connection.)*
+  down. `RedisFanout`'s listener does the same since.)*
 - **Delivery guarantee is a wash, not actually worse.** Both `NOTIFY` and
   Redis pub/sub are fire-and-forget: a notification with no active listener
   is simply dropped, no queue, no replay. `docs/design/websocket.md`'s framing
