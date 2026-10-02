@@ -255,7 +255,7 @@ flake.
      patch published while the listener was down shows up;
    - a malformed notify is logged and skipped, and the next one still
      arrives.
-6. **Docs.**
+6. **Docs.** (Done.)
    - `docs/guides/persistence.md`: a "When the connection drops" section
      (the probe, no retry, one failed request at most).
    - `docs/guides/live.md` and `docs/design/live-pg-fanout.md`: the
@@ -272,5 +272,7 @@ flake.
   this (`connect_timeout` is decided, decision 3). Not tested here.
   Measure, then decide whether `Pg.connect` should set defaults or the
   guide should recommend them.
-- **`RedisFanout`** probably has the same publisher and subscriber gap.
-  Not checked.
+- **`RedisFanout`** has the same subscriber gap, confirmed by reading
+  the code during phase 6: once subscribed, any error re-raises and ends
+  its Ractor. The publisher wasn't checked. `Registry#close_all` from
+  phase 5 is ready for its fix. Documented in `docs/guides/live.md`.

@@ -115,7 +115,13 @@ Redis- or Postgres-specific.
   or letting a cryptic `PG::Error` surface from inside `exec_params`.
 - **No reconnection logic**, on either side — this is not new; `RedisFanout`
   doesn't retry a dropped connection either, and this doc doesn't propose
-  changing that posture for either implementation.
+  changing that posture for either implementation. *(Superseded after
+  0.19.0 by `docs/history/plan-pg-reconnect.md`: `PgFanout`'s publisher
+  checks and resets its connection before each `pg_notify`, never
+  retrying a failed one, and its `LISTEN` Ractor reconnects with backoff,
+  then closes every open socket with `1011` through
+  `Registry#close_all`, so pages resync what was published while it was
+  down. `RedisFanout`'s listener still ends on a dropped connection.)*
 - **Delivery guarantee is a wash, not actually worse.** Both `NOTIFY` and
   Redis pub/sub are fire-and-forget: a notification with no active listener
   is simply dropped, no queue, no replay. `docs/design/websocket.md`'s framing

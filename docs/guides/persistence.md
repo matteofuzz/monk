@@ -42,6 +42,10 @@ Do this once at app boot, before `Monk.boot(App)` (in a `monk new` app,
 `config/persistence.rb`, which `config/load.rb` requires), not inside a
 route.
 
+Connections get `connect_timeout: 5` unless you pass your own, so
+connecting to a host that doesn't answer fails after 5 seconds instead of
+waiting indefinitely.
+
 **Per-environment database names.** `MONK_ENV` (see [`settings.md`](settings.md)) and
 the database name are two separate, unlinked knobs — setting `MONK_ENV=test`
 does not change which database you connect to. The `--postgres` scaffold's
@@ -104,7 +108,42 @@ Monk::Persistence::Pg.checkout(:main) do |conn|
 end
 ```
 
+Use `conn.transaction { ... }` for a transaction. If a block runs a raw
+`BEGIN` and raises before its `COMMIT`, the transaction is rolled back when
+the block ends, so the next checkout in that Ractor doesn't run inside it.
+A transaction can't span two `checkout` blocks.
+
 `Monk::Persistence::Pg[:main]` returns that Ractor's memoized connection
-without the checkout lock — use it for read-only, single-threaded-per-Ractor
-access; prefer `checkout` whenever sibling threads might touch the same
-connection concurrently.
+without the checkout lock, and without the dropped-connection check below
+— use it for read-only, single-threaded-per-Ractor access; prefer
+`checkout` whenever sibling threads might touch the same connection
+concurrently.
+
+## When the connection drops
+
+Postgres restarting, a failover, or an admin's `pg_terminate_backend`
+closes every connection. Monk recovers without a restart:
+
+- **Each `checkout` checks its connection first** and reconnects it if
+  the server closed it. A healthy connection costs about a microsecond and
+  nothing is sent. Most drops happen while a connection sits idle between
+  requests, so most cost no failed request at all.
+- **A block is never run twice.** If the connection drops in the middle
+  of a block, that block raises `PG::ConnectionBad` (a `500`, unless
+  you handle it), and the next checkout in that Ractor reconnects. Monk
+  can't tell whether a failed block's writes reached the server, so
+  retrying it could insert a row twice. At most one request per Ractor
+  fails per drop.
+- **While Postgres is down,** `checkout` raises `PG::ConnectionBad` at
+  once, and each later checkout tries to reconnect again. Requests fail
+  fast; nothing queues.
+
+What this can't see: a network path that dies without closing the socket
+(a NAT or load balancer timing out an idle connection). The socket looks
+healthy, and the next query waits until TCP gives up, which can take
+minutes. libpq's `keepalives_idle`, `keepalives_interval`,
+`keepalives_count` and `tcp_user_timeout` options, passed to `register`,
+bound that wait.
+
+`Monk::Jobs` and `Monk::WebSocket::PgFanout` recover in the same way; see
+[`jobs.md`](jobs.md) and [`live.md`](live.md).
