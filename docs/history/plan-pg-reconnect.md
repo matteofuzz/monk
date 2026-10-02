@@ -2,8 +2,10 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: proposed 2026-10-01, not started. Found while reviewing monk_talk's
-connection lifecycle on monkrb 0.19.0.
+Status: proposed 2026-10-01, revised after review 2026-10-02, not
+started. Found while reviewing monk_talk's connection lifecycle on monkrb
+0.19.0. Comes before [`plan-pg-pool.md`](plan-pg-pool.md), whose workers
+rely on this plan's checkout probe and rollback.
 
 ## The problem
 
@@ -127,11 +129,22 @@ The fix rests on these, all checked on a real connection:
    raises with it.** Requests fail fast with `PG::ConnectionBad` rather
    than queueing. The next checkout tries again. No backoff in the web
    process: one `connect` attempt per request is the backoff.
+   "Fail fast" needs a bound on the connect itself: with no
+   `connect_timeout`, a reset to a host that doesn't answer (as opposed to
+   one that refuses) waits indefinitely, while holding the Ractor's slot,
+   so every other thread in that Ractor gets `PersistenceTimeoutError`
+   too. `Pg#connect` merges `connect_timeout: 5` (the same as
+   `checkout`'s timeout) into the options unless the app set one.
 4. **The probe and the reset belong to the backend, not the Registry.**
    `Registry#checkout` calls two new backend hooks: `alive?(conn)` and
-   `revive(conn)`. They default to "always alive" and a no-op, so the
-   Registry stays backend-agnostic. `Monk::Persistence::Pg` implements
+   `revive(conn)` (and `release(conn)`, decision 8). They default to
+   "always alive" and no-ops, so the Registry stays backend-agnostic. `Monk::Persistence::Pg` implements
    them as above. `alive?` is public on `Pg` so `PgFanout` reuses it.
+   `Registry#[]` hands out the connection without a checkout, so it skips
+   the probe. Its one caller is `Jobs::Adapters::Pg#reset_connection`,
+   which keeps its `cancel` (a timed-out job's connection is alive but
+   busy) and resets through `revive`, so a connection is reset in one way
+   only.
 5. **The publisher probes too, with no retry.** `PgFanout#publisher`
    checks `alive?` and resets before each `pg_notify`. A retry after a
    failed `pg_notify` could deliver a patch twice (a doubled chat
@@ -145,17 +158,37 @@ The fix rests on these, all checked on a real connection:
    received them. So after reconnecting, the subscriber closes every
    open socket with `1011`, which makes each client reconnect and resync
    (ADR 0011). The clients' jittered reconnect spreads the refetches.
-7. **A `500` logs its exception.** `Base#dispatch` logs
-   `Monk::Log.error("#{e.class}: #{e.message}")` with the first backtrace
-   lines when no `error` handler matched, and also when one did. The
-   request line stays as it is.
+   Any other exception in the loop (a malformed envelope, a failing
+   `registry.broadcast`) is logged and that one notify is skipped. Today
+   any exception ends the Ractor silently, and rescuing only
+   `PG::ConnectionBad` would leave that path open: `listening?` true,
+   nothing arriving, nothing logged.
+7. **A `500` logs its exception.** When no `error` handler matched,
+   `Base#dispatch` logs `GET /x raised PG::ConnectionBad: ...` at `error`,
+   with the first 10 backtrace lines. When one did, it logs the same line
+   at `info` with `(handled)` and no backtrace: the app chose the
+   response, and an `error(NotFound) { halt 404 }` shouldn't fill the log
+   with errors. The request line stays as it is. (Done in phase 1.)
+8. **A checkout never hands out an open transaction.** A block that runs
+   a raw `BEGIN` and raises leaves the connection in a transaction, and
+   the next checkout in that Ractor would run inside it (`conn.transaction`
+   already rolls back; raw `BEGIN` doesn't). `checkout`'s `ensure` runs
+   `ROLLBACK` when the connection is alive and `transaction_status` isn't
+   idle, through a third backend hook, `release(conn)`, a no-op by
+   default. Minor today, but `plan-pg-pool.md`'s workers serve calls from
+   unrelated Ractors on one connection, where a leaked transaction would
+   reach the next caller.
 
 ## Phases
 
 Small red → green slices, as in the other plans. The tests need a real
 Postgres, like `persistence_test.rb` and `websocket_pg_fanout_test.rb`,
 and drop connections with `pg_terminate_backend` from a second
-connection.
+connection. `pg_terminate_backend` returns before the client's socket is
+guaranteed to be readable, so a checkout straight after it can still see
+a healthy socket and fail on the query. Tests wait until the terminated
+pid has left `pg_stat_activity` before checking out; otherwise they
+flake.
 
 1. **Log the exception behind a `500`.** `error_handling_test.rb`: a
    route that raises logs its class and message, with and without a
@@ -168,7 +201,15 @@ connection.
    - the json type map survives a reset;
    - with Postgres unreachable (a registered port nothing listens on, so
      the test doesn't stop the server), checkout raises
-     `PG::ConnectionBad` and doesn't hang.
+     `PG::ConnectionBad` and doesn't hang;
+   - `connect_timeout` defaults to 5 and an app's own value wins;
+   - `Jobs::Adapters::Pg#reset_connection` resets through `revive`, and
+     the existing Jobs timeout tests stay green;
+   - a block that runs a raw `BEGIN` and raises: the next checkout
+     finds `transaction_status` idle, and the half-done write is gone;
+   - the probe over TLS (`sslmode=require`, when the test server allows
+     it): all the measurements above were on a plain socket, and TLS adds
+     a buffer between `IO.select` and libpq.
 3. **Same in a worker Ractor.** `persistence_ractor_integration_test.rb`:
    terminate a worker Ractor's connection, then the next checkout in that
    Ractor succeeds.
@@ -180,7 +221,9 @@ connection.
    - terminate the `LISTEN` backend, then a later broadcast from another
      process still arrives;
    - an open page is closed with `1011`, reconnects and resyncs, so a
-     patch published while the listener was down shows up.
+     patch published while the listener was down shows up;
+   - a malformed notify is logged and skipped, and the next one still
+     arrives.
 6. **Docs.**
    - `docs/guides/persistence.md`: a "When the connection drops" section
      (the probe, no retry, one failed request at most).
@@ -191,22 +234,19 @@ connection.
 ## Open questions
 
 - **How the subscriber reaches every socket.** The Registry maps keys to
-  ports and knows no connections. One option: a sentinel broadcast to
-  every registered port that `Live::Session`'s relay treats as "close
-  with 1011". Decide in phase 5.
+  ports and knows no connections. The likely answer: `WebSocket::Registry`
+  is already an actor (`ask(:broadcast, ...)`), so a new
+  `ask(:close_all, 1011)` message fits better than a sentinel payload
+  that `Live::Session`'s relay would have to recognise. It also keeps
+  `RedisFanout` on the same interface when it gets the same fix. Decide
+  in phase 5.
 - **Silent drops.** When a network path dies without a `FIN` (a NAT or
   load balancer timing out an idle connection), the socket never becomes
   readable, the probe sees nothing, and the next query waits for TCP to
   give up, which can take minutes. libpq's `keepalives_idle`,
-  `keepalives_interval`, `keepalives_count`, `tcp_user_timeout` and
-  `connect_timeout` bound this, and with no `connect_timeout` a reset to
-  an unreachable host waits indefinitely. Not tested here. Measure, then
-  decide whether `Pg.register` should set defaults or the guide should
-  recommend them.
+  `keepalives_interval`, `keepalives_count` and `tcp_user_timeout` bound
+  this (`connect_timeout` is decided, decision 3). Not tested here.
+  Measure, then decide whether `Pg.connect` should set defaults or the
+  guide should recommend them.
 - **`RedisFanout`** probably has the same publisher and subscriber gap.
   Not checked.
-- **A transaction left open.** A block that runs a raw `BEGIN` and raises
-  leaves the connection in a transaction, and the next checkout in that
-  Ractor runs inside it. `conn.transaction` already rolls back, so only
-  raw `BEGIN` is exposed. `checkout`'s `ensure` could `ROLLBACK` when
-  `transaction_status` isn't idle. Same mechanism, a separate decision.

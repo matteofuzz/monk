@@ -2,9 +2,11 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: designed 2026-10-02, not started. Comes after
-[`plan-pg-reconnect.md`](plan-pg-reconnect.md): pool workers use the
-ordinary `checkout`, so they need its reconnect fix.
+Status: designed 2026-10-02, revised after review the same day, not
+started. Comes after [`plan-pg-reconnect.md`](plan-pg-reconnect.md): pool
+workers use the ordinary `checkout`, so they need its reconnect fix, and
+its rollback of a transaction left open (that plan's decision 8), since a
+worker serves unrelated callers on one connection.
 
 ## The problem
 
@@ -129,6 +131,9 @@ connections, and other Ractors send them calls through ports.
    - Running handles are published by replacing a frozen Hash from the
      main Ractor (`@running = Ractor.make_shareable(@running.merge(...))`),
      so `start_pools!` works before or after `Monk.freeze!`.
+   - Declared options are read from workers and callers, so
+     `freeze_registry!` makes them shareable along with `@configs`: the
+     same trap an unfrozen `@configs` already hit.
 5. **Connect at start.** `start_pools!` returns once every worker has its
    connection, and raises if Postgres is unreachable, the same promise
    `Monk::Live.listen!` makes. Processes that don't start a pool hold no
@@ -154,6 +159,10 @@ connections, and other Ractors send them calls through ports.
      pool call. What a pool call loses is only `e.connection`, which is
      useless across Ractors anyway, and `e.result` being a real
      `PG::Result`.
+   - The stand-in answers `error_field`, plus the read-only methods that
+     need no connection and that apps use on an error's result
+     (`error_message`, `result_status`/`res_status`). Anything else
+     raises `NoMethodError`, and the guide says so.
    - Wrapping errors in a pool error class (as `Ractor::RemoteError` does)
      was rejected: `rescue PG::UniqueViolation` would silently stop
      matching when a call moves into a pool.
@@ -176,7 +185,11 @@ connections, and other Ractors send them calls through ports.
      not a busy one.
 10. **A call made from inside a pool worker runs inline**, on the
     worker's own connection, instead of queueing on its own pool. A full
-    pool waiting on itself would never finish.
+    pool waiting on itself would never finish. Inline, it has the same
+    limit as a direct call: if its `checkout` targets the database of a
+    `checkout` block still open around it, it times out after 5 s, because
+    `checkout` isn't reentrant (`persistence-evolutions.md`, item 3). The
+    guide mentions it.
 
 ## How it works
 
@@ -198,6 +211,11 @@ caller ◀────────────── [:ok, value] or [:error, ex
   deadline passed, whether its call is queued or running. A caller just
   waits on its reply port, with no timer thread per call. Each call has
   its own reply port, so a late answer can't reach a later call.
+- **Late answers.** After a `:timeout`, the worker still finishes and
+  replies to a port nobody reads. The caller closes its reply port once
+  it has an answer, whichever came first, and the worker rescues
+  `Ractor::ClosedError` when replying, so a late answer is dropped instead
+  of left waiting in the port.
 - **Workers** loop: receive a call, run it, reply, report idle. A
   worker's connection follows the ordinary per-Ractor rules, including
   `plan-pg-reconnect.md`'s check and reset.
@@ -213,6 +231,7 @@ Small red → green slices against a real Postgres, as in the other plans.
    `size`, `timeout`, `queue`; `db:` must be registered) and stores them.
    `pool(:missing)` raises "never declared". `pool(:declared)` before
    `start_pools!` raises "declared but not started in this process".
+   After `Monk.freeze!`, a worker Ractor can read a pool's options.
    `reset!` clears pools.
 2. **Start and `call`.** `start_pools!` spawns the dispatcher and workers,
    waits for their connections, and raises if Postgres is unreachable (a
@@ -222,11 +241,14 @@ Small red → green slices against a real Postgres, as in the other plans.
 3. **Errors and return values.** Ordinary exceptions arrive whole. A
    `PG::UniqueViolation` arrives with its class, message, `cause`,
    `error_field` and a backtrace showing both sides. A `PG::Result` return
-   value raises the named error.
+   value raises the named error. The stand-in's `error_message` works;
+   other `PG::Result` methods raise `NoMethodError`.
 4. **Timeouts and the queue.** With every worker stuck on `pg_sleep`: a
    `call` raises after `timeout`; a queued call whose caller gave up is
    never run (a counter in the method stays unchanged); with `queue: 2`,
-   the third waiting call raises `PoolFullError`.
+   the third waiting call raises `PoolFullError`. A call that times out
+   while running: its worker's late reply to the closed port doesn't
+   crash the worker, and the worker serves the next call.
 5. **`call_async`.** It returns once accepted, raises when the queue is
    full or the pool isn't started, and logs a failure inside the method.
    With `size: 1`, a sender's calls run in its order (numbered writes read
@@ -244,7 +266,11 @@ Small red → green slices against a real Postgres, as in the other plans.
    apps.
 9. **The `PgFanout` publisher through a pool of size 1.** It replaces one
    publisher connection per Ractor that pushes. A pool larger than 1
-   raises at configuration, naming the ordering rule.
+   raises at configuration, naming the ordering rule. This needs a
+   constructor change: `PgFanout.new(registry, pg_opts:)` takes raw
+   connection options, while a pool's `db:` is a registered database
+   name. Add `PgFanout.new(registry, db_pool: :notify)`, and keep
+   `pg_opts:` for the per-Ractor publisher; passing both raises.
 10. **Docs.**
     - `docs/guides/persistence.md`: a "Pools" section covering when to use
       one (short-lived Ractors, work that shouldn't wait), the rules
@@ -256,14 +282,19 @@ Small red → green slices against a real Postgres, as in the other plans.
 11. **Load.** A reconnect storm: N authenticated sockets reconnecting
     together against a pool of 4, measuring how long they take to settle
     and the peak queue length. That decides the default `size` and
-    whether one dispatcher keeps up.
+    whether one dispatcher keeps up. Also the publisher: a single size-1
+    lane at ~0.3 ms per `pg_notify` tops out near 3K notifies/s per
+    process, for every `Live.patch` of every web worker. Measure it under
+    load; if it falls short, that's the case for "order per key" below.
 
 ## Open questions
 
 - **A caller whose dispatcher has died.** Callers rely on the dispatcher
   for timeouts, so a dead dispatcher would leave them waiting. Options: the
   process that started the pool monitors the dispatcher and restarts it,
-  or callers keep a long-stop timer of their own. Decide in phase 6.
+  or callers keep a long-stop timer of their own. Leaning towards the
+  first: the main Ractor already monitors workers, and a timer per caller
+  brings back the per-call timer the design avoids. Decide in phase 6.
 - **Per-call options.** Options are set per pool. If a real case needs a
   different timeout for one call, add `pool(:auth).with(timeout: 10)`,
   which returns a new handle, rather than options on `call`.
