@@ -339,6 +339,31 @@ class WebSocketAuthTest < Minitest::Test
     socket&.close
   end
 
+  # Without db_pool:, a socket's Ractor opens a connection of its own to
+  # verify the session. It's closed when the socket ends, not left for
+  # the garbage collector, which may not run for a long time in a server
+  # that mostly waits.
+  def test_without_db_pool_a_closed_sockets_connection_is_closed
+    setup_counted_auth
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
+    GC.disable
+
+    sockets = Array.new(5) do
+      TCPSocket.new("127.0.0.1", server.port).tap do |socket|
+        handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+      end
+    end
+    assert_equal 5, pooled_connection_count, "control: each open socket holds one"
+
+    sockets.each(&:close)
+
+    wait_until(timeout: 3) { pooled_connection_count.zero? }
+  ensure
+    GC.enable
+    sockets&.each { |socket| socket.close unless socket.closed? }
+  end
+
   # -- db_pool: (docs/history/plan-pg-pool.md, phase 7) --
   # Each socket runs in a Ractor of its own. Without a pool, verifying its
   # session opens a connection in that Ractor and holds it for as long as
@@ -421,15 +446,20 @@ class WebSocketAuthTest < Minitest::Test
 
   private
 
-  # Monk::Auth on DB_NAME, re-registered under an application_name of its
-  # own so pooled_connection_count sees only the pool's connections (the
-  # tables were made on the test's own connection, opened before).
+  # Monk::Auth on DB_NAME, with a pool of its own; pooled_connection_count
+  # sees only the pool's connections.
   def setup_pooled_auth(size:)
+    setup_counted_auth
+    Monk::Persistence::Pg.pool(:auth, db: DB_NAME, size: size)
+    Monk::Persistence::Pg.start_pools!(:auth)
+  end
+
+  # Every connection opened from here on, outside this (the test's)
+  # Ractor, is counted by pooled_connection_count.
+  def setup_counted_auth
     setup_auth_tables(DB_NAME)
     @application_name = "monk_ws_pool_test_#{SecureRandom.hex(4)}"
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts, application_name: @application_name)
-    Monk::Persistence::Pg.pool(:auth, db: DB_NAME, size: size)
-    Monk::Persistence::Pg.start_pools!(:auth)
   end
 
   def pooled_connection_count

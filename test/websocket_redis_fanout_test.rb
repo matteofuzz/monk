@@ -105,6 +105,20 @@ class WebSocketRedisFanoutTest < Minitest::Test
     port&.close
   end
 
+  def test_disconnect_publisher_closes_this_ractors_publisher
+    skip_unless_redis_available
+
+    Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).broadcast(:room1, "x")
+    client = Ractor.current[:monk_redis_fanout_publisher]
+    assert client.connected?, "control: broadcasting connected it"
+
+    Monk::WebSocket::RedisFanout.disconnect_publisher
+
+    refute client.connected?
+    assert_nil Ractor.current[:monk_redis_fanout_publisher]
+    Monk::WebSocket::RedisFanout.disconnect_publisher # none left: a no-op
+  end
+
   # Without the origin tag, A's own subscriber would relay A's own
   # broadcast back into registry_a a second time -- a connection
   # registered directly on registry_a would see it twice.

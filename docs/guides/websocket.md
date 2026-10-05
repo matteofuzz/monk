@@ -63,7 +63,7 @@ phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/hi
 socket's Ractor: the handshake's check, `:optional`'s, and every
 `reverify_interval:` check. Without it, each socket's Ractor opens a
 Postgres connection on its first check and keeps it while the page stays
-open, one connection per open page. With it, the server holds only the
+open, one connection per open page; it's closed when the socket ends. With it, the server holds only the
 pool's: measured, 1,000 open sockets on a pool of 4 held 4 connections.
 It requires `authenticate:`, and the pool started before the server
 (`Server.new` checks):

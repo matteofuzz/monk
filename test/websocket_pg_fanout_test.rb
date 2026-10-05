@@ -3,6 +3,18 @@ require "timeout"
 require "securerandom"
 require "monk/websocket"
 require "monk/websocket/pg_fanout"
+require "socket"
+
+# A socket handler that broadcasts, as a chat's does: its Ractor opens a
+# publisher connection. Module scope, so it's Ractor-shareable.
+module PgFanoutPublisherHandler
+  BROADCAST = proc do |connection|
+    connection.read
+    PgFanoutPublisherHandler::FANOUT.broadcast(:room1, "hello")
+    connection.write("sent")
+    connection.read # holds the socket open until the client closes it
+  end
+end
 
 # PgFanout wraps a Registry for cross-process fan-out, the Postgres
 # LISTEN/NOTIFY counterpart to RedisFanout (docs/design/live-pg-fanout.md,
@@ -18,8 +30,10 @@ require "monk/websocket/pg_fanout"
 # local Postgres.
 class WebSocketPgFanoutTest < Minitest::Test
   include PersistenceTestHelpers
+  include WebSocketTestHelpers
 
   def teardown
+    super # WebSocketTestHelpers: stops the server thread
     Monk::Persistence::Pg.reset!
   end
 
@@ -250,6 +264,50 @@ class WebSocketPgFanoutTest < Minitest::Test
     assert_equal "5", Ractor.current[:monk_pg_fanout_publisher].conninfo_hash[:connect_timeout]
   end
 
+  # A socket's Ractor that broadcast opened a publisher connection: it's
+  # closed when the socket ends, not left for the garbage collector.
+  def test_a_closed_sockets_publisher_connection_is_closed
+    skip_unless_postgres_available
+    application_name = "monk_fanout_publisher_#{SecureRandom.hex(4)}"
+    fanout = Monk::WebSocket::PgFanout.new(
+      Monk::WebSocket::Registry.new, pg_opts: pg_test_opts.merge(application_name: application_name),
+    )
+    PgFanoutPublisherHandler.const_set(:FANOUT, fanout)
+    server = start_server(&PgFanoutPublisherHandler::BROADCAST)
+    count = -> { backend_count(application_name) }
+    GC.disable
+
+    sockets = Array.new(3) do
+      TCPSocket.new("127.0.0.1", server.port).tap do |socket|
+        handshake!(socket)
+        socket.write(Monk::WebSocket::Frame.encode("go", opcode: 0x1))
+        read_frame(socket)
+      end
+    end
+    assert_equal 3, count.call, "control: each socket that broadcast holds one"
+
+    sockets.each(&:close)
+
+    wait_until(timeout: 3) { count.call.zero? }
+  ensure
+    GC.enable
+    sockets&.each { |socket| socket.close unless socket.closed? }
+    PgFanoutPublisherHandler.send(:remove_const, :FANOUT) if PgFanoutPublisherHandler.const_defined?(:FANOUT)
+  end
+
+  def test_disconnect_publisher_closes_this_ractors_publisher
+    skip_unless_postgres_available
+
+    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).broadcast(:room1, "x")
+    conn = Ractor.current[:monk_pg_fanout_publisher]
+
+    Monk::WebSocket::PgFanout.disconnect_publisher
+
+    assert conn.finished?
+    assert_nil Ractor.current[:monk_pg_fanout_publisher]
+    Monk::WebSocket::PgFanout.disconnect_publisher # none left: a no-op
+  end
+
   # plan-pg-reconnect.md, phase 5: the LISTEN connection is dropped. Its
   # subscriber reconnects and LISTENs again, so a broadcast from another
   # process sent after that still arrives.
@@ -442,6 +500,15 @@ class WebSocketPgFanoutTest < Minitest::Test
   end
 
   # This Ractor's publisher connection, opened by its first #broadcast.
+  def backend_count(application_name)
+    conn = PG.connect(**pg_test_opts)
+    conn.exec_params(
+      "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", [application_name],
+    ).getvalue(0, 0).to_i
+  ensure
+    conn&.close
+  end
+
   def publisher_pid
     Ractor.current[:monk_pg_fanout_publisher].backend_pid
   end

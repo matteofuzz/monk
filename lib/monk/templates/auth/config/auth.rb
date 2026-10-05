@@ -23,3 +23,9 @@ Monk::Auth.configure(
   secure: !Monk.env.development?, # Secure cookie flag; off in dev so plain-http testing works (Safari drops it)
   deliver: AppMailer::MAGIC_LINK,
 )
+
+# bin/websocket_server checks each socket's session through this pool, so
+# it holds 4 connections however many pages are open, instead of one per
+# open page. Declaring it opens nothing: only bin/websocket_server starts
+# it. See docs/guides/persistence.md, "Pools", in the monk repo.
+Monk::Persistence::Pg.pool(:auth, size: 4)

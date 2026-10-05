@@ -218,7 +218,21 @@ module Monk
         connection&.unsubscribe!
         connection&.stop_heartbeat!
         socket.close
+        disconnect_all
       end
+
+      # Closes the connections this socket's Ractor opened: its database
+      # connection (verifying the session without db_pool:, or a block
+      # that queries) and a fan-out's publisher (a block that broadcasts).
+      # Left alone, each would stay open until the garbage collector
+      # happened to run, which a mostly idle server may not do for a long
+      # time. The fan-outs are opt-in, so each is closed only if loaded.
+      def self.disconnect_all
+        Monk::Persistence.disconnect_all
+        PgFanout.disconnect_publisher if defined?(PgFanout)
+        RedisFanout.disconnect_publisher if defined?(RedisFanout)
+      end
+      private_class_method :disconnect_all
 
       # docs/history/plan-websocket.md steps 22-23: the Origin allowlist check runs
       # before Monk::Auth.verify, and only for a cookie-derived

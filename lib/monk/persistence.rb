@@ -9,6 +9,16 @@ module Monk
   # can seal every backend actually in use without needing to know their
   # names.
   module Persistence
+    # Closes every connection this Ractor opened, in every backend. A
+    # Ractor that ends leaves its connections to the garbage collector,
+    # which may not run for a long time; one that opened any calls this
+    # as it finishes (Monk::WebSocket::Server.serve, for a socket's).
+    def self.disconnect_all
+      # A copy: each backend's disconnect_all removes its own key.
+      backends = Ractor.current[:monk_persistence]&.keys || []
+      backends.each(&:disconnect_all)
+    end
+
     # Shared by every backend module: per-Ractor connection lifecycle, a
     # registry of named configs, and boot-time shareability sealing. A
     # backend `extend`s this and implements #connect(**opts) /
@@ -90,15 +100,15 @@ module Monk
       # errors carry nothing like that keeps this default.
       def make_portable(_error) = nil
 
-      # This Ractor's own connections, closed and forgotten. A pool worker
-      # runs it as it stops; the next checkout in this Ractor reconnects.
+      # This Ractor's own connections to this backend, closed and
+      # forgotten. A pool worker runs it as it stops; the next checkout in
+      # this Ractor reconnects.
       def disconnect_all
-        Ractor.current[:monk_persistence]&.each_value do |e|
+        Ractor.current[:monk_persistence]&.delete(self)&.each_value do |e|
           disconnect(e.conn)
         rescue StandardError
           nil
         end
-        Ractor.current[:monk_persistence] = {}
       end
 
       # The pools started in this process, name => size (Monk.boot's line).
@@ -243,8 +253,11 @@ module Monk
         end
       end
 
+      # This Ractor's connections, by backend, then by name: so
+      # Persistence.disconnect_all can find every backend this Ractor
+      # used, from any Ractor.
       def ractor_local
-        Ractor.current[:monk_persistence] ||= {}
+        (Ractor.current[:monk_persistence] ||= {})[self] ||= {}
       end
 
       def entry(name)

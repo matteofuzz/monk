@@ -45,11 +45,34 @@ in `lib/monk/version.rb`.
 - `Monk::Persistence::Pg` connections and `PgFanout`'s publisher get
   `connect_timeout: 5` unless the app sets one, so a reconnect to a host
   that doesn't answer fails instead of waiting indefinitely.
+- A WebSocket socket's own connections are closed when the socket ends:
+  its Postgres connection (`authenticate:` without `db_pool:`, or a
+  handler that queries) and a `PgFanout`/`RedisFanout` publisher (a
+  handler that broadcasts). Before, they stayed open until the garbage
+  collector happened to run, which a mostly idle server may not do for a
+  long time, so closed pages kept counting against Postgres's
+  `max_connections`. New: `Monk::Persistence.disconnect_all` closes every
+  connection the calling Ractor opened, and `PgFanout.disconnect_publisher`
+  / `RedisFanout.disconnect_publisher` its publisher; `Server.serve` calls
+  them as each socket ends.
+- `monk new --postgres` writes `db/migrate/.keep`. The directory was
+  created empty, and git doesn't keep an empty directory, so a fresh
+  clone of the app had no `db/migrate/`.
+- An app scaffolded without `--auth` and without `--live` crashed at boot
+  in `bin/websocket_server` (`authenticate must be false, true or
+  :optional, got nil`). The template now passes `false`; fix an existing
+  app's line to `authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)`.
 - A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
   its transaction open for the next checkout in that Ractor: it's rolled
   back.
 
 ### Added
+
+- `monk new --auth` checks WebSocket sessions through a pool:
+  `config/auth.rb` declares `Monk::Persistence::Pg.pool(:auth, size: 4)`,
+  and both `bin/websocket_server` templates start it and pass
+  `db_pool: :auth`. A new app's WebSocket process holds 4 connections
+  however many pages are open, instead of one per open page.
 
 - Connection pools for Ractors that shouldn't each hold a connection
   (`docs/guides/persistence.md`, "Pools"): `Monk::Persistence::Pg.pool(:auth,

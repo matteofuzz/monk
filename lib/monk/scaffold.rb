@@ -39,6 +39,9 @@ module Monk
       "bin/console" => "postgres/bin/console",
       "bin/setup_db" => "postgres/bin/setup_db",
       "bin/migrate" => "postgres/bin/migrate",
+      # Kept by git when empty, like app/'s role directories: a fresh clone
+      # still shows where migrations go. The migrator reads only *.sql.
+      "db/migrate/.keep" => "postgres/db/migrate/.keep",
     }.freeze
 
     # The pg gem's native extension needs libpq -- the base Dockerfile has
@@ -229,7 +232,6 @@ module Monk
 
       if @postgres
         POSTGRES_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
-        FileUtils.mkdir_p(File.join(@dir, "db/migrate"))
         append_gemfile_extra("postgres/Gemfile.extra")
       end
 

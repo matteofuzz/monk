@@ -131,6 +131,21 @@ module Monk
         nil
       end
 
+      # Closes the calling Ractor's publisher connection (#publisher), if
+      # it opened one; the next broadcast in this Ractor reconnects.
+      # Server.serve runs it as each socket ends: a Ractor that ends
+      # leaves its connection to the garbage collector, which may not run
+      # for a long time.
+      def self.disconnect_publisher
+        conn = Ractor.current[:monk_pg_fanout_publisher]
+        return unless conn
+
+        Ractor.current[:monk_pg_fanout_publisher] = nil
+        conn.finish
+      rescue PG::Error
+        nil # already closed
+      end
+
       # pg_opts: connects the publisher (one connection per Ractor that
       # publishes) and #listen!'s LISTEN connection. db_pool: (a
       # Monk::Persistence::Pg pool of size 1, docs/history/plan-pg-pool.md)

@@ -104,6 +104,17 @@ module Monk
       def self.log(level, message) = Listeners.log(name, level, message)
       private_class_method :relay, :log
 
+      # Closes the calling Ractor's publisher client (#publisher), if it
+      # opened one; the next broadcast in this Ractor reconnects.
+      # Server.serve runs it as each socket ends, as PgFanout's.
+      def self.disconnect_publisher
+        client = Ractor.current[:monk_redis_fanout_publisher]
+        return unless client
+
+        Ractor.current[:monk_redis_fanout_publisher] = nil
+        client.close
+      end
+
       def initialize(registry, redis_url:)
         @registry = registry
         @redis_url = redis_url.dup.freeze

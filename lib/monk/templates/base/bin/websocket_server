@@ -54,7 +54,14 @@ end
 # has nothing to listen to, and listen! does nothing.
 ChatServer::REGISTRY.listen!
 
-authenticate = defined?(Monk::Auth) && !!Monk::Auth.config
+# false, not nil, without --auth: Server.new refuses nil.
+authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)
+# Sessions are checked through config/auth.rb's :auth pool rather than in
+# each socket's own Ractor, which would hold a Postgres connection per
+# open page. This is the only process that uses the pool, so it starts it.
+db_pool = (:auth if authenticate)
+Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
+
 port = ENV.fetch("WS_PORT", "9293").to_i
 # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
 # keeps this in sync with the app's actual origin instead of two vars
@@ -62,7 +69,9 @@ port = ENV.fetch("WS_PORT", "9293").to_i
 # more than one origin (comma-separated).
 allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
 
-server = Monk::WebSocket::Server.new(port: port, authenticate: authenticate, allowed_origins: allowed_origins)
+server = Monk::WebSocket::Server.new(
+  port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+)
 puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
   "(authenticate: #{authenticate}, redis fan-out: #{ENV["REDIS_URL"] ? "on" : "off"})"
 server.run(&ChatServer::HANDLER)
