@@ -355,7 +355,64 @@ Small red → green slices against a real Postgres, as in the other plans.
     - `docs/guides/websocket.md` and `live.md`: `db_pool:`.
     - The boot line lists running pools.
     - CHANGELOG.
-11. **Load.** A reconnect storm: N authenticated sockets reconnecting
+11. **Load.** (Done 2026-10-05: Ruby 4.0.6, Postgres 16, an 8-core Mac
+    with load average about 4; medians of 5 runs. A first run under heavy
+    outside load (load average 260–430) gave the same shape with noisier
+    numbers. The script stays out of the repo; it read the dispatcher's
+    queue length through a probe prepended onto `Pool::Dispatcher`.
+
+    The pool alone, 64 caller Ractors × 100 `Monk::Auth.verify` calls:
+
+    | size | calls/s | p50 | p99 | peak queue |
+    |---|---|---|---|---|
+    | 1 | 3,186 | 19.5 ms | 44.3 ms | 64 |
+    | 2 | 4,165 | 13.7 ms | 33.1 ms | 63 |
+    | 4 | 5,495 | 9.0 ms | 25.1 ms | 62 |
+    | 8 | 6,568 | 8.9 ms | 17.8 ms | 59 |
+
+    A reconnect storm, N authenticated sockets opened at once by 64
+    client threads against `Server.new(db_pool:)`:
+
+    | N | size 2 settle | size 4 settle | size 8 settle | failures | peak queue |
+    |---|---|---|---|---|---|
+    | 500 | 347 ms | 331 ms | 338 ms | 0 | ≤ 56 |
+    | 1,000 | 740 ms | 712 ms | 691 ms | 0 | ≤ 59 |
+    | 2,000 | 1,622 ms | 1,501 ms | 1,486 ms | 0 | ≤ 62 |
+
+    What it decides:
+    - **Default `size: 4` stays.** In a storm, the case pools exist for,
+      size changes settle time by under 10%: sockets settle at about
+      1,350/s, bounded by accepting a socket and starting its Ractor, not
+      by the database. Each extra worker holds a connection for nothing
+      there. A steady, high rate of pool calls does gain from more: 8
+      workers serve about 20% more than 4. The guide says so.
+    - **One dispatcher keeps up**, with a ceiling. One worker serves about
+      3,200 calls/s (0.3 ms a call, as measured before designing); 8 reach
+      only 2× that, about 6,500 calls/s, most likely the single
+      dispatcher, though on one machine the 64 callers and Postgres share
+      the same 8 cores. The queue never held more than the calls in
+      flight (64 callers, 64 deep), far below the default `queue: 1000`.
+    - Decision 9's "4 workers clear 1000 calls in under 0.1 s" was an
+      estimate; measured, about 0.18 s at 5,500 calls/s.
+    - Not measured: monk_talk's 25K sockets. At 1,350/s, all reconnecting
+      at once would take about 19 s, bounded by accept and Ractor
+      start-up; their 25K verifies through one pool would take about 4 s.
+      `monk_live.js`'s jitter spreads reconnects anyway.
+
+    Found while running it:
+    - A first harness ran out of ephemeral ports (16,384 on macOS, each
+      closed socket holding one for 30 s in `TIME_WAIT`), which showed up
+      as 421 failed handshakes and a pool that couldn't connect. The
+      harness now waits for ports between rounds; not a Monk problem.
+    - A pool call made before `Monk.freeze!` fails with
+      `Ractor::IsolationError` when the method reads boot-frozen config
+      (`Monk::Auth`'s here): `start_pools!` freezes only the persistence
+      registry. Normal boot order hides it. See the open questions.
+    - Once, in the first storm under heavy load, one socket's handshake
+      failed inside `Digest::SHA1.digest` ("Digest::Base cannot be
+      directly inherited") in `Handshake.accept_key`. It didn't recur in
+      the 45 storms of the quiet run, nor in 40 fresh processes of 256
+      Ractors digesting at once. See the open questions.) A reconnect storm: N authenticated sockets reconnecting
     together against a pool of 4, measuring how long they take to settle
     and the peak queue length. That decides the default `size` and
     whether one dispatcher keeps up. Also the publisher: a single size-1
@@ -374,6 +431,17 @@ Small red → green slices against a real Postgres, as in the other plans.
   waiting `:stopped`; a call after that hits the closed inbox. Both raise
   `Monk::PoolStoppedError`. `reset!` takes the same path, which is how
   it's tested.
+- **`start_pools!` and the rest of boot's freezing.** Workers run app
+  methods that read config `Monk.freeze!` seals (`Monk::Auth`'s, models'
+  table names). `start_pools!` freezes only the persistence registry, so a
+  pool call made before `Monk.boot`/`Server.new` fails with
+  `Ractor::IsolationError`. Options: `start_pools!` calls `Monk.freeze!`
+  (everything must then be configured before it), or the guide says to
+  start pools after boot.
+- **The first-burst `Digest` failure** (phase 11). If it's Ruby's lazy
+  load of `Digest::SHA1` racing across Ractors, `require "digest/sha1"`
+  at the top of `handshake.rb` would close it. Unconfirmed: it happened
+  once and didn't reproduce.
 - **Per-call options.** Options are set per pool. If a real case needs a
   different timeout for one call, add `pool(:auth).with(timeout: 10)`,
   which returns a new handle, rather than options on `call`.

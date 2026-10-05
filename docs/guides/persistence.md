@@ -220,6 +220,15 @@ Monk::Persistence::Pg.pool(:auth).call(Contacts, :include?, owner, email)
 | `timeout:` | 5 | Seconds a `call` waits, queued and running, before it raises |
 | `queue:` | 1000 | Calls that may wait for a worker; beyond it `call` and `call_async` raise `Monk::PoolFullError` at once. A full queue usually means a stalled database |
 
+**Choosing a size.** Measured on an 8-core machine (`docs/history/plan-pg-pool.md`,
+phase 11): one worker serves about 3,200 calls a second, 4 about 5,500,
+8 about 6,500. For the WebSocket server's checks, keep the default 4: when
+every page reconnects at once after a deploy, sockets settle at about
+1,350 a second whatever the size, because accepting each socket costs
+more than checking it, and every extra worker holds a connection. Go up
+to 8 only for a steady, high rate of calls; beyond that, the pool's one
+dispatcher, which every call passes through, is the limit.
+
 `Monk.boot` lists the pools running in its process (` - pools=auth(4)`).
 Where Monk uses pools itself: `Monk::WebSocket::Server.new(db_pool:)`
 ([`websocket.md`](websocket.md)), `Monk::Live.authorize(..., db_pool:)` and
