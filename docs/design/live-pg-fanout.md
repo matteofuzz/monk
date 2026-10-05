@@ -116,7 +116,7 @@ Redis- or Postgres-specific.
 - **No reconnection logic**, on either side — this is not new; `RedisFanout`
   doesn't retry a dropped connection either, and this doc doesn't propose
   changing that posture for either implementation. *(Superseded after
-  0.19.0 by `docs/history/plan-pg-reconnect.md`: `PgFanout`'s publisher
+  in 0.20 by `docs/history/plan-pg-reconnect.md`: `PgFanout`'s publisher
   checks and resets its connection before each `pg_notify`, never
   retrying a failed one, and its `LISTEN` Ractor reconnects with backoff,
   then closes every open socket with `1011` through
