@@ -159,8 +159,9 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("postgres/bin/console"), read(dest, "bin/console")
       assert_equal template("postgres/bin/setup_db"), read(dest, "bin/setup_db")
       assert_equal template("postgres/bin/migrate"), read(dest, "bin/migrate")
-      assert File.directory?(File.join(dest, "db/migrate"))
-      assert_empty Dir.children(File.join(dest, "db/migrate"))
+      # A .keep, as app/'s role directories have: git doesn't keep an empty
+      # directory, so a fresh clone would have no db/migrate at all.
+      assert_equal [".keep"], Dir.children(File.join(dest, "db/migrate"))
     end
   end
 

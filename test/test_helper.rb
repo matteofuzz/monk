@@ -164,6 +164,27 @@ module PersistenceTestHelpers
 
     conn.exec("DROP TABLE #{table}#{" CASCADE" if cascade}")
   end
+
+  # Drops a backend the way a Postgres restart does (a FATAL, then the
+  # socket closes), from a connection of its own. pg_terminate_backend
+  # returns before the client's socket is sure to be readable, so this
+  # waits until the backend has left pg_stat_activity: a checkout
+  # straight after it could still see a healthy socket, and the test
+  # would flake.
+  def terminate_backend(pid)
+    admin = PG.connect(**pg_test_opts)
+    admin.exec_params("SELECT pg_terminate_backend($1)", [pid])
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until admin.exec_params("SELECT 1 FROM pg_stat_activity WHERE pid = $1", [pid]).ntuples.zero?
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        raise "backend #{pid} still running 5s after pg_terminate_backend"
+      end
+
+      sleep 0.01
+    end
+  ensure
+    admin&.finish
+  end
 end
 
 # Shared by tests that need a real Redis connection

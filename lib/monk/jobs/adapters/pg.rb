@@ -247,10 +247,12 @@ module Monk
         # Ractor's connection is still running on the server, then
         # reconnects, so the worker's next query doesn't wait for the
         # abandoned one (Phase 0.3) or land inside its open transaction.
+        # The cancel stays here: that connection is alive, just busy, so
+        # checkout's own probe wouldn't reset it.
         def reset_connection
           conn = Monk::Persistence::Pg[@db_name]
           conn.cancel
-          conn.reset
+          Monk::Persistence::Pg.revive(conn)
           nil
         end
 

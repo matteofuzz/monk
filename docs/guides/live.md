@@ -159,6 +159,13 @@ Monk::Live.authorize("news", anonymous: true, &AppLive::PUBLIC)
   `"contacts:"`.
 - The block has to be Ractor-shareable: define it in a module or class body
   (self there is shareable), not inline in a script's top level.
+- **A rule that queries the database** opens a connection in each socket's
+  Ractor and keeps it while the page is open. `db_pool:` runs the block in
+  a [pool](persistence.md#pools) instead, which the WebSocket process
+  starts (`start_pools!`):
+  `Monk::Live.authorize("rooms:*", db_pool: :live, &AppLive::MEMBER)`.
+  If the pool fails (not started, timed out, full), the rule denies and
+  the reason is logged.
 - A client's topic must match `[\w:.\-/@]{1,200}`, and a connection holds at
   most 100 topics (`configure(registry:, max_topics:)`). Denials never say why
   or whether the topic exists.
@@ -194,7 +201,9 @@ with recipient topics.
   after a successful write would fail with it; wrap the call in your own
   `rescue` if a missed push should not fail the request.
 - If delivering to a connection fails unexpectedly, the server closes that
-  connection (code 1011), and the client reconnects and re-syncs.
+  connection (code 1011), and the client reconnects and re-syncs. The
+  WebSocket process does the same to every open connection after its
+  listener reconnects (below).
 
 ## Without Redis: Postgres LISTEN/NOTIFY instead
 
@@ -223,7 +232,26 @@ Monk::Live.configure(
 ```
 
 Reuses the same `DB_*` env vars `config/persistence.rb` already reads — no
-new configuration, no `REDIS_URL`. Passing both `--redis` and `--postgres`
+new configuration, no `REDIS_URL`.
+
+Each Ractor that publishes holds a publishing connection of its own (8 for
+8 web workers). `db_pool:` publishes through a [pool](persistence.md#pools)
+of size 1 instead, one connection per process, and LISTENs on that pool's
+database:
+
+```ruby
+# config/persistence.rb
+Monk::Persistence::Pg.pool(:notify, size: 1)
+# config/live.rb
+Monk::Live.configure(registry: Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify))
+# at boot, in every process that publishes (the LISTEN has its own connection)
+Monk::Persistence::Pg.start_pools!(:notify)
+```
+
+Through the pool, `Monk::Live.patch` doesn't wait for Postgres: a publish
+that fails is logged instead of raised, and the page catches up at its
+next resync. Size 1 because one worker keeps a sender's patches in the
+order they were published; a larger pool is refused. Passing both `--redis` and `--postgres`
 picks `--redis` (an explicit ask beats an implied default); `--auth` and
 `--jobs` both imply `--postgres`, so `--live --auth` or `--live --jobs`
 alone also picks PgFanout (`monk new` prints which transport it chose). See `docs/design/live-pg-fanout.md`/
@@ -238,9 +266,24 @@ Two real tradeoffs, not just a syntax swap:
   before ever hitting Postgres if a rendered fragment (plus a small amount of
   internal framing) is too big — shrink the fragment, or use `RedisFanout` if
   your partials can be large.
-- **Neither transport retries a dropped connection.** If Postgres is
-  unreachable, `Monk::Live.patch` raises the same way it does when Redis is
-  down (above) — after delivering to subscribers in its own process.
+- **Both transports recover from a dropped connection.** When Postgres or
+  Redis restarts or fails over:
+  - The publisher (in `bin/server`, `bin/jobs`) reconnects. `PgFanout`'s
+    checks its connection before each publish, the way
+    [`persistence.md`](persistence.md#when-the-connection-drops) describes,
+    and never retries a publish that failed, since it may have gone
+    through. `RedisFanout`'s relies on redis-rb, which reconnects and sends
+    a failed command once more: if the connection drops after Redis has
+    already received a publish, that patch arrives twice. While the server
+    is down, `Monk::Live.patch` raises, after delivering to subscribers in
+    its own process (above).
+  - The WebSocket process's listener (`LISTEN`, or Redis's `PSUBSCRIBE`)
+    reconnects, retrying after 0.5 s, then twice as long each time, up to
+    30 s. Anything published while it was down is lost, and no page can
+    tell, so once it listens again it closes every open socket with
+    `1011`. Each page reconnects and refetches itself (its jittered
+    reconnect spreads the refetches), which brings back whatever it
+    missed. Both events are logged.
 
 ## Cost and limits
 

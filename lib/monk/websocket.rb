@@ -3,6 +3,8 @@ require_relative "errors"
 # true) always raises this precise error, per ADR 0003, rather than a bare
 # NameError when an app calls it without ever requiring "monk/auth" at all.
 require_relative "auth/errors"
+# Dependency-free too: Server.serve closes a socket Ractor's connections.
+require_relative "persistence"
 require_relative "websocket/errors"
 require_relative "websocket/handshake"
 require_relative "websocket/frame"

@@ -81,4 +81,28 @@ class PersistenceRactorIntegrationTest < Minitest::Test
     assert_equal Monk::PersistenceTimeoutError, timeout_class
     assert_equal 1, value_after_release
   end
+
+  # plan-pg-reconnect.md, phase 3: a worker Ractor's connection is
+  # terminated between two of its checkouts, as when Postgres restarts
+  # while kino's workers sit idle between requests. The second checkout
+  # reconnects in that Ractor, on the same connection object.
+  def test_a_worker_ractors_next_checkout_reconnects_after_its_backend_is_terminated
+    widget = Widget.create(name: "survivor", quantity: 1)
+    pids = Ractor::Port.new
+
+    worker = Ractor.new(Widget, DB_NAME, widget[:id], pids) do |model, db_name, id, pids|
+      pids << Monk::Persistence::Pg.checkout(db_name, &:backend_pid)
+      Ractor.receive # the main Ractor has terminated that backend
+      new_pid = Monk::Persistence::Pg.checkout(db_name, &:backend_pid)
+      [new_pid, model.find(id)]
+    end
+
+    old_pid = pids.receive
+    terminate_backend(old_pid)
+    worker << :go
+    new_pid, found = worker.value
+
+    refute_equal old_pid, new_pid
+    assert_equal widget, found
+  end
 end

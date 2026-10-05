@@ -1,5 +1,10 @@
 module Monk
   module WebSocket
+    # Sent through a registered port instead of a payload: the socket
+    # behind it closes with this code and reason. Registry#close_all sends
+    # it; Connection's and Live::Session's relays act on it.
+    CloseRequest = Data.define(:code, :reason)
+
     # A dedicated Ractor holding the live set of connection handles keyed by
     # an app-assigned channel/subject -- mirrors StateRactor's shape
     # (docs/design/ractor.md): the mutable Hash stays hidden inside this one
@@ -41,6 +46,17 @@ module Monk
                 true
               when :count
                 keys[key].size
+              when :close_all
+                # Once per port: a Live page holds one port for all its
+                # topics. Entries stay until each connection's own cleanup
+                # unregisters them, as on any other close.
+                ports = keys.values.flatten.uniq
+                ports.each do |port|
+                  port.send(arg)
+                rescue Ractor::ClosedError
+                  nil
+                end
+                ports.size
               end
             reply_port.send(result)
           end
@@ -65,6 +81,14 @@ module Monk
       # entry" claim from outside the registry, rather than trusting it.
       def count(key)
         ask(:count, key, nil)
+      end
+
+      # Closes every registered connection's socket with code and reason,
+      # so each client reconnects -- a fanout's subscriber does this after
+      # missing broadcasts, to make every page resync. Returns how many
+      # connections were asked to close.
+      def close_all(code, reason)
+        ask(:close_all, nil, Ractor.make_shareable(CloseRequest.new(code: code, reason: reason.to_s)))
       end
 
       # Nothing to listen to: every broadcast reaching this registry comes

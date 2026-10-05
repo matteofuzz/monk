@@ -1,4 +1,5 @@
 require_relative "test_helper"
+require "timeout"
 require "monk/websocket"
 require "monk/websocket/redis_fanout"
 
@@ -104,6 +105,20 @@ class WebSocketRedisFanoutTest < Minitest::Test
     port&.close
   end
 
+  def test_disconnect_publisher_closes_this_ractors_publisher
+    skip_unless_redis_available
+
+    Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).broadcast(:room1, "x")
+    client = Ractor.current[:monk_redis_fanout_publisher]
+    assert client.connected?, "control: broadcasting connected it"
+
+    Monk::WebSocket::RedisFanout.disconnect_publisher
+
+    refute client.connected?
+    assert_nil Ractor.current[:monk_redis_fanout_publisher]
+    Monk::WebSocket::RedisFanout.disconnect_publisher # none left: a no-op
+  end
+
   # Without the origin tag, A's own subscriber would relay A's own
   # broadcast back into registry_a a second time -- a connection
   # registered directly on registry_a would see it twice.
@@ -134,12 +149,60 @@ class WebSocketRedisFanoutTest < Minitest::Test
     port&.close
   end
 
+  # Redis dropping the subscriber's connection (a restart, a failover)
+  # used to end its Ractor silently. It resubscribes, then asks every open
+  # socket to close: whatever was published meanwhile is lost, so each
+  # page has to resync. A broadcast after that arrives as usual.
+  def test_the_listener_resubscribes_after_its_connection_is_dropped_and_asks_sockets_to_close
+    skip_unless_redis_available
+
+    fanout_a = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+    fanout_b = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).listen!
+    port = Ractor::Port.new
+    fanout_b.register(:room1, port)
+
+    drop_subscriber_connections
+
+    message = Timeout.timeout(5) { port.receive }
+    assert_equal Monk::WebSocket::CloseRequest.new(code: 1011, reason: "missed broadcasts"), message
+    fanout_a.broadcast(:room1, "after the drop")
+    assert_equal "after the drop", Timeout.timeout(2) { port.receive }
+  ensure
+    port&.close
+  end
+
+  def test_a_malformed_message_is_skipped_and_the_next_one_still_arrives
+    skip_unless_redis_available
+
+    fanout_a = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url)
+    fanout_b = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_test_url).listen!
+    port = Ractor::Port.new
+    fanout_b.register(:room1, port)
+
+    redis = Redis.new(url: redis_test_url)
+    redis.publish("#{Monk::WebSocket::RedisFanout::CHANNEL_PREFIX}room1", "no origin separator")
+    fanout_a.broadcast(:room1, "after the bad one")
+
+    assert_equal "after the bad one", Timeout.timeout(2) { port.receive }
+  ensure
+    redis&.close
+    port&.close
+  end
+
   private
 
   # Clients with at least one pattern subscription (test/support/live_ws_process.rb).
   def subscriber_count
     redis = Redis.new(url: redis_test_url)
     redis.call("CLIENT", "LIST").scan(/psub=(\d+)/).count { |(count)| count.to_i.positive? }
+  ensure
+    redis&.close
+  end
+
+  # Every connection in pattern-subscribe mode, as a Redis restart would.
+  def drop_subscriber_connections
+    redis = Redis.new(url: redis_test_url)
+    redis.call("CLIENT", "KILL", "TYPE", "pubsub")
   ensure
     redis&.close
   end

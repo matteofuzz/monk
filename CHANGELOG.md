@@ -4,6 +4,95 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.20.0 - 2026-10-05
+
+### Fixed
+
+- A route that raises now logs why. With no `error` handler for the
+  exception, `log/<env>.log` gets `ERROR GET /path raised Class: message`
+  and the first 10 backtrace lines; before, only `GET /path -> 500` was
+  logged, in development too. An exception an `error` handler takes care
+  of logs one `INFO ... (handled)` line.
+- `Monk::Persistence::Pg` recovers from a dropped connection (a Postgres
+  restart, a failover, `pg_terminate_backend`). Before, every request
+  that touched the database answered `500` until the process restarted.
+  `checkout` now checks the connection first, about 1 µs when it's
+  healthy, and reconnects a dead one. A block is never run twice: a drop
+  in the middle of one fails that request, and the next checkout
+  reconnects. While Postgres is down, `checkout` raises
+  `PG::ConnectionBad` at once.
+- `Monk::WebSocket::PgFanout`'s publisher reconnects after a dropped
+  connection. Before, every `Monk::Live.patch`/`batch` in that Ractor
+  raised `PG::ConnectionBad` from then on, and no open page updated. A
+  failed `pg_notify` isn't retried; the client's resync recovers it.
+- `Monk::WebSocket::PgFanout`'s `LISTEN` connection reconnects after a
+  drop, with backoff (500 ms doubling to 30 s). Before, its Ractor ended
+  silently and the WebSocket process never got another process's
+  broadcast again. Once listening again it closes every open socket with
+  `1011`, so each page reconnects and resyncs the broadcasts it missed. A
+  notify that can't be decoded or relayed is logged and skipped instead
+  of ending the listener.
+- `Monk::WebSocket::RedisFanout`'s subscriber resubscribes after Redis
+  drops its connection, the same way `PgFanout`'s `LISTEN` does now:
+  backoff, then every open socket closed with `1011` so pages resync.
+  Before, it ended silently. A message without an origin separator is
+  logged and skipped; it used to reach sockets as `nil`.
+- `Monk::WebSocket::Connection#close` called from a thread other than the
+  handler's (a relay, the `reverify_interval` check) could leave the
+  socket open, so the client never saw the close. It now shuts the
+  socket down; `Server.serve` closes it.
+
+- `Monk::Persistence::Pg` connections and `PgFanout`'s publisher get
+  `connect_timeout: 5` unless the app sets one, so a reconnect to a host
+  that doesn't answer fails instead of waiting indefinitely.
+- A WebSocket socket's own connections are closed when the socket ends:
+  its Postgres connection (`authenticate:` without `db_pool:`, or a
+  handler that queries) and a `PgFanout`/`RedisFanout` publisher (a
+  handler that broadcasts). Before, they stayed open until the garbage
+  collector happened to run, which a mostly idle server may not do for a
+  long time, so closed pages kept counting against Postgres's
+  `max_connections`. New: `Monk::Persistence.disconnect_all` closes every
+  connection the calling Ractor opened, and `PgFanout.disconnect_publisher`
+  / `RedisFanout.disconnect_publisher` its publisher; `Server.serve` calls
+  them as each socket ends.
+- `monk new --postgres` writes `db/migrate/.keep`. The directory was
+  created empty, and git doesn't keep an empty directory, so a fresh
+  clone of the app had no `db/migrate/`.
+- An app scaffolded without `--auth` and without `--live` crashed at boot
+  in `bin/websocket_server` (`authenticate must be false, true or
+  :optional, got nil`). The template now passes `false`; fix an existing
+  app's line to `authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)`.
+- A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
+  its transaction open for the next checkout in that Ractor: it's rolled
+  back.
+
+### Added
+
+- `monk new --auth` checks WebSocket sessions through a pool:
+  `config/auth.rb` declares `Monk::Persistence::Pg.pool(:auth, size: 4)`,
+  and both `bin/websocket_server` templates start it and pass
+  `db_pool: :auth`. A new app's WebSocket process holds 4 connections
+  however many pages are open, instead of one per open page.
+
+- Connection pools for Ractors that shouldn't each hold a connection
+  (`docs/guides/persistence.md`, "Pools"): `Monk::Persistence::Pg.pool(:auth,
+  size: 4)` declares one, `start_pools!(:auth)` starts it in the process that
+  uses it, and `pool(:auth).call(Contacts, :include?, owner, email)` runs that
+  method in one of its worker Ractors, from any Ractor. Errors keep their
+  class (`rescue PG::UniqueViolation` works), calls time out, a full queue
+  refuses calls, dying workers are replaced, and `call_async` doesn't wait.
+  `Monk.boot` lists running pools.
+- `Monk::WebSocket::Server.new(db_pool:)` checks sessions through a pool:
+  open sockets no longer hold a Postgres connection each (1,000 sockets on
+  4 connections).
+- `Monk::Live.authorize(..., db_pool:)` runs a rule in a pool.
+- `Monk::WebSocket::PgFanout.new(registry, db_pool:)` publishes through a
+  pool of size 1: one publishing connection per process, and
+  `Monk::Live.patch` no longer waits for (or raises because of) Postgres.
+- `Monk::WebSocket::Registry#close_all(code, reason)` closes every
+  registered connection's socket with that code, through a
+  `Monk::WebSocket::CloseRequest` sent to each port.
+
 ## 0.19.0 - 2026-10-01
 
 ### Fixed

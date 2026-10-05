@@ -1,5 +1,6 @@
 require "pg"
 require "securerandom"
+require_relative "../persistence/pg"
 require_relative "errors"
 require_relative "listeners"
 
@@ -54,7 +55,110 @@ module Monk
         [origin, key, payload]
       end
 
-      def initialize(registry, pg_opts:)
+      # The body of #listen!'s subscriber Ractor. A class method, like
+      # .decode_envelope, because the Ractor has no PgFanout instance to
+      # call into. Reports :ok, or why it couldn't LISTEN, on `ready`, then
+      # relays notifies for the rest of the process's life.
+      #
+      # A dropped LISTEN connection (a Postgres restart, a failover) is
+      # reconnected with backoff (plan-pg-reconnect.md). Notifies sent
+      # while it was down are lost, so once listening again every open
+      # socket is closed (Listeners::MISSED_CODE), and each client
+      # reconnects and resyncs; their jittered reconnect spreads the
+      # refetches.
+      def self.subscribe(registry, pg_opts, own_origin, ready)
+        begin
+          conn = listen_connection(pg_opts)
+        rescue StandardError => e
+          ready.send("#{e.class}: #{e.message}")
+          return
+        end
+        ready.send(:ok)
+
+        loop do
+          conn.wait_for_notify { |_channel, _pid, raw| relay(registry, own_origin, raw) }
+        rescue PG::ConnectionBad => e
+          log(:error, "lost the LISTEN connection (#{e.message.lines.first&.strip}); reconnecting")
+          conn = reconnect(pg_opts)
+          closed = registry.close_all(Listeners::MISSED_CODE, Listeners::MISSED_REASON)
+          log(:info, "listening again; closed #{closed} socket(s) so their pages resync")
+        end
+      end
+
+      # One notify into this process's registry. Anything that goes wrong
+      # here (a payload that isn't an envelope, a failing broadcast) drops
+      # this notify only: escaping, it would end the subscriber Ractor, and
+      # with it every later broadcast, silently.
+      def self.relay(registry, own_origin, raw)
+        sender, key, payload = decode_envelope(raw)
+        return if sender == own_origin
+
+        registry.broadcast(key.to_sym, payload)
+      rescue StandardError => e
+        log(:error, "dropped a notify: #{e.class}: #{e.message}")
+      end
+
+      def self.listen_connection(pg_opts)
+        conn = PG.connect(connect_timeout: Monk::Persistence::Pg::DEFAULT_CONNECT_TIMEOUT, **pg_opts)
+        conn.exec("LISTEN #{CHANNEL}")
+        conn
+      rescue StandardError
+        conn&.close
+        raise
+      end
+
+      def self.reconnect(pg_opts)
+        delay = Listeners::RETRY_INITIAL
+        begin
+          listen_connection(pg_opts)
+        rescue PG::Error => e
+          log(:warn, "can't LISTEN yet (#{e.class}: #{e.message.lines.first&.strip}); retrying in #{delay}s")
+          sleep delay
+          delay = Listeners.next_delay(delay)
+          retry
+        end
+      end
+
+      def self.log(level, message) = Listeners.log(name, level, message)
+      private_class_method :relay, :listen_connection, :reconnect, :log
+
+      # The body of a pooled publish (#broadcast with db_pool:), run in the
+      # pool's worker on its connection. That connection serves nothing
+      # but pool calls, each of which ends its transaction, so a NOTIFY
+      # here is never held back by an app's open transaction.
+      def self.notify(db, envelope)
+        Monk::Persistence::Pg.checkout(db) { |conn| conn.exec_params("SELECT pg_notify($1, $2)", [CHANNEL, envelope]) }
+        nil
+      end
+
+      # Closes the calling Ractor's publisher connection (#publisher), if
+      # it opened one; the next broadcast in this Ractor reconnects.
+      # Server.serve runs it as each socket ends: a Ractor that ends
+      # leaves its connection to the garbage collector, which may not run
+      # for a long time.
+      def self.disconnect_publisher
+        conn = Ractor.current[:monk_pg_fanout_publisher]
+        return unless conn
+
+        Ractor.current[:monk_pg_fanout_publisher] = nil
+        conn.finish
+      rescue PG::Error
+        nil # already closed
+      end
+
+      # pg_opts: connects the publisher (one connection per Ractor that
+      # publishes) and #listen!'s LISTEN connection. db_pool: (a
+      # Monk::Persistence::Pg pool of size 1, docs/history/plan-pg-pool.md)
+      # publishes through that pool instead, so a process holds one
+      # publishing connection however many Ractors publish, and LISTENs on
+      # the pool's database. Exactly one of the two.
+      #
+      # Through the pool a publish doesn't wait for Postgres (call_async):
+      # a failed pg_notify is logged, not raised, and the page catches up
+      # at its next resync, as it would after any missed patch. Size 1
+      # because only a single worker runs one sender's publishes in the
+      # order they were made, and patches to a page must arrive in order.
+      def initialize(registry, pg_opts: nil, db_pool: nil)
         # Checked upfront, on the argument -- RedisFanout has no equivalent
         # check (freezing self never raises on its own, even when an ivar
         # isn't itself shareable), so a bad registry there only surfaces
@@ -74,7 +178,12 @@ module Monk
         # fails on this Hash's contents, not on the registry argument it's
         # meant to guard, the same trap Server#initialize's
         # allowed_origins already avoids the same way.
-        @pg_opts = Ractor.make_shareable(pg_opts.dup)
+        raise ArgumentError, "Monk::WebSocket::PgFanout.new needs pg_opts: or db_pool:, not both" if pg_opts && db_pool
+        raise ArgumentError, "Monk::WebSocket::PgFanout.new needs pg_opts: or db_pool:" unless pg_opts || db_pool
+
+        @pg_opts = Ractor.make_shareable((pg_opts || pooled_pg_opts(db_pool)).dup)
+        @db_pool = db_pool
+        @db = db_pool && Monk::Persistence::Pg.pool_config(db_pool).db
         # Frozen explicitly, not just a String literal: read from every
         # calling Ractor's own #broadcast and from the subscriber Ractor
         # #listen! starts, both of which raise Ractor::IsolationError on an
@@ -105,23 +214,7 @@ module Monk
         # subscriber and Monk::Persistence::Pg's per-Ractor connection
         # pattern.
         Ractor.new(@registry, @pg_opts, @origin, ready) do |registry, pg_opts, own_origin, ready|
-          begin
-            conn = PG.connect(**pg_opts)
-            conn.exec("LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}")
-          rescue StandardError => e
-            ready.send("#{e.class}: #{e.message}")
-            next
-          end
-          ready.send(:ok)
-
-          loop do
-            conn.wait_for_notify do |_channel, _pid, raw|
-              sender, key, payload = Monk::WebSocket::PgFanout.decode_envelope(raw)
-              next if sender == own_origin
-
-              registry.broadcast(key.to_sym, payload)
-            end
-          end
+          Monk::WebSocket::PgFanout.subscribe(registry, pg_opts, own_origin, ready)
         end
 
         result = ready.receive
@@ -166,10 +259,24 @@ module Monk
         # parameter sidesteps any quoting/injection concern for its bytes
         # entirely, unlike Redis's PUBLISH, which never had that concern
         # in the first place.
+        return Monk::Persistence::Pg.pool(@db_pool).call_async(PgFanout, :notify, @db, envelope) if @db_pool
+
         publisher.exec_params("SELECT pg_notify($1, $2)", [CHANNEL, envelope])
       end
 
       private
+
+      # The pool's database's connection options, for #listen!.
+      def pooled_pg_opts(db_pool)
+        config = Monk::Persistence::Pg.pool_config(db_pool)
+        unless config.size == 1
+          raise ArgumentError,
+            "Monk::WebSocket::PgFanout's db_pool #{db_pool.inspect} has size #{config.size}; it must have size 1: " \
+            "patches to a page must arrive in the order they were published, and only one worker keeps " \
+            "a sender's publishes in order"
+        end
+        Monk::Persistence::Pg.connection_options(config.db)
+      end
 
       # Length-prefixes the origin and key (Netstring-style: "<bytesize>:"
       # then that many bytes) instead of RedisFanout's NUL-separated
@@ -201,8 +308,24 @@ module Monk
       # out for app queries: NOTIFY issued on a connection mid-transaction
       # wouldn't fire until that transaction commits, so this stays a
       # connection of its own, used for nothing but one-off notifies.
+      #
+      # Probed before each notify and reset if Postgres dropped it
+      # (Monk::Persistence::Pg.alive?, plan-pg-reconnect.md), the way
+      # checkout treats an app's connection. A failed pg_notify is never
+      # retried: it may have reached the server, and a patch delivered
+      # twice shows twice, while a missed one is recovered by the client's
+      # resync.
       def publisher
-        Ractor.current[:monk_pg_fanout_publisher] ||= PG.connect(**@pg_opts)
+        conn = Ractor.current[:monk_pg_fanout_publisher] ||= connect
+        Monk::Persistence::Pg.revive(conn) unless Monk::Persistence::Pg.alive?(conn)
+        conn
+      end
+
+      # Same connect_timeout default as Monk::Persistence::Pg's own
+      # connections: a reset runs inside a request's Live.patch, and
+      # mustn't wait indefinitely for a host that doesn't answer.
+      def connect
+        PG.connect(connect_timeout: Monk::Persistence::Pg::DEFAULT_CONNECT_TIMEOUT, **@pg_opts)
       end
     end
   end

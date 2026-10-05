@@ -63,10 +63,13 @@ module JobsRuntimeJobs
     def self.perform = raise(Fatal, "the worker Ractor goes down with this")
   end
 
-  # Runs to the end, then (first time only) kills its own database
-  # connection -- the worker's -- so the finish that follows fails the
-  # way it would if the database went away right after the job ran.
-  class LosesItsConnection < Monk::Job
+  # Runs to the end, then (first time only) leaves the worker's
+  # connection unable to write, so the finish that follows fails the way
+  # it would if the database went away right after the job ran. Killing
+  # the backend no longer does it: checkout reconnects a dropped
+  # connection (plan-pg-reconnect.md). A read-only session does, and the
+  # worker that replaces the dead one opens a fresh session.
+  class CantFinish < Monk::Job
     def self.perform
       first_run = Monk::Persistence::Pg.checkout(DB) do |conn|
         conn.exec("SELECT count(*) FROM jobs_runtime_results WHERE value = 'ran'").getvalue(0, 0).zero?
@@ -74,9 +77,7 @@ module JobsRuntimeJobs
       JobsRuntimeJobs.record("ran")
       return unless first_run
 
-      Monk::Persistence::Pg.checkout(DB) { |conn| conn.exec("SELECT pg_terminate_backend(pg_backend_pid())") }
-    rescue PG::Error
-      nil
+      Monk::Persistence::Pg.checkout(DB) { |conn| conn.exec("SET default_transaction_read_only = on") }
     end
   end
 end
@@ -230,7 +231,7 @@ class JobsRuntimeTest < Minitest::Test
   # dies, and the supervisor releases the job it was holding rather than
   # leaving it running inside a live process that nothing would prune.
   def test_a_job_held_by_a_worker_that_died_is_released_and_run_again
-    JobsRuntimeJobs::LosesItsConnection.enqueue
+    JobsRuntimeJobs::CantFinish.enqueue
 
     start_runtime(workers: 1)
 

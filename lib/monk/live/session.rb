@@ -95,6 +95,13 @@ module Monk
         seq = 0
         loop do
           payload = @port.receive
+          # Registry#close_all: broadcasts were missed, so the client must
+          # reconnect and resync (ADR 0011). run's read loop ends, and
+          # cleanup unregisters every topic.
+          if payload.is_a?(Monk::WebSocket::CloseRequest)
+            return @connection.close(code: payload.code, reason: payload.reason)
+          end
+
           seq += 1
           @connection.write(payload.start_with?("{") ? "{\"seq\":#{seq},#{payload.byteslice(1..)}" : payload)
         end
