@@ -2,11 +2,12 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: designed 2026-10-02, revised after review the same day, not
-started. Comes after [`plan-pg-reconnect.md`](plan-pg-reconnect.md): pool
-workers use the ordinary `checkout`, so they need its reconnect fix, and
-its rollback of a transaction left open (that plan's decision 8), since a
-worker serves unrelated callers on one connection.
+Status: complete 2026-10-02, shipped in monkrb 0.20.0 on 2026-10-05.
+Designed 2026-10-02, revised after review the same day. Comes after
+[`plan-pg-reconnect.md`](plan-pg-reconnect.md): pool workers use the
+ordinary `checkout`, so they need its reconnect fix, and its rollback of a
+transaction left open (that plan's decision 8), since a worker serves
+unrelated callers on one connection.
 
 ## The problem
 

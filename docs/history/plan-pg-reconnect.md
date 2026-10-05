@@ -2,10 +2,14 @@
 
 > **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
 
-Status: proposed 2026-10-01, revised after review 2026-10-02, not
-started. Found while reviewing monk_talk's connection lifecycle on monkrb
-0.19.0. Comes before [`plan-pg-pool.md`](plan-pg-pool.md), whose workers
-rely on this plan's checkout probe and rollback.
+Status: complete 2026-10-02, shipped in monkrb 0.20.0 on 2026-10-05.
+Proposed 2026-10-01, revised after review 2026-10-02. The checkout probe
+over TLS (`test/persistence_test.rb`) skips on a test Postgres with
+`ssl = off`; it passed on 2026-10-05 against a Postgres 17 with `ssl = on`
+(`MONK_TEST_PG_PORT` pointed at it). Found while reviewing monk_talk's
+connection lifecycle on monkrb 0.19.0. Comes before
+[`plan-pg-pool.md`](plan-pg-pool.md), whose workers rely on this plan's
+checkout probe and rollback.
 
 ## The problem
 
