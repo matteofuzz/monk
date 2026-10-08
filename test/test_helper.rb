@@ -165,8 +165,37 @@ module GeneratorTestHelpers
     assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, out)
   end
 
+  # A fresh database for one generated app (dropped afterwards), and the
+  # DB_* env pointing at it -- passed to a generated app's processes, it
+  # wins over the app's own .env files. Needs PersistenceTestHelpers.
+  def with_generated_database
+    skip_unless_postgres_available
+    name = "monk_generated_#{Process.pid}_#{rand(1_000_000)}"
+    admin { |conn| conn.exec(%(CREATE DATABASE "#{name}")) }
+    opts = pg_test_opts
+    yield({ "DB_HOST" => opts[:host], "DB_PORT" => opts[:port].to_s, "DB_USER" => opts[:user],
+            "DB_PASSWORD" => opts[:password], "DB_NAME" => name, })
+  ensure
+    admin { |conn| conn.exec(%(DROP DATABASE IF EXISTS "#{name}" WITH (FORCE))) } if name
+  end
+
+  # Runs a generated app's bin/ script, the way a developer runs it.
+  def run_generated_script(dest, script, env = {}, *args)
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
+    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *args, chdir: dest)
+  end
+
   def generated(dest, path) = File.read(File.join(dest, path))
   def template(path) = File.read(File.join(Monk::Generator::TEMPLATES_DIR, path))
+
+  private
+
+  def admin(&)
+    conn = PG.connect(**pg_test_opts)
+    yield conn
+  ensure
+    conn&.close
+  end
 end
 
 # Shared by tests that need a real Postgres connection (persistence_*_test.rb).

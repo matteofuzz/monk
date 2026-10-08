@@ -322,7 +322,7 @@ module Monk
             steps << step_entry(step) if step.condition.nil? || step.condition.call(options)
           end
         end
-        migrating = entries.select { |entry| entry[:path].start_with?("db/migrate/") && entry[:action] == :created }
+        migrating = entries.select { |entry| entry[:path].end_with?(".up.sql") && entry[:action] == :created }
         unless migrating.empty?
           needed = services_of(migrating.map { |entry| entry[:module] }.uniq)
           steps << { run: "bin/setup_db", needs_service: (needed.join(",") unless needed.empty?) }.compact

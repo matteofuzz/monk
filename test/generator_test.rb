@@ -255,6 +255,11 @@ class GeneratorTest < Minitest::Test
     assert_includes result.to_text, "  ! test/login_test.rb             exists and differs — left as is"
   end
 
+  # Only a migration means bin/setup_db, not anything else in db/migrate/.
+  def test_a_keep_file_in_db_migrate_is_not_a_migration
+    refute_includes add(:cache).next_steps.map { |step| step[:run] }, "bin/setup_db"
+  end
+
   def test_a_file_that_already_matches_is_not_a_conflict
     write_app_file("config/cache.rb", "CACHE = true\n")
 
@@ -410,7 +415,7 @@ class GeneratorTest < Minitest::Test
       example "db-model", todo: "uncomment to read a thing"
     end
     registry.define(:cache) do
-      copy "config/cache.rb", role: :wiring
+      copy "config/cache.rb", "db/migrate/.keep", role: :wiring
       gem %(gem "fakeredis", "~> 5")
     end
     registry.define(:mailer) { copy "config/mailer.rb", role: :wiring }
@@ -450,6 +455,7 @@ class GeneratorTest < Minitest::Test
       "db/bin/db" => "#!/bin/sh\necho db\n",
       "db/app/routes/db.rb" => "# monk:example db-model\n# class App; end\n# monk:end\n",
       "db/db/migrate/00000000000001_create_things.up.sql" => "CREATE TABLE things ();\n",
+      "cache/db/migrate/.keep" => "",
       "db/db/migrate/00000000000001_create_things.down.sql" => "DROP TABLE things;\n",
       "db/setup.md" => "## db\n\ndocker run --name {{app}}_db\n",
       "db/agents.md" => "## db\n",
