@@ -5,6 +5,7 @@ require "minitest/autorun"
 require "stringio"
 require "tmpdir"
 require "fileutils"
+require "open3"
 require "monk"
 
 module EnvHelper
@@ -129,6 +130,44 @@ module GeneratedAppHelpers
 end
 
 Minitest::Test.include(GeneratedAppHelpers)
+
+# Shared by the generator tests (test/generators/): an app made the way
+# `monk new shop --with ...` makes it, in a temp directory, and its own
+# test suite run in a fresh Ruby on Monk's bundle (the app's Gemfile
+# would fetch monkrb from rubygems.org).
+module GeneratorTestHelpers
+  NOW = Time.utc(2026, 10, 8, 14, 30, 0)
+
+  def with_new_app(*modules, options: {})
+    require "monk/generators"
+    Dir.mktmpdir("monk-generated") do |tmp|
+      dest = File.join(tmp, "shop")
+      FileUtils.mkdir_p(dest)
+      result = add_modules(dest, :base, *modules, options: options)
+      assert_equal :ok, result.status, result.to_text
+      yield dest, result
+    end
+  end
+
+  def add_modules(dest, *modules, options: {}, now: NOW, dry_run: false)
+    Monk::Generator.registry.add(dest, modules, options: options, now: now, dry_run: dry_run)
+  end
+
+  def run_generated_tests(dest, env = {})
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
+    script = %(Dir["test/**/*_test.rb"].each { |file| require File.expand_path(file) })
+    Open3.capture2e(env, RbConfig.ruby, "-rbundler/setup", "-Itest", "-e", script, chdir: dest)
+  end
+
+  def assert_generated_tests_pass(dest, env = {})
+    out, status = run_generated_tests(dest, env)
+    assert status.success?, out
+    assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, out)
+  end
+
+  def generated(dest, path) = File.read(File.join(dest, path))
+  def template(path) = File.read(File.join(Monk::Generator::TEMPLATES_DIR, path))
+end
 
 # Shared by tests that need a real Postgres connection (persistence_*_test.rb).
 # Not included globally -- `include PersistenceTestHelpers` where needed.

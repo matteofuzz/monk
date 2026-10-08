@@ -704,6 +704,12 @@ Its parts:
 Tested on temporary directories with fake modules, before any real one.
 
 ### Phase 4: the generators
+From here on the generators own `templates/` (settled 2026-10-08): when a
+template change breaks a test of the old `Monk::Scaffold`, that test is
+removed in the same commit, as long as a generator test covers the
+behaviour. Until Phase 5 switches the CLI, `monk new` on this branch may
+produce an inconsistent app; Phase 7 deletes what's left.
+
 One slice per module, in dependency order: base, postgres, redis, mail,
 auth, jobs, websocket (with each transport), live. The websocket slice
 also does what Phase 2 step 6 deferred: `config/websocket.rb` with
