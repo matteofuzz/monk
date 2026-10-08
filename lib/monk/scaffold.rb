@@ -57,7 +57,7 @@ module Monk
       # The magic link's sender, Monk::Auth's deliver: hook -- config/auth.rb
       # requires it -- and the HTML part it renders and sends through
       # Monk::Mail (MAIL_FILES, implied by --auth).
-      "app/mailers/app_mailer.rb" => "auth/app/mailers/app_mailer.rb",
+      "app/mailers/auth_mailer.rb" => "auth/app/mailers/auth_mailer.rb",
       "app/views/mail/magic_link.erb" => "auth/app/views/mail/magic_link.erb",
     }.freeze
 
@@ -788,7 +788,7 @@ module Monk
     def auth_mail_sentence
       return "" unless @auth
 
-      " `AppMailer::MAGIC_LINK` (`app/mailers/app_mailer.rb`) sends each login link through it " \
+      " `AuthMailer::MAGIC_LINK` (`app/mailers/auth_mailer.rb`) sends each login link through it " \
         "(HTML part: `app/views/mail/magic_link.erb`)."
     end
 

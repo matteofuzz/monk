@@ -11,7 +11,7 @@ class GeneratorsExamplesTest < Minitest::Test
   include RedisTestHelpers
 
   # The modules whose examples are checked: every module with a generator.
-  MODULES = %i[postgres redis mail].freeze
+  MODULES = %i[postgres redis mail auth].freeze
 
   # What each example does once uncommented, as test methods in the app.
   # `request` (defined below, in PROBE_HELPERS) goes through the booted APP.
@@ -33,8 +33,8 @@ class GeneratorsExamplesTest < Minitest::Test
       def test_redis_cache
         Redis.new(url: Monk::Settings[:redis_url]).then { |redis| redis.del("cached:now") && redis.close }
 
-        first = JSON.parse(request("GET", "/cached/now").last)["now"]
-        second = JSON.parse(request("GET", "/cached/now").last)["now"]
+        first = JSON.parse(request("GET", "/cached/now")[1])["now"]
+        second = JSON.parse(request("GET", "/cached/now")[1])["now"]
 
         refute_nil first
         assert_equal first, second, "the second request reads the cached value"
@@ -47,18 +47,43 @@ class GeneratorsExamplesTest < Minitest::Test
         assert_includes File.read(File.expand_path("../log/test.log", __dir__)), %(subject="Welcome, Ann")
       end
     RUBY
+    "auth-routes" => <<~RUBY,
+      def test_auth_routes
+        status, body = request("GET", "/login")
+        assert_equal 200, status
+        assert_includes body, %(id="login")
+
+        email = "probe-\#{rand(1_000_000)}@example.test"
+        assert_equal 200, request("POST", "/auth/request", email: email).first
+        token = File.read(File.expand_path("../log/test.log", __dir__)).scan(%r{/auth/callback/([\\w-]+)}).last.first
+
+        status, _body, headers = request("GET", "/auth/callback/\#{token}")
+        assert_equal 302, status
+        cookies = Array(headers["set-cookie"]).to_h { |cookie| cookie.split(";").first.split("=", 2) }
+        logged_in = { "HTTP_COOKIE" => cookies.map { |name, value| "\#{name}=\#{value}" }.join("; ") }
+        assert_equal [200, %({"email":"\#{email}"})], request("GET", "/me", nil, logged_in).first(2)
+
+        csrf = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
+        assert_equal 200, request("POST", "/auth/logout", nil, csrf).first
+        assert_equal 401, request("GET", "/me", nil, logged_in).first
+
+        statuses = Array.new(6) { request("POST", "/auth/request", email: email).first }
+        assert_includes statuses, 429, "the rate limit stops a flood of links"
+      end
+    RUBY
   }.freeze
 
   PROBE_HELPERS = <<~RUBY.freeze
     require "json"
     require "rack"
 
-    # Monk reads params from the query string and JSON bodies.
-    def request(method, path, json = nil)
+    # Monk reads params from the query string and JSON bodies. Returns
+    # [status, body, headers].
+    def request(method, path, json = nil, env = {})
       options = { method: method }
       options.merge!(input: JSON.generate(json), "CONTENT_TYPE" => "application/json") if json
-      status, _headers, body = APP.call(Rack::MockRequest.env_for(path, **options))
-      [status, body.join]
+      status, headers, body = APP.call(Rack::MockRequest.env_for(path, **options).merge(env))
+      [status, body.join, headers]
     end
   RUBY
 

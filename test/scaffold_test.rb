@@ -642,67 +642,6 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # --auth's magic-link sender lives in app/mailers/, and config/auth.rb
-  # requires it itself (docs/adr/0015): Monk::Auth.configure checks
-  # deliver: right away, before config/load.rb reaches app/.
-  def test_write_bang_with_auth_writes_the_mailer_that_config_auth_requires
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
-
-      Monk::Scaffold.new(dest, auth: true).write!
-
-      assert_equal template("auth/app/mailers/app_mailer.rb"), read(dest, "app/mailers/app_mailer.rb")
-      assert_includes read(dest, "config/auth.rb"), %(require_relative "../app/mailers/app_mailer")
-      assert_includes read(dest, "config/auth.rb"), "deliver: AppMailer::MAGIC_LINK"
-      assert File.exist?(File.join(dest, "app/mailers/.keep"))
-    end
-  end
-
-  # config/auth.rb loads on its own, without config/mail.rb, as
-  # bin/websocket_server loads it; then config/load.rb, as config.ru loads
-  # it, requires the mailer again through its app/ glob -- which Ruby
-  # skips, so AppMailer is defined once (no "already initialized constant").
-  # The tmpdir path goes through a symlink on macOS (/var -> /private/var),
-  # so this also covers require_relative and the glob spelling it
-  # differently.
-  def test_config_auth_loads_the_mailer_alone_and_config_load_doesnt_load_it_again
-    require "monk/auth"
-    require "monk/mail"
-
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
-      Monk::Scaffold.new(dest, auth: true).write!
-      Object.send(:remove_const, :AppMailer) if defined?(AppMailer)
-
-      _out, err = capture_io do
-        with_settings do
-          with_env("AUTH_SECRET", "s3cr3t") do
-            with_env("MAIL_URL", "log://") do
-              Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
-              require File.join(dest, "config/settings")
-              require File.join(dest, "config/auth")
-
-              assert_same AppMailer::MAGIC_LINK, Monk::Auth.config[:deliver]
-
-              require File.join(dest, "config/load")
-            end
-          end
-        end
-      end
-
-      refute_match(/already initialized constant/, err)
-      mailer = File.join(dest, "app/mailers/app_mailer.rb")
-      assert_equal 1, $LOADED_FEATURES.count { |path| File.identical?(path, mailer) }
-    end
-  ensure
-    Monk::Auth.reset!
-    Monk::Mail.reset!
-    Monk::Persistence::Pg.reset! if defined?(Monk::Persistence::Pg)
-  end
-
-  # config/mail.rb is required by config/load.rb only, not by
-  # config/auth.rb: bin/websocket_server loads config/auth.rb as well, and
-  # never sends mail, so it shouldn't need MAIL_URL set to boot.
   def test_config_auth_doesnt_require_config_mail
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")

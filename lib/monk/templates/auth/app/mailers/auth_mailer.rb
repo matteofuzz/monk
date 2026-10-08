@@ -1,9 +1,9 @@
-# The emails this app sends, through Monk::Mail (config/mail.rb). Module
-# constants and module methods rather than an instance, since Monk::Auth's
-# deliver: hook must be Ractor-shareable (a lambda built at a file's top
-# level, where self isn't, would fail) -- the same constraint as
+# The login email Monk::Auth sends (config/auth.rb's deliver:), through
+# Monk::Mail (config/mail.rb). A lambda in a module constant: the deliver:
+# hook must be Ractor-shareable, and a lambda built at a file's top level,
+# where self isn't, would fail -- the same constraint as
 # Monk::Live.authorize blocks.
-module AppMailer
+module AuthMailer
   # Monk::Auth's deliver: hook (config/auth.rb), called by
   # Monk::Auth.deliver_link. The HTML part is
   # app/views/mail/magic_link.erb. Swap the body for SMS or any other

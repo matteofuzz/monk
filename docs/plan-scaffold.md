@@ -488,7 +488,14 @@ AGENTS.md sections, and its env lines to `.env`, `.env.test` and
   any address), the `redirect_to` allowlist, HTML or JSON. The block
   shows both ways to send: `Monk::Auth.deliver_link` in the request, or
   `Monk::Auth::SendLoginLink.enqueue` with jobs (decision 9). The login
-  form, `app/views/auth/login.erb`, is a real file.
+  form, `app/views/auth/login.erb`, is a real file. Settled 2026-10-08:
+  - The page sends the email with `fetch` and a JSON body: Monk parses
+    only query strings and JSON bodies into `params`, and `require_csrf!`
+    reads only the `X-CSRF-Token` header, so a plain HTML form can't work
+    yet. Parsing form bodies is a roadmap item ("Richer HTML support").
+  - Logout uses a new `log_out!` helper (`Monk::Auth::Helpers`): it
+    revokes the current session, cookie or Bearer, and clears the
+    cookies. The token reader it needs was private.
 - Proof: `test/auth_test.rb`: `request_login` → `deliver_link`, which
   reaches `log://` → `redeem` → a valid session. It checks the tables,
   the secret and the mailer without any route.

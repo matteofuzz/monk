@@ -10,6 +10,11 @@ class AuthHelpersTest < Minitest::Test
 
   DB_NAME = :auth_helpers_test_db
 
+  LOG_OUT = proc do |ctx|
+    ctx.log_out!
+    ctx.json(ok: true)
+  end
+
   def setup
     Monk::Persistence::Pg.reset!
   end
@@ -273,5 +278,48 @@ class AuthHelpersTest < Minitest::Test
 
     assert_equal 200, status
     assert_equal "nil", body.join
+  end
+
+  # log_out!: the current session is revoked, wherever its token came from,
+  # and the cookies go with it.
+  def test_log_out_bang_revokes_the_cookie_session_and_clears_the_cookies
+    setup_auth_tables(DB_NAME)
+    app = Class.new(Monk::Base) do
+      post("/auth/logout") do |ctx|
+        ctx.log_out!
+        ctx.json(ok: true)
+      end
+    end
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    request_env = env_for("POST", "/auth/logout")
+    request_env["HTTP_COOKIE"] = "session_token=#{session[:token]}"
+
+    _status, headers, = app.call(request_env)
+
+    assert_nil Monk::Auth.verify(session[:token])
+    assert(headers["set-cookie"].all? { |cookie| cookie.include?("Max-Age=0") })
+  end
+
+  def test_log_out_bang_revokes_a_bearer_session
+    setup_auth_tables(DB_NAME)
+    app = Class.new(Monk::Base) { post("/auth/logout", &LOG_OUT) }
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    request_env = env_for("POST", "/auth/logout")
+    request_env["HTTP_AUTHORIZATION"] = "Bearer #{session[:token]}"
+
+    app.call(request_env)
+
+    assert_nil Monk::Auth.verify(session[:token])
+  end
+
+  # Logging out twice, or without a session, is not an error.
+  def test_log_out_bang_without_a_session_still_clears_the_cookies
+    setup_auth_tables(DB_NAME)
+    app = Class.new(Monk::Base) { post("/auth/logout", &LOG_OUT) }
+
+    status, headers, = app.call(env_for("POST", "/auth/logout"))
+
+    assert_equal 200, status
+    assert_equal 2, headers["set-cookie"].size
   end
 end

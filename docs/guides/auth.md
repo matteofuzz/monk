@@ -41,7 +41,9 @@ browsers, `set_session_cookie(session)` sets that cookie (plus a readable
 `csrf_token` one) instead of returning the token as JSON, and
 `require_csrf!` guards state-changing routes — a no-op for Bearer
 requests, since a forged cross-origin request has no way to set that
-header. `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
+header. `log_out!` ends the current session (revokes it, Bearer or cookie,
+and clears the cookies; call `require_csrf!` first on a cookie route).
+`Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows. Full design and phase-by-phase
 build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/plan-auth.md`.
 

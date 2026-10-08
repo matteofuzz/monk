@@ -1,0 +1,25 @@
+<h1>Log in</h1>
+
+<%# Sent with fetch and a JSON body: Monk reads params from JSON bodies,
+    not form bodies. POST /auth/request is in app/routes/auth.rb. %>
+<form id="login">
+  <label>Email <input type="email" name="email" required autocomplete="email"></label>
+  <button>Send me a login link</button>
+</form>
+<p id="login-sent" hidden>Check your email for the link.</p>
+
+<script type="module">
+  const form = document.getElementById("login")
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault()
+    const response = await fetch("/auth/request", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: form.email.value }),
+    })
+    if (response.ok) {
+      form.hidden = true
+      document.getElementById("login-sent").hidden = false
+    }
+  })
+</script>

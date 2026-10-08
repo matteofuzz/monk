@@ -58,6 +58,11 @@ when work on it starts.
   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
   deliberately left them out). Templates write every form by hand, including
   its CSRF field and the values to fill back in after a failed submit.
+  Before helpers, plain forms need two things Monk lacks: `params` from an
+  `application/x-www-form-urlencoded` body (only the query string and JSON
+  bodies are parsed today), and `require_csrf!` accepting a form field, not
+  only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
+  the auth module's login page does.
 
 ## To evaluate
 
