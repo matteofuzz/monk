@@ -103,14 +103,10 @@ class ScaffoldJobsTest < Minitest::Test
 
   # --- with --auth and --mail (docs/adr/0014) ---
 
-  def test_auth_and_jobs_write_the_send_login_link_job
+  # Monk::Auth::SendLoginLink ships with Monk (docs/adr/0017), so the
+  # scaffold writes no job file for it, whatever the flags.
+  def test_auth_and_jobs_write_no_send_login_link_file
     in_scaffold(jobs: true, auth: true) do |dest|
-      assert_equal template("jobs/app/jobs/send_login_link.rb"), read(dest, "app/jobs/send_login_link.rb")
-    end
-  end
-
-  def test_jobs_without_auth_write_no_send_login_link_job
-    in_scaffold(jobs: true, mail: true) do |dest|
       refute File.exist?(File.join(dest, "app/jobs/send_login_link.rb"))
     end
   end
@@ -135,18 +131,18 @@ class ScaffoldJobsTest < Minitest::Test
 
   def test_setup_md_shows_the_login_route_enqueueing_send_login_link
     in_scaffold(jobs: true, auth: true) do |dest|
-      assert_includes read(dest, "SETUP.md"), "SendLoginLink.enqueue(params[:email])"
+      assert_includes read(dest, "SETUP.md"), "Monk::Auth::SendLoginLink.enqueue(params[:email])"
     end
   end
 
   # ADR 0014's whole point: the job carries only the email, the token is
   # created and sent inside the job, and the link it sends works.
-  def test_the_generated_send_login_link_sends_a_working_link_without_ever_storing_the_token
+  def test_the_generated_auth_app_sends_a_working_link_from_a_job_without_ever_storing_the_token
     skip_unless_postgres_available
 
     in_scaffold(jobs: true, auth: true) do |dest|
       with_generated_auth_app(dest) do
-        SendLoginLink.enqueue("ann@example.test")
+        Monk::Auth::SendLoginLink.enqueue("ann@example.test")
         assert_equal ["ann@example.test"], JSON.parse(queued_args), "only the email is queued"
         assert_equal 0, count_rows(:primary, "login_tokens"), "no token exists until the job runs"
 

@@ -48,24 +48,26 @@ build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/p
 ### Sending the magic link
 
 `Monk::Auth.request_login` returns a raw token and nothing else. Monk
-stays out of routing, so it can't build the callback URL; sending is a
-separate concern, which `Monk::Mail` covers ([`mail.md`](mail.md)). Your
-login route builds the link and hands it, with the token, to
-`Monk::Auth.deliver_link`:
+doesn't define the callback route, but it knows its path:
+`Monk::Auth.configure(callback_path:)`, `"/auth/callback"` by default, so
+your route is `get("/auth/callback/:token")`. `Monk::Auth.login_link(token)`
+builds the link from it. Sending is a separate concern, which `Monk::Mail`
+covers ([`mail.md`](mail.md)). Your login route hands the link, with the
+token, to `Monk::Auth.deliver_link`:
 
 ```ruby
 post("/auth/request") do
   token = Monk::Auth.request_login(params[:email], redirect_to: "/")
-  link = "#{Monk::Settings[:public_url]}/auth/callback/#{token}"
-  Monk::Auth.deliver_link(email: params[:email], link: link, token: token)
+  Monk::Auth.deliver_link(email: params[:email], link: Monk::Auth.login_link(token), token: token)
   json(ok: true)
 end
 ```
 
-Build `link` from a configured origin — `Monk::Settings[:public_url]` above,
+`login_link` starts from a configured origin, `Monk::Settings[:public_url]`,
 declared in `config/settings.rb` (every `monk new` app has this, not just
 `--auth` — `Monk::Live`'s `live_ws_url` and `WS_ALLOWED_ORIGINS` read the
-same setting, see `docs/guides/live.md`) — never from request headers like
+same setting, see `docs/guides/live.md`). If you build a link yourself,
+start from it too, never from request headers like
 `X-Forwarded-Proto` or `Host`. Those come from
 whoever is making the request, so a direct client (not just a trusted proxy)
 can set them; harmless while the only thing reading them is a dev-only
@@ -100,30 +102,22 @@ typed in.
 With [background jobs](jobs.md), the login request doesn't have to wait
 for the email to go out. Move the whole request into a job, not just the
 send: the job creates the token and sends the link, so the raw token only
-ever exists in memory and in the email. `monk new --auth --jobs` generates
-this job as `app/jobs/send_login_link.rb`:
-
-```ruby
-class SendLoginLink < Monk::Job
-  queue "mailers"
-  max_attempts 3                           # a login email minutes late is worse than none
-  never_retry Monk::InvalidRedirectError
-
-  def self.perform(email, redirect_to = nil)
-    token = Monk::Auth.request_login(email, redirect_to: redirect_to)
-    link = "#{Monk::Settings[:public_url]}/auth/callback/#{token}"
-    Monk::Auth.deliver_link(email: email, link: link, token: token) # deliver: sends, here in the job
-  end
-end
-```
+ever exists in memory and in the email. Monk ships this job as
+`Monk::Auth::SendLoginLink`, defined once `monk/auth` and `monk/jobs` are
+both loaded:
 
 ```ruby
 post("/auth/request") do
   # your per-email rate limit first
-  SendLoginLink.enqueue(params[:email])
+  Monk::Auth::SendLoginLink.enqueue(params[:email]) # or (email, redirect_to)
   json(sent: true)
 end
 ```
+
+It runs on the `mailers` queue with 3 attempts (a login email minutes late
+is worse than none), never retries an `InvalidRedirectError`, and sends
+`Monk::Auth.login_link(token)` through your `deliver:`, synchronously, in
+the job. Subclass it to change the queue or the retries.
 
 - **Why not `deliver:` calling `Monk::Mail.deliver_later`?** That would
   store the link, token included, in the job queue until it's sent. A

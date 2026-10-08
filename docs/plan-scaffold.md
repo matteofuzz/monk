@@ -137,7 +137,16 @@ framework, or into a static file written once.
    `templates/jobs/app/jobs/send_login_link.rb`) becomes
    `Monk::Auth::SendLoginLink`, defined when both modules are loaded, the
    same symmetric way as decision 8. No app file, no pair rule. Its queue,
-   attempts and `never_retry` stay as they are (ADR 0014).
+   attempts and `never_retry` stay as they are (ADR 0014). The job needs
+   the callback route's path, which was hard-coded in the app's file, so
+   (settled 2026-10-08) `Monk::Auth.configure` gains `callback_path:`
+   (default `"/auth/callback"`, an absolute path, any trailing slash
+   dropped), and `Monk::Auth.login_link(token)` builds
+   `public_url + callback_path + "/" + token`. The job, the commented
+   `auth-routes` example and `config/auth.rb` all use it, so the path is
+   written once. Considered: keeping the job as an app file (a pair rule
+   again), and a `login_link:` lambda in the config (more flexible, but
+   one more Ractor-shareability trap, for a need no app has shown).
 10. **auth's mailer is its own file.** `app/mailers/auth_mailer.rb`
     (`AuthMailer::MAGIC_LINK`), with `config/auth.rb` requiring it. `mail`
     owns `app/mailers/app_mailer.rb`. The two generators never write the

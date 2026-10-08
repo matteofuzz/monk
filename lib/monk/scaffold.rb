@@ -81,12 +81,6 @@ module Monk
         "jobs/db/migrate/00000000000002_create_jobs_tables.down.sql",
     }.freeze
 
-    # --auth --jobs: the magic link is created and sent inside a job, so the
-    # raw token is never stored (docs/adr/0014).
-    JOBS_AUTH_FILES = {
-      "app/jobs/send_login_link.rb" => "jobs/app/jobs/send_login_link.rb",
-    }.freeze
-
     # --jobs's demo route, added right after this line in app/app.rb (the
     # base and the --live one both end their routes with it), so the
     # round trip -- enqueue from a request, run in bin/jobs -- works out of
@@ -237,7 +231,6 @@ module Monk
 
       if @jobs
         JOBS_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
-        JOBS_AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
         add_jobs_route!
       end
 
@@ -278,7 +271,6 @@ module Monk
 
     def combinations
       pairs = []
-      pairs << ["--auth + --jobs", "app/jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
       pairs << live_combination if @live
       pairs
     end
@@ -912,14 +904,15 @@ module Monk
 
       <<~MARKDOWN.chomp
 
-        Magic links go through a job too, `app/jobs/send_login_link.rb`: it
-        creates the token and sends the link inside the job, so the raw
-        token is never stored, not even in the queue. Your login route,
-        after its own per-email rate limit, just enqueues it:
+        Magic links can go through a job too: `Monk::Auth::SendLoginLink`,
+        which ships with Monk, creates the token and sends the link inside
+        the job, so the raw token is never stored, not even in the queue.
+        Your login route, after its own per-email rate limit, just enqueues
+        it:
 
         ```ruby
         post("/auth/request") do
-          SendLoginLink.enqueue(params[:email])
+          Monk::Auth::SendLoginLink.enqueue(params[:email])
           json(sent: true)
         end
         ```

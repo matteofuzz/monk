@@ -232,8 +232,8 @@ login link, a working token included, in the queue until it's sent. That
 undoes the reason `Monk::Auth` stores only token hashes: that reading the
 database isn't enough to log in as someone. To send login links from a job,
 move the whole login request into one, so the token is created and sent
-inside the job and never stored. `monk new --auth --jobs` scaffolds it as
-`app/jobs/send_login_link.rb`; see [`auth.md`](auth.md), "Sending the magic
+inside the job and never stored. Monk ships that job as
+`Monk::Auth::SendLoginLink`; see [`auth.md`](auth.md), "Sending the magic
 link from a job".
 
 ## In tests

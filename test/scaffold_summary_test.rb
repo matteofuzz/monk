@@ -19,8 +19,6 @@ class ScaffoldSummaryTest < Minitest::Test
       "Flags: --auth --jobs, which also turned on:",
       "  --postgres  (needed by --auth, --jobs)",
       "  --mail      (needed by --auth)",
-      "Together they also generate:",
-      "  --auth + --jobs  app/jobs/send_login_link.rb: login links are sent from a job",
     ], summary(auth: true, jobs: true)
   end
 
