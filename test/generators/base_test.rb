@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 
 # `monk new shop`: the bare app every module is added on top of
-# (docs/plan-scaffold.md, "base").
+# (docs/history/plan-scaffold.md, "base").
 class GeneratorsBaseTest < Minitest::Test
   include GeneratorTestHelpers
 
@@ -104,7 +104,7 @@ class GeneratorsBaseTest < Minitest::Test
   end
 
   # config/load.rb requires the module configs that exist, in Monk's fixed
-  # order, whatever order they were added in (docs/plan-scaffold.md
+  # order, whatever order they were added in (docs/history/plan-scaffold.md
   # decision 6): stub configs print their names.
   def test_config_load_requires_the_module_configs_that_exist_in_monks_order
     Dir.mktmpdir do |dir|

@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# monk add live (docs/plan-scaffold.md, "live"): over websocket's registry,
+# monk add live (docs/history/plan-scaffold.md, "live"): over websocket's registry,
 # with a demo in development unless --no-demo.
 class GeneratorsLiveTest < Minitest::Test
   include GeneratorTestHelpers

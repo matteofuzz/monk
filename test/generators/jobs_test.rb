@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# monk add jobs (docs/plan-scaffold.md, "jobs"): needs postgres.
+# monk add jobs (docs/history/plan-scaffold.md, "jobs"): needs postgres.
 class GeneratorsJobsTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
@@ -29,7 +29,7 @@ class GeneratorsJobsTest < Minitest::Test
   end
 
   # With jobs installed, auth's example says to send links from a job
-  # (docs/plan-scaffold.md decision 9): text only, the same files either way.
+  # (docs/history/plan-scaffold.md decision 9): text only, the same files either way.
   def test_auth_after_jobs_points_at_send_login_link
     with_new_app(:jobs) do |dest|
       todo = add_modules(dest, :auth).examples.find { |entry| entry[:tag] == "auth-routes" }[:todo]

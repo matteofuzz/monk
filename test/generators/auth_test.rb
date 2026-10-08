@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# monk add auth (docs/plan-scaffold.md, "auth"): needs postgres and mail.
+# monk add auth (docs/history/plan-scaffold.md, "auth"): needs postgres and mail.
 class GeneratorsAuthTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers

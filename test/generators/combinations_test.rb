@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# Properties across modules (docs/plan-scaffold.md Phase 6): the order
+# Properties across modules (docs/history/plan-scaffold.md Phase 6): the order
 # modules are added in doesn't matter, adding to an app is the same as
 # creating it with them, and every combination works.
 class GeneratorsCombinationsTest < Minitest::Test

@@ -7,7 +7,7 @@ when work on it starts.
   One-off delayed jobs already exist (`enqueue(..., wait:)` / `at:`); recurring
   ones were left out of the first version (`docs/guides/jobs.md`, "What's not
   here"). Its scaffold step is now a change to the jobs generator
-  (`monk add jobs`): `docs/plan-scaffold.md`, "Other branches that touch
+  (`monk add jobs`): `docs/history/plan-scaffold.md`, "Other branches that touch
   the scaffold".
 - **File storage, `Monk::Storage`.** An opt-in storage layer configured by
   one `STORAGE_URL`. It has one S3-compatible backend (Hetzner, R2, B2, AWS,
@@ -18,7 +18,7 @@ when work on it starts.
   the S3 backend ships, four open items need checking on a real Hetzner
   bucket: the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle
   rule, and same-bucket copy. Its scaffold step is now a generator of its
-  own (`monk add storage`): `docs/plan-scaffold.md`, "Other branches that
+  own (`monk add storage`): `docs/history/plan-scaffold.md`, "Other branches that
   touch the scaffold".
 - **`monk check`: verifying an environment's wiring.** `bin/check` (written
   by the base app) loads `config/load` and runs a read-only check for each
@@ -48,7 +48,7 @@ when work on it starts.
   It isn't a load balancer's health check: it's heavier and runs once per
   deploy. A test email is opt-in (`--send-test-mail=addr`). It builds on the
   check command each `monk add` generator declares for its service
-  (`docs/plan-scaffold.md` decision 29), and comes after storage, its best
+  (`docs/history/plan-scaffold.md` decision 29), and comes after storage, its best
   use case, and recurring jobs, whose missing-migration case it should
   catch.
 - **Richer HTML support, forms first.** Views offer only `render`, `h`,

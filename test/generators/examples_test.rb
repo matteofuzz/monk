@@ -2,7 +2,7 @@ require_relative "../test_helper"
 require "pg"
 
 # Every `# monk:example` block, uncommented in a generated app, works:
-# docs/plan-scaffold.md decision 15. The app's own suite runs with a probe
+# docs/history/plan-scaffold.md decision 15. The app's own suite runs with a probe
 # test per example, so an API change that breaks an example breaks this
 # test instead of the first app that copies it.
 class GeneratorsExamplesTest < Minitest::Test

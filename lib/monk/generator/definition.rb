@@ -15,7 +15,7 @@ module Monk
 
       # What a role means when the file already exists with other content:
       # a wiring file stops the whole command, anything else is skipped
-      # (docs/plan-scaffold.md decision 26).
+      # (docs/history/plan-scaffold.md decision 26).
       ROLES = %i[wiring example test view demo].freeze
 
       # Which .env file each env group appends to.

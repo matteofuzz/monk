@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# monk add postgres (docs/plan-scaffold.md, "postgres").
+# monk add postgres (docs/history/plan-scaffold.md, "postgres").
 class GeneratorsPostgresTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers

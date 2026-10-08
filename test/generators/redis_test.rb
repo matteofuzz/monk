@@ -1,6 +1,6 @@
 require_relative "../test_helper"
 
-# monk add redis (docs/plan-scaffold.md, "redis"): a module of its own, for
+# monk add redis (docs/history/plan-scaffold.md, "redis"): a module of its own, for
 # a cache as much as for WebSocket's transport.
 class GeneratorsRedisTest < Minitest::Test
   include GeneratorTestHelpers

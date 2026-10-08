@@ -6,7 +6,7 @@ module Monk
     # options inferred or missing), checks every file against the app,
     # and only then writes -- or writes nothing, on a usage error, a missing
     # choice, a conflict on a wiring file, or a dry run
-    # (docs/plan-scaffold.md decisions 2-5, 25-28).
+    # (docs/history/plan-scaffold.md decisions 2-5, 25-28).
     class Run
       # A choice the user has to make before anything can be planned.
       MissingChoice = Class.new(StandardError) do

@@ -5,7 +5,7 @@ require "redis"
 require "monk/websocket"
 
 # Monk::Bin.run, what a scaffolded app's bin/ scripts run their work in
-# (docs/plan-scaffold.md decision 29): a service that's down, a missing
+# (docs/history/plan-scaffold.md decision 29): a service that's down, a missing
 # database or setting ends the script with what failed, which setting, and
 # the commands that fix it, exit 1 -- not a backtrace. Anything else is
 # re-raised as it is.

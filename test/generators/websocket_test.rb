@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "pg"
 
-# monk add websocket (docs/plan-scaffold.md decision 13): a transport,
+# monk add websocket (docs/history/plan-scaffold.md decision 13): a transport,
 # Postgres or Redis, chosen once, in config/websocket.rb.
 class GeneratorsWebSocketTest < Minitest::Test
   include GeneratorTestHelpers

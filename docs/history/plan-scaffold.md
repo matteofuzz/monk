@@ -1,13 +1,16 @@
 # Scaffolding by module (`monk new` + `monk add`): implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `main_dev/refactor_scaffolding`.
-Status: Phases 0–8 implemented on this branch, 2026-10-08 (choices made
-along the way are recorded in decisions 9, 14, 21, Phase 2 step 6, Phase 4
-and auth). Left: the notes at the top of the scheduled-jobs and storage
-plans, on their branches, and Phase 9 (optional). Ergonomics for humans
-and agents reviewed on 2026-10-08 (decisions 25–30).
-Companion record, to write in Phase 0: `adr/0017-scaffold-by-module-generators.md`
-(it amends [`adr/0015`](adr/0015-scaffolded-app-layout-app-dir-by-role.md)
+Status: complete 2026-10-08 (Phases 0–8, on `main_dev/refactor_scaffolding`),
+not yet released. Choices made along the way are recorded in decisions
+9, 14, 21, Phase 2 step 6, Phase 4 and auth. Phase 9 (optional) wasn't
+built. The scheduled-jobs and storage plans' scaffold steps are updated
+when those branches are rebased. Ergonomics for humans and agents were
+reviewed on 2026-10-08 (decisions 25–30).
+Companion record: [`adr/0017-scaffold-by-module-generators.md`](../adr/0017-scaffold-by-module-generators.md)
+(it amends [`adr/0015`](../adr/0015-scaffolded-app-layout-app-dir-by-role.md)
 on where routes live).
 
 `monk new` grew one flag per module, and every new flag adds files,

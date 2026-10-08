@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "json"
 require "monk/cli"
 
-# The `monk` command (docs/plan-scaffold.md Phase 5): monk new, monk add,
+# The `monk` command (docs/history/plan-scaffold.md Phase 5): monk new, monk add,
 # monk add --list and monk help, in text and --json, with their exit codes
 # (decision 28). Run in-process on a temp directory and a fixed clock; one
 # test runs exe/monk itself.
@@ -63,7 +63,7 @@ class ExeMonkTest < Minitest::Test
     assert_includes err, "monk new needs a name."
   end
 
-  # docs/plan-scaffold.md decision 24: the old flags are a usage error
+  # docs/history/plan-scaffold.md decision 24: the old flags are a usage error
   # showing the same command's new form, and nothing is written.
   def test_old_flags_show_the_new_form
     {

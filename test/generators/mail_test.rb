@@ -1,6 +1,6 @@
 require_relative "../test_helper"
 
-# monk add mail (docs/plan-scaffold.md, "mail"): no Postgres needed.
+# monk add mail (docs/history/plan-scaffold.md, "mail"): no Postgres needed.
 class GeneratorsMailTest < Minitest::Test
   include GeneratorTestHelpers
 
@@ -15,7 +15,7 @@ class GeneratorsMailTest < Minitest::Test
     end
   end
 
-  # The mailer file is mail's: auth writes its own (docs/plan-scaffold.md
+  # The mailer file is mail's: auth writes its own (docs/history/plan-scaffold.md
   # decision 10), so the two never write the same file.
   def test_writes_the_app_mailer_with_a_commented_example
     with_new_app(:mail) do |dest|

@@ -3,7 +3,7 @@ require "fileutils"
 require_relative "generators"
 
 module Monk
-  # What exe/monk runs (docs/plan-scaffold.md Phase 5): `monk new`,
+  # What exe/monk runs (docs/history/plan-scaffold.md Phase 5): `monk new`,
   # `monk add`, `monk add --list`, `monk help`. Each answers in text, or
   # as one JSON object with --json, and returns the exit code: 0 done,
   # 1 usage error, 2 a missing choice, 3 a conflict on a wiring file
@@ -223,7 +223,7 @@ module Monk
     end
 
     # Monk's version of one of a module's files, for a file the app already
-    # had (a conflict, docs/plan-scaffold.md decision 26).
+    # had (a conflict, docs/history/plan-scaffold.md decision 26).
     def file_help(definition)
       path = @args[:file]
       source = migration_template(definition, path) || copy_template(definition, path)

@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "json"
 require "monk/generator"
 
-# The generator engine (docs/plan-scaffold.md Phase 3), on fake modules
+# The generator engine (docs/history/plan-scaffold.md Phase 3), on fake modules
 # and templates of its own, before any real module exists: what a run
 # writes, what it never writes, and what it reports.
 class GeneratorTest < Minitest::Test

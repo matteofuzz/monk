@@ -3,7 +3,7 @@ require "pg"
 
 # Each generated bin/ script, run as a developer runs it, with its service
 # unreachable or a setting missing: it ends with what failed and how to fix
-# it, exit 1, never a backtrace (docs/plan-scaffold.md decision 29).
+# it, exit 1, never a backtrace (docs/history/plan-scaffold.md decision 29).
 class GeneratorsBinErrorsTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
