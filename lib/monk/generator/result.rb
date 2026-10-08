@@ -172,20 +172,27 @@ module Monk
         ["", "Set before production:", *env.map { |entry| "  #{entry[:key].ljust(width)}  #{entry[:note]}" }]
       end
 
+      # At most three numbered steps: the first two and the tests, with
+      # bin/setup_db joined to the tests. What's left is named on one more
+      # line each, with the SETUP.md section that explains it.
       def next_text
-        steps = next_steps.map { |step| step_text(step) }
-        if steps.size >= 2 && steps[-2] == "bin/setup_db" && steps[-1].start_with?("bundle exec rake test")
-          steps[-2..] = ["bin/setup_db && bundle exec rake test"]
+        steps = next_steps.dup
+        if (migrate = steps.find { |step| step[:run] == "bin/setup_db" }) && steps.last != migrate
+          steps.delete(migrate)
+          steps[-1] = steps.last.merge(run: "bin/setup_db && #{steps.last[:run]}")
         end
-        steps = steps.first(MAX_STEPS - 1) + [steps.last, "… and the rest in SETUP.md"] if steps.size > MAX_STEPS
-        numbered = steps.each_with_index.map do |step, index|
-          step.start_with?("…") ? "  #{step}" : "  #{index + 1}. #{step}"
+        rest = []
+        if steps.size > MAX_STEPS
+          rest = steps[(MAX_STEPS - 1)...-1]
+          steps = steps.first(MAX_STEPS - 1) + [steps.last]
         end
-        ["", "Next:", *numbered]
+        lines = steps.each_with_index.map { |step, index| "  #{index + 1}. #{step_text(step)}" }
+        lines += rest.map { |step| "  … also: #{step_text(step)}#{" (SETUP.md › #{step[:module]})" if step[:module]}" }
+        ["", "Next:", *lines]
       end
 
       def step_text(step)
-        step[:run] || step[:do]
+        [step[:run] || step[:do], step[:note]].compact.join("   ")
       end
 
       def missing_choice_text

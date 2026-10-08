@@ -309,24 +309,28 @@ module Monk
              .map { |service| { name: service.name, check: service.check, setup: service.setup } }
       end
 
-      # Every step, in order: bundle install when gems were added, each
-      # module's own steps, bin/setup_db when a migration was, and the tests.
+      # Every step, in the order they're done: bundle install when gems were
+      # added, what to do first (start a service), bin/setup_db when a
+      # migration was added, each module's own commands (bin/jobs), and the
+      # tests last.
       def next_steps(entries)
         all_services = (@installed.map { |name| @registry.fetch(name) } + @plan.map(&:first))
                        .flat_map(&:services).map(&:name).uniq
         steps = []
         gems_added = entries.any? { |entry| entry[:path] == "Gemfile" && entry[:action] == :appended }
         steps << { run: "bundle install" } if gems_added
-        @plan.each do |definition, options|
-          definition.steps.each do |step|
-            steps << step_entry(step) if step.condition.nil? || step.condition.call(options)
-          end
+        own = @plan.flat_map do |definition, options|
+          definition.steps.select { |step| step.condition.nil? || step.condition.call(options) }
+                    .map { |step| step_entry(step, definition.name) }
         end
+        commands, todos = own.partition { |step| step.key?(:run) }
+        steps.concat(todos)
         migrating = entries.select { |entry| entry[:path].end_with?(".up.sql") && entry[:action] == :created }
         unless migrating.empty?
           needed = services_of(migrating.map { |entry| entry[:module] }.uniq)
           steps << { run: "bin/setup_db", needs_service: (needed.join(",") unless needed.empty?) }.compact
         end
+        steps.concat(commands)
         steps << { run: "bundle exec rake test",
                    needs_service: (all_services.join(",") unless all_services.empty?), }.compact
         steps.uniq
@@ -355,9 +359,9 @@ module Monk
         end.last
       end
 
-      def step_entry(step)
+      def step_entry(step, module_name)
         key = step.text.match?(%r{\A(bin/|bundle |ruby |curl )}) ? :run : :do
-        { key => step.text, needs_service: step.needs_service }.compact
+        { key => step.text, note: step.note, needs_service: step.needs_service, module: module_name }.compact
       end
 
       def docs(entries)

@@ -40,7 +40,8 @@ class GeneratorsPostgresTest < Minitest::Test
 
       assert_equal [{ name: "postgres", check: "pg_isready -h 127.0.0.1 -p 5432", setup: "SETUP.md#postgres" }],
         result.services
-      assert_equal [{ run: "bundle install" }, { do: "start Postgres and create the databases (SETUP.md › postgres)" },
+      assert_equal [{ run: "bundle install" },
+                    { do: "start Postgres and create the databases (SETUP.md › postgres)", module: :postgres },
                     { run: "bundle exec rake test", needs_service: "postgres" },], result.next_steps
       assert_equal [{ tag: "postgres-model", path: "app/routes/postgres.rb", line: 3, module: :postgres,
                       todo: "uncomment, then move the table to a migration and the model to app/models/", }],

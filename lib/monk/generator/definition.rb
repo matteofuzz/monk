@@ -9,7 +9,7 @@ module Monk
       Env = Data.define(:file, :key, :value, :commented)
       Option = Data.define(:name, :values, :infer_from, :describe, :default)
       Service = Data.define(:name, :check, :setup)
-      Step = Data.define(:text, :needs_service, :condition)
+      Step = Data.define(:text, :note, :needs_service, :condition)
       Example = Data.define(:tag, :todo)
       Production = Data.define(:key, :note, :placeholder)
 
@@ -122,8 +122,10 @@ module Monk
         @productions << Production.new(key: key, note: note, placeholder: placeholder)
       end
 
-      def next_step(text, needs_service: nil, if: nil)
-        @steps << Step.new(text: text, needs_service: needs_service&.to_s, condition: binding.local_variable_get(:if))
+      # A command (`bin/jobs`) or something to do; `note:` says what for.
+      def next_step(text, note: nil, needs_service: nil, if: nil)
+        @steps << Step.new(text: text, note: note, needs_service: needs_service&.to_s,
+          condition: binding.local_variable_get(:if),)
       end
 
       # What to do with an example block (`# monk:example <tag>`). `todo`

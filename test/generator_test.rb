@@ -205,14 +205,14 @@ class GeneratorTest < Minitest::Test
     result = add(:widget)
 
     assert File.exist?(File.join(@app, "app/widget_demo.rb"))
-    assert_includes result.next_steps, { do: "open the demo" }
+    assert_includes result.next_steps, { do: "open the demo", module: :widget }
     assert_equal "Remove the demo when done.", result.closing
 
     FileUtils.rm_rf(Dir.children(@app).map { |child| File.join(@app, child) })
     result = add(:widget, options: { demo: "off" })
 
     refute File.exist?(File.join(@app, "app/widget_demo.rb"))
-    refute_includes result.next_steps, { do: "open the demo" }
+    refute_includes result.next_steps, { do: "open the demo", module: :widget }
     assert_nil result.closing
   end
 
@@ -300,7 +300,7 @@ class GeneratorTest < Minitest::Test
     result = add(:db)
 
     assert_equal [
-      { run: "bundle install" }, { do: "start the db (SETUP.md › db)", needs_service: "db" },
+      { run: "bundle install" }, { do: "start the db (SETUP.md › db)", needs_service: "db", module: :db },
       { run: "bin/setup_db", needs_service: "db" }, { run: "bundle exec rake test", needs_service: "db" },
     ], result.next_steps
   end
@@ -360,13 +360,23 @@ class GeneratorTest < Minitest::Test
     TEXT
   end
 
+  # A command and what it's for, kept apart for agents.
+  def test_a_step_can_carry_a_note
+    @registry.fetch(:mailer).next_step("bin/mailer_worker", note: "beside bin/server")
+
+    result = add(:mailer)
+
+    assert_includes result.next_steps, { run: "bin/mailer_worker", note: "beside bin/server", module: :mailer }
+    assert_includes result.to_text, "  1. bin/mailer_worker   beside bin/server\n"
+  end
+
   def test_more_than_three_steps_keep_the_first_two_and_the_tests
     @registry.fetch(:login).next_step("bin/login_worker")
 
     text = add(:login).to_text
 
     assert_includes text, "  1. bundle install\n  2. start the db (SETUP.md › db)\n  " \
-                          "3. bin/setup_db && bundle exec rake test\n  … and the rest in SETUP.md\n"
+                          "3. bin/setup_db && bundle exec rake test\n  … also: bin/login_worker (SETUP.md › login)\n"
     assert_includes add(:cache, dry_run: true).to_text, "Would add cache (nothing written):"
   end
 

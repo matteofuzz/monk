@@ -11,7 +11,7 @@ class GeneratorsExamplesTest < Minitest::Test
   include RedisTestHelpers
 
   # The modules whose examples are checked: every module with a generator.
-  MODULES = %i[postgres redis mail auth].freeze
+  MODULES = %i[postgres redis mail auth jobs].freeze
 
   # What each example does once uncommented, as test methods in the app.
   # `request` (defined below, in PROBE_HELPERS) goes through the booted APP.
@@ -69,6 +69,18 @@ class GeneratorsExamplesTest < Minitest::Test
 
         statuses = Array.new(6) { request("POST", "/auth/request", email: email).first }
         assert_includes statuses, 429, "the rate limit stops a flood of links"
+      end
+    RUBY
+    "jobs-enqueue" => <<~RUBY,
+      def test_jobs_enqueue
+        status, body = request("POST", "/jobs/hello?name=Ann")
+
+        assert_equal 200, status
+        refute_nil JSON.parse(body)["enqueued"]
+        assert_equal 1, Monk::Jobs.drain!
+        assert_includes File.read(File.expand_path("../log/test.log", __dir__)), "Hello, Ann, from a background job"
+      ensure
+        Monk::Jobs.clear!
       end
     RUBY
   }.freeze
