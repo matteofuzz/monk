@@ -11,14 +11,32 @@ class ScaffoldLiveTest < Minitest::Test
 
   EXE = File.expand_path("../exe/monk", __dir__)
 
+  # The demo is its own files (docs/adr/0017): app/app.rb and the home
+  # page stay the base ones.
   def test_live_writes_the_demo_wiring_from_the_live_templates
     in_app do |dest|
       assert_equal template("live/config/live.rb"), read(dest, "config/live.rb")
-      assert_equal template("live/app/app.rb"), read(dest, "app/app.rb")
+      assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
       assert_equal template("base/config.ru"), read(dest, "config.ru")
       assert_equal template("live/bin/websocket_server"), read(dest, "bin/websocket_server")
-      assert_equal template("live/app/views/index.erb"), read(dest, "app/views/index.erb")
-      assert_equal template("live/app/views/live/_hits.erb"), read(dest, "app/views/live/_hits.erb")
+      assert_equal template("base/app/views/index.erb"), read(dest, "app/views/index.erb")
+      %w[app/routes/demo_live.rb app/views/demo/live.erb app/views/demo/_hits.erb].each do |file|
+        assert_equal template("live/#{file}"), read(dest, file)
+      end
+    end
+  end
+
+  # Only the demo's topic is open, in development only; the example rule
+  # is commented out, so nothing else can be subscribed to until the app
+  # writes a rule of its own.
+  def test_config_live_has_a_commented_rule_example_and_a_development_only_demo_rule
+    in_app do |dest|
+      live = read(dest, "config/live.rb")
+
+      assert_includes live, "# monk:example live-rule"
+      assert_includes live, %(# Monk::Live.authorize("contacts:*", &AppLive::OWN_CONTACTS))
+      assert_includes live, %(if Monk.env.development?\n  Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)\nend)
+      assert_equal 1, live.scan(/^Monk::Live\.authorize|^  Monk::Live\.authorize/).size
     end
   end
 
@@ -84,14 +102,6 @@ class ScaffoldLiveTest < Minitest::Test
     end
   end
 
-  # Module routes live in app/routes/ (docs/adr/0017), so whatever app/app.rb
-  # an app has must load them.
-  def test_the_live_app_rb_loads_app_routes_too
-    in_app do |dest|
-      assert_includes read(dest, "app/app.rb"), %(Dir[File.expand_path("routes/*.rb", __dir__)])
-    end
-  end
-
   def test_live_composes_with_postgres_and_auth
     in_app(auth: true) do |dest|
       assert File.exist?(File.join(dest, "config/auth.rb"))
@@ -133,50 +143,48 @@ class ScaffoldLiveTest < Minitest::Test
     Monk::Live.reset! if defined?(Monk::Live)
   end
 
-  # The generated --live app as config.ru runs it: config/load.rb (settings,
-  # then config/live.rb), app/app.rb, Monk.boot. GET / renders the counter
-  # through app/views; POST /hit publishes through Monk::Live.patch, which
-  # renders app/views/live/_hits.erb and sends it over Redis -- a wrong
-  # template path or wiring would fail the request. with_generated_app_class removes
-  # its top-level App afterwards, so it doesn't leak into other tests.
-  def test_the_generated_live_app_boots_renders_and_publishes_a_hit
+  # The generated --live app as config.ru runs it in development:
+  # config/load.rb (settings, then config/live.rb), app/app.rb (which loads
+  # app/routes/demo_live.rb), Monk.boot. GET /demo/live renders the counter;
+  # POST /demo/live/hit publishes through Monk::Live.patch, which renders
+  # app/views/demo/_hits.erb and sends it over Redis -- a wrong template
+  # path or wiring would fail the request.
+  def test_the_generated_live_app_boots_renders_and_publishes_a_hit_in_development
     skip_unless_redis_available
 
-    in_app do |dest|
-      with_settings do
-        with_env("REDIS_URL", redis_test_url) do
-          Dir.chdir(dest) do
-            require File.join(dest, "config/load")
-            with_generated_app_class(dest) do |app|
-              Monk.boot(app)
+    with_generated_live_app("development") do |app|
+      _status, _headers, body = app.call(env_for("GET", "/demo/live"))
+      assert_includes body.join, %(<strong id="hits">0</strong>)
+      assert_includes body.join, %(data-live-topic="demo:hits")
+      assert_includes body.join, %(<meta name="monk-live-url" content="ws://localhost:9293">)
+      client = body.join[%r{<script type="module" src="(/_monk/live/monk_live\.js[^"]*)"}, 1]
+      refute_nil client, "the layout loads Live's client"
+      assert_equal 200, app.call(env_for("GET", client.split("?").first))[0], "Monk serves it"
+      assert Monk::Live.authorized?(nil, "demo:hits"), "a visitor may subscribe to the demo"
 
-              _status, _headers, body = app.call(env_for("GET", "/"))
-              assert_includes body.join, %(<strong id="hits">0</strong>)
-              assert_includes body.join, %(<meta name="monk-live-url" content=")
-              client = body.join[%r{<script type="module" src="(/_monk/live/monk_live\.js[^"]*)"}, 1]
-              refute_nil client, "the layout loads Live's client"
-              assert_equal 200, app.call(env_for("GET", client.split("?").first))[0], "Monk serves it"
+      status, headers, _body = app.call(env_for("POST", "/demo/live/hit"))
+      assert_equal 302, status
+      assert_equal "/demo/live", headers["location"]
 
-              status, headers, _body = app.call(env_for("POST", "/hit"))
-              assert_equal 302, status
-              assert_equal "/", headers["location"]
-
-              _status, _headers, body = app.call(env_for("GET", "/"))
-              assert_includes body.join, %(<strong id="hits">1</strong>)
-            end
-          end
-        end
-      end
+      _status, _headers, body = app.call(env_for("GET", "/demo/live"))
+      assert_includes body.join, %(<strong id="hits">1</strong>)
     end
-  ensure
-    Monk::Live.reset! if defined?(Monk::Live)
-    Monk::Views.reset!
-    Monk::Assets.reset!
+  end
+
+  # A forgotten demo never reaches production: outside development neither
+  # its routes nor its subscribe rule exist.
+  def test_the_demo_exists_only_in_development
+    with_generated_live_app("production") do |app|
+      assert_equal 404, app.call(env_for("GET", "/demo/live"))[0]
+      assert_equal 404, app.call(env_for("POST", "/demo/live/hit"))[0]
+      refute Monk::Live.authorized?(nil, "demo:hits")
+      assert_equal 200, app.call(env_for("GET", "/"))[0]
+    end
   end
 
   # --live --auth: a visitor's socket comes in anonymous instead of
   # refused (authenticate: :optional), so the demo's `anonymous: true`
-  # "hits" topic works without logging in. The plain chat server, which
+  # "demo:hits" topic works without logging in. The plain chat server, which
   # has no subscribe rules, stays strict.
   def test_with_auth_the_live_websocket_server_lets_visitors_in_anonymously
     in_app(auth: true) do |dest|
@@ -309,6 +317,28 @@ class ScaffoldLiveTest < Minitest::Test
   # Redis transport exactly as before --live required picking one
   # explicitly (docs/history/plan-live-pg-fanout.md Phase 6); pass
   # `redis: false, postgres: true` for the PgFanout path instead.
+  def with_generated_live_app(monk_env)
+    in_app do |dest|
+      with_settings do
+        with_monk_env(monk_env) do
+          with_env("REDIS_URL", redis_test_url) do
+            Dir.chdir(dest) do
+              require File.join(dest, "config/load")
+              with_generated_app_class(dest) do |app|
+                capture_io { Monk.boot(app) }
+                yield app
+              end
+            end
+          end
+        end
+      end
+    end
+  ensure
+    Monk::Live.reset! if defined?(Monk::Live)
+    Monk::Views.reset!
+    Monk::Assets.reset!
+  end
+
   def in_app(**flags)
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")

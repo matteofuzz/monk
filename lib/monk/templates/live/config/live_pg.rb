@@ -49,12 +49,20 @@ Monk::Live.configure(
 
 # Who may subscribe to what. Nothing is allowed unless a rule says so, and an
 # anonymous connection is denied unless the rule opts in with `anonymous: true`.
-# The rule blocks live in a module because they have to be Ractor-shareable
-# (self at the top of this file is not).
-module AppLive
-  # The demo counter is public. A real rule looks at who is asking:
-  #   proc { |subject, topic| topic == "contacts:#{subject}" }
-  PUBLIC = proc { |_subject, _topic| true }
-end
+# Rule blocks must be Ractor-shareable, so they live in a module (self at the
+# top of this file is not).
+#
+# monk:example live-rule -- uncomment and adapt: each person may subscribe to
+# their own contacts topic (subject is the logged-in user, nil for a visitor).
+# module AppLive
+#   OWN_CONTACTS = proc { |subject, topic| topic == "contacts:#{subject}" }
+# end
+# Monk::Live.authorize("contacts:*", &AppLive::OWN_CONTACTS)
+# monk:end
 
-Monk::Live.authorize("hits", anonymous: true, &AppLive::PUBLIC)
+# monk:demo live -- the demo's topic (app/routes/demo_live.rb), development
+# only. Remove these lines with it.
+if Monk.env.development?
+  Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)
+end
+# monk:end

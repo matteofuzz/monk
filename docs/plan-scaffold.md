@@ -217,9 +217,20 @@ framework, or into a static file written once.
     that's where live breaks (ports, `WS_ALLOWED_ORIGINS`, `LIVE_WS_URL`).
     The live demo is `app/routes/demo_live.rb` plus
     `app/views/demo/live.erb` and `_hits.erb`, at `/demo/live`, and
-    **defined only in development** (`if Monk.env.development?`). Deleting
-    those files removes it. It's on by default, and `--no-demo` skips it.
-    It never replaces `/` or `index.erb`.
+    **defined only in development** (`if Monk.env.development?`). It's on
+    by default, and `--no-demo` skips it. It never replaces `/` or
+    `index.erb`. Its subscribe rule can't live in the demo's route file,
+    because `bin/websocket_server` loads `config/live.rb` and never `app/`.
+    So (settled 2026-10-08) it's three marked lines in `config/live.rb`,
+    under the commented `live-rule` example:
+    `# monk:demo live` + `if Monk.env.development?` +
+    `Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)`,
+    where `ALLOW_ALL` is a shareable allow-everyone proc Monk provides.
+    Removing the demo means deleting `app/routes/demo_live.rb`,
+    `app/views/demo/` and those lines; left behind, they're a harmless
+    development-only rule for a topic nothing publishes. Considered: a
+    `config/live_demo.rb` that `config/live.rb` requires if it exists, and
+    a built-in development-only `demo:` prefix in Monk.
 15. **Examples are tagged blocks.**
     ```ruby
     # monk:example auth-routes -- uncomment, then add your rate limit (see AGENTS.md)

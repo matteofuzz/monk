@@ -1,0 +1,18 @@
+<h1>Monk::Live demo</h1>
+<p>
+  Open this page in two tabs and press the button in one: the counter in the
+  other updates by itself. The server pushes the new HTML over a WebSocket;
+  there is no polling and no page JavaScript of your own.
+</p>
+
+<%# live_topic makes this element's page subscribe to the "demo:hits" topic. %>
+<p <%= live_topic "demo:hits" %>>Hits so far: <%= render "demo/_hits", hits: locals[:hits], layout: false %></p>
+
+<form method="post" action="/demo/live/hit"><button>+1</button></form>
+
+<p>
+  The pieces: <code>live_topic</code> in this view, the partial
+  <code>app/views/demo/_hits.erb</code>, <code>Monk::Live.patch</code> in
+  <code>POST /demo/live/hit</code> (<code>app/routes/demo_live.rb</code>), and
+  the subscribe rule in <code>config/live.rb</code>.
+</p>

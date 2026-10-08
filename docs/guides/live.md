@@ -139,11 +139,14 @@ Nothing, until a rule says so:
 ```ruby
 module AppLive
   OWN = proc { |subject, topic| topic == "contacts:#{subject}" }
-  PUBLIC = proc { |_subject, _topic| true }
 end
 Monk::Live.authorize("contacts:*", &AppLive::OWN)
-Monk::Live.authorize("news", anonymous: true, &AppLive::PUBLIC)
+Monk::Live.authorize("news", anonymous: true, &Monk::Live::ALLOW_ALL)
 ```
+
+Rule blocks must be Ractor-shareable, so they're built in a module, never at
+the top of `config/live.rb`. `Monk::Live::ALLOW_ALL` is a ready-made one for a
+topic open to everyone.
 
 - A pattern is an exact topic or a prefix ending in one `*`. **The first
   matching rule decides**, so put specific rules above general ones. A topic

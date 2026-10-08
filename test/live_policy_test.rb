@@ -99,4 +99,16 @@ class LivePolicyTest < Minitest::Test
     assert Ractor.shareable?(Monk::Live.rules)
     assert Ractor.new { Monk::Live.authorized?("7", "contacts:7") }.value
   end
+
+  # For a rule that lets everyone in (the scaffold's development-only
+  # demo): a block written at the top of config/live.rb isn't shareable.
+  def test_allow_all_is_a_shareable_block_that_lets_everyone_in
+    assert Ractor.shareable?(Monk::Live::ALLOW_ALL)
+
+    Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)
+
+    assert Monk::Live.authorized?(nil, "demo:hits")
+    assert Monk::Live.authorized?("7", "demo:hits")
+    refute Monk::Live.authorized?(nil, "demo:other")
+  end
 end

@@ -84,22 +84,22 @@ module Monk
         "jobs/db/migrate/00000000000002_create_jobs_tables.down.sql",
     }.freeze
 
-    # --live: Monk::Live's demo (a counter whose open tabs update when
-    # another request changes it). These replace three base files outright
-    # rather than patching them -- a live app and index are different
-    # files, not one line of diff -- and add two. config.ru stays the base
-    # one: config/load.rb is where --live's config gets wired in.
+    # --live: a bin/websocket_server that runs Monk::Live's handler instead
+    # of the chat one.
     LIVE_OVERRIDES = {
-      "app/app.rb" => "live/app/app.rb",
       "bin/websocket_server" => "live/bin/websocket_server",
-      "app/views/index.erb" => "live/app/views/index.erb",
     }.freeze
 
     # config/live.rb itself isn't here -- #write_live! picks between
     # LIVE_CONFIG_TEMPLATES[@live_transport] instead, since which one gets
     # written depends on --redis vs --postgres, not a fixed mapping.
+    # Monk::Live's demo (a counter whose open tabs update together), in its
+    # own files and development only (docs/adr/0017), plus the marked demo
+    # rule in config/live.rb.
     LIVE_FILES = {
-      "app/views/live/_hits.erb" => "live/app/views/live/_hits.erb",
+      "app/routes/demo_live.rb" => "live/app/routes/demo_live.rb",
+      "app/views/demo/live.erb" => "live/app/views/demo/live.erb",
+      "app/views/demo/_hits.erb" => "live/app/views/demo/_hits.erb",
     }.freeze
 
     LIVE_CONFIG_TEMPLATES = {
@@ -388,7 +388,8 @@ module Monk
         bin/websocket_server    # the sockets on :9293, which deliver them
         ```
 
-        Open http://localhost:9292 in two tabs and press the button in one.
+        Open http://localhost:9292/demo/live in two tabs and press the button
+        in one. The demo exists in development only.
 
         `bin/server` and `bin/websocket_server` are separate processes, so Redis
         (`REDIS_URL`, already in `.env`) is what carries an update from one to
@@ -396,9 +397,11 @@ module Monk
 
         - `config/live.rb` -- the Redis wiring (`Monk::WebSocket::RedisFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/routes/demo_live.rb` -- `POST /demo/live/hit` changes state and
+          calls `Monk::Live.patch`.
+        - `app/views/demo/live.erb` -- `live_topic "demo:hits"` marks what to
+          subscribe to.
+        - `app/views/demo/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
         - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
@@ -408,6 +411,9 @@ module Monk
           `/_monk/live/`. The layout's `<%= monk_head %>` loads it and
           points it at `LIVE_WS_URL` (default `ws://localhost:9293`; use
           `wss://` in production).
+
+        To remove the demo, delete `app/routes/demo_live.rb`, `app/views/demo/`,
+        and the `monk:demo live` lines in `config/live.rb`.
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
@@ -430,7 +436,8 @@ module Monk
         bin/websocket_server    # the sockets on :9293, which deliver them
         ```
 
-        Open http://localhost:9292 in two tabs and press the button in one.
+        Open http://localhost:9292/demo/live in two tabs and press the button
+        in one. The demo exists in development only.
 
         `bin/server` and `bin/websocket_server` are separate processes, so
         Postgres `LISTEN`/`NOTIFY` (the same `DB_*` settings already in `.env`)
@@ -438,9 +445,11 @@ module Monk
 
         - `config/live.rb` -- the Postgres wiring (`Monk::WebSocket::PgFanout`)
           and the subscribe rules (nothing is allowed unless a rule says so).
-        - `app/app.rb` -- `POST /hit` changes state and calls `Monk::Live.patch`.
-        - `app/views/index.erb` -- `live_topic "hits"` marks what to subscribe to.
-        - `app/views/live/_hits.erb` -- the fragment that gets pushed. Partials
+        - `app/routes/demo_live.rb` -- `POST /demo/live/hit` changes state and
+          calls `Monk::Live.patch`.
+        - `app/views/demo/live.erb` -- `live_topic "demo:hits"` marks what to
+          subscribe to.
+        - `app/views/demo/_hits.erb` -- the fragment that gets pushed. Partials
           used this way see only their locals (`locals[:hits]`), never
           `params` or the session.
         - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
@@ -450,6 +459,9 @@ module Monk
           `/_monk/live/`. The layout's `<%= monk_head %>` loads it and
           points it at `LIVE_WS_URL` (default `ws://localhost:9293`; use
           `wss://` in production).
+
+        To remove the demo, delete `app/routes/demo_live.rb`, `app/views/demo/`,
+        and the `monk:demo live` lines in `config/live.rb`.
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
@@ -745,7 +757,7 @@ module Monk
         **Visitors and logged-in users.** A logged-in user's socket carries
         their identity (the session cookie reaches `:9293` too); a visitor's
         comes in anonymous. Each topic's rule in `config/live.rb` decides:
-        `anonymous: true` opens it to visitors (the demo's `hits`), and a
+        `anonymous: true` opens it to visitors (the demo's `demo:hits`), and a
         rule without it is for logged-in users only, e.g. one topic per user.
         `monk new` writes no login routes: see `docs/guides/auth.md` in the
         monk repo, and `docs/guides/live.md`, "Who may subscribe".

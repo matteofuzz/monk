@@ -35,6 +35,12 @@ module Monk
       ).run
     end
 
+    # A rule block that lets everyone in, for Monk::Live.authorize:
+    #   Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)
+    # A block written at the top of config/live.rb isn't Ractor-shareable
+    # (self there is the main object), so rules need one built here.
+    ALLOW_ALL = Ractor.make_shareable(proc { |_subject, _topic| true })
+
     CLIENT_DIR = File.expand_path("live/client", __dir__).freeze
     # Where Monk serves CLIENT_DIR from: the layout's <%= monk_head %> loads
     # CLIENT_PATH/monk_live.js (Live::Helpers#head_tags), so an app never
