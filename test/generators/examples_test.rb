@@ -10,8 +10,12 @@ class GeneratorsExamplesTest < Minitest::Test
   include PersistenceTestHelpers
   include RedisTestHelpers
 
-  # The modules whose examples are checked: every module with a generator.
-  MODULES = %i[postgres redis mail auth jobs].freeze
+  # The apps whose examples are checked, together every module. Two apps,
+  # because with live bin/websocket_server runs live's handler, never the
+  # chat example's -- and that way each transport is used by one.
+  SUITES = {
+    without_live: [%i[postgres redis mail auth jobs websocket], { transport: "redis" }],
+  }.freeze
 
   # What each example does once uncommented, as test methods in the app.
   # `request` (defined below, in PROBE_HELPERS) goes through the booted APP.
@@ -83,11 +87,67 @@ class GeneratorsExamplesTest < Minitest::Test
         Monk::Jobs.clear!
       end
     RUBY
+    "websocket-chat" => <<~RUBY,
+      def test_websocket_chat
+        skip "with live, bin/websocket_server runs live's handler" if File.exist?(File.expand_path("../config/live.rb", __dir__))
+
+        # With auth the server refuses an anonymous socket: log in first.
+        speaker, cookie = "guest", nil
+        if defined?(Monk::Auth) && Monk::Auth.config
+          speaker = "chat@example.test"
+          cookie = "session_token=\#{Monk::Auth.redeem(Monk::Auth.request_login(speaker))[:token]}"
+        end
+        port = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
+        pid = Process.spawn({ "WS_PORT" => port.to_s }, RbConfig.ruby, "-W0", "bin/websocket_server",
+          chdir: File.expand_path("..", __dir__), out: File::NULL, err: File::NULL)
+        socket = ws_connect(port, cookie: cookie)
+
+        ws_send(socket, "hi")
+
+        assert_equal "\#{speaker}: hi", ws_read(socket)
+      ensure
+        socket&.close
+        Process.kill("TERM", pid) && Process.wait(pid) if pid
+      end
+    RUBY
   }.freeze
 
-  PROBE_HELPERS = <<~RUBY.freeze
+  PROBE_HELPERS = <<~'RUBY'.freeze
     require "json"
     require "rack"
+    require "socket"
+
+    # A WebSocket client, just enough to talk to bin/websocket_server.
+    def ws_connect(port, cookie: nil, deadline: Time.now + 20)
+      socket = begin
+        TCPSocket.new("127.0.0.1", port)
+      rescue Errno::ECONNREFUSED
+        raise if Time.now > deadline
+
+        sleep 0.1
+        retry
+      end
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" \
+        "Origin: http://localhost:9292\r\n#{"Cookie: #{cookie}\r\n" if cookie}\r\n")
+      response = +""
+      response << socket.readpartial(1024) until response.include?("\r\n\r\n")
+      raise "no WebSocket upgrade: #{response.lines.first}" unless response.start_with?("HTTP/1.1 101")
+
+      socket
+    end
+
+    # A client's text frame is masked (RFC 6455); a short one is enough here.
+    def ws_send(socket, text)
+      mask = Random.bytes(4)
+      payload = text.b.bytes.each_with_index.map { |byte, index| byte ^ mask.getbyte(index % 4) }.pack("C*")
+      socket.write([0x81, 0x80 | payload.bytesize].pack("CC") + mask + payload)
+    end
+
+    def ws_read(socket)
+      _opcode, length = socket.read(2).bytes
+      socket.read(length & 0x7f)
+    end
 
     # Monk reads params from the query string and JSON bodies. Returns
     # [status, body, headers].
@@ -100,13 +160,25 @@ class GeneratorsExamplesTest < Minitest::Test
   RUBY
 
   def test_every_example_has_a_probe
-    with_new_app(*MODULES) do |dest|
-      assert_equal PROBES.keys.sort, example_tags(dest).sort
+    tags = SUITES.values.flat_map do |modules, options|
+      with_new_app(*modules, options: options) { |dest| example_tags(dest) }
+    end
+
+    assert_equal PROBES.keys.sort, tags.uniq.sort
+  end
+
+  SUITES.each do |name, (modules, options)|
+    define_method(:"test_every_example_works_uncommented_#{name}") do
+      run_examples(modules, options)
     end
   end
 
-  def test_every_example_works_uncommented
-    with_new_app(*MODULES) do |dest|
+  private
+
+  def run_examples(modules, options)
+    skip_unless_redis_available
+
+    with_new_app(*modules, options: options) do |dest|
       uncomment_examples(dest)
       write_probes(dest)
 
@@ -119,8 +191,6 @@ class GeneratorsExamplesTest < Minitest::Test
       end
     end
   end
-
-  private
 
   def example_files(dest)
     Dir.glob("{app,config}/**/*.rb", base: dest).select { |path| generated(dest, path).include?("monk:example") }
