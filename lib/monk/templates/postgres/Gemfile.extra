@@ -1,2 +1,2 @@
-gem "pg"
+gem "pg", "~> 1.6" # 1.6+ ships precompiled, libpq included: no system packages
 gem "irb"

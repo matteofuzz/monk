@@ -188,28 +188,24 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # Dockerfile ships unconditionally (base skeleton, like config.ru) --
-  # --postgres overrides it with one that installs libpq for the pg gem's
-  # native extension, the same override mechanism --live uses for app/app.rb.
-  def test_write_bang_with_postgres_overrides_the_dockerfile_for_libpq
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
+  # pg 1.6+ ships precompiled Linux gems with libpq bundled (checked with a
+  # real ruby:4.0-slim build, docs/plan-scaffold.md decision 21), so the
+  # base Dockerfile, with no system packages, serves every app: no flag
+  # replaces it.
+  def test_the_dockerfile_is_the_base_one_whatever_the_flags
+    [{}, { postgres: true }, { auth: true, jobs: true }].each do |flags|
+      Dir.mktmpdir do |tmp|
+        dest = File.join(tmp, "demo_app")
 
-      Monk::Scaffold.new(dest, postgres: true).write!
+        Monk::Scaffold.new(dest, **flags).write!
 
-      assert_equal template("postgres/Dockerfile"), read(dest, "Dockerfile")
-      refute_equal template("base/Dockerfile"), read(dest, "Dockerfile")
+        assert_equal template("base/Dockerfile"), read(dest, "Dockerfile"), flags.inspect
+      end
     end
   end
 
-  def test_write_bang_without_postgres_leaves_the_dockerfile_as_the_base_one
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
-
-      Monk::Scaffold.new(dest).write!
-
-      assert_equal template("base/Dockerfile"), read(dest, "Dockerfile")
-    end
+  def test_postgres_asks_for_a_pg_with_precompiled_linux_gems
+    assert_includes template("postgres/Gemfile.extra"), %(gem "pg", "~> 1.6")
   end
 
   # app/app.rb loads every file under app/routes/, each reopening class App,

@@ -50,14 +50,6 @@ module Monk
       "db/migrate/.keep" => "postgres/db/migrate/.keep",
     }.freeze
 
-    # The pg gem's native extension needs libpq -- the base Dockerfile has
-    # no system packages at all (kino is a precompiled platform gem), so
-    # --postgres/--auth swap in a Dockerfile that adds libpq-dev/libpq5
-    # instead of patching one image for every combination.
-    POSTGRES_OVERRIDES = {
-      "Dockerfile" => "postgres/Dockerfile",
-    }.freeze
-
     AUTH_FILES = {
       "config/auth.rb" => "auth/config/auth.rb",
       "db/migrate/00000000000001_create_auth_tables.up.sql" => "auth/db/migrate/00000000000001_create_auth_tables.up.sql",
@@ -200,7 +192,6 @@ module Monk
       FileUtils.mkdir_p(@dir)
       base_files = BASE_FILES
       base_files = base_files.merge(LIVE_OVERRIDES) if @live
-      base_files = base_files.merge(POSTGRES_OVERRIDES) if @postgres
       base_files.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
       write_live! if @live
 

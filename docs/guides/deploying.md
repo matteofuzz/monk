@@ -9,8 +9,9 @@ Neither case changes anything in this repo (`monk` itself) — they describe
 how a generated app deploys.
 
 Every scaffold also ships a `Dockerfile` and `.dockerignore` — `monk new`
-writes them unconditionally, and `--postgres`/`--auth` swap in a variant
-that adds `libpq` for the `pg` gem's native extension. Neither the Fly.io
+writes them unconditionally, the same for every app: no system packages,
+since kino and `pg` (1.6+, which brings its own `libpq`) are precompiled
+gems. Neither the Fly.io
 Dockerfile in section 2 nor the Compose setup in section 4 needs copying by
 hand any more; they're shown there because those sections still have to
 explain what the file does and how it's used, not because you write it
@@ -123,8 +124,8 @@ Fly.io case below for what it contains.
 
 ## 2. Fly.io (Docker + managed Postgres)
 
-**Dockerfile**: already there — `monk new --postgres` (this case implies
-it) writes this exact file, no `git` runtime dependency needed since a
+**Dockerfile**: already there — `monk new` writes this exact file, no
+`git` runtime dependency needed since a
 scaffolded app's `Gemfile` pulls in `monkrb` as a normal gem (published on
 rubygems.org, `require: "monk"`), not via the local gemspec:
 
@@ -132,19 +133,11 @@ rubygems.org, `require: "monk"`), not via the local gemspec:
 FROM ruby:4.0-slim AS builder
 WORKDIR /app
 
-RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY Gemfile Gemfile.lock* ./
 RUN bundle install
 
 FROM ruby:4.0-slim
 WORKDIR /app
-
-RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends libpq5 \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY . .
@@ -153,9 +146,9 @@ EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]
 ```
 
-`libpq-dev` is needed at build time for the `pg` gem's native extension;
-`libpq5` — the runtime lib, no headers — is enough in the final stage. Port
-9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
+No `apt-get`: the `pg` gem (1.6+) installs precompiled for Linux with its
+own `libpq`, so neither stage needs `libpq-dev`, `libpq5` or a compiler.
+Port 9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
 default for the separate WebSocket process (section 3, below); running
 both on 9293 would collide them.
 

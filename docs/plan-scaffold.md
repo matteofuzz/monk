@@ -286,7 +286,12 @@ framework, or into a static file written once.
     always installs libpq (a few MB), or the app uses a precompiled
     `pg` gem, if recent `pg` versions ship platform gems that bundle
     libpq. Phase 2 checks the second option first. `POSTGRES_OVERRIDES`
-    goes away.
+    goes away. Checked 2026-10-08: `pg` 1.6+ ships `x86_64-linux` and
+    `aarch64-linux` gems built for Ruby 3.1–4.0 with libpq bundled, and a
+    `ruby:4.0-slim` build with no system packages installed `pg` and
+    connected to Postgres, even from a lockfile made on macOS only. So
+    `monk add postgres` adds `gem "pg", "~> 1.6"`, and the base Dockerfile
+    serves every app.
 
 ### CLI
 
