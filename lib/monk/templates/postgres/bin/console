@@ -3,7 +3,9 @@ require "bundler/setup"
 # The configs and app/ (models, jobs, mailers...), as the app sees them --
 # config/load.rb, never Monk.boot, so nothing is frozen and you can poke at
 # anything.
-require_relative "../config/load"
+# A service that's down or a missing setting ends here with what to fix.
+require "monk/bin"
+Monk::Bin.run(__FILE__) { require_relative "../config/load" }
 require "irb"
 
 IRB.start(__FILE__)

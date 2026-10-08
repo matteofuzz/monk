@@ -1,50 +1,56 @@
 #!/usr/bin/env ruby
 require "bundler/setup"
-require_relative "../config/settings"
+# A service that's down, a missing database or setting ends this script
+# with what to fix (SETUP.md's commands), not a backtrace.
+require "monk/bin"
 
-# config/auth.rb only exists if this app was scaffolded with --auth -- a
-# missing file is a harmless no-op, the same way config/settings.rb treats
-# a missing dotenv gem. Present or not, it's what decides whether this
-# process authenticates connections below.
-begin
-  require_relative "../config/auth"
-rescue LoadError
+Monk::Bin.run(__FILE__) do
+  require_relative "../config/settings"
+
+  # config/auth.rb only exists if this app was scaffolded with --auth -- a
+  # missing file is a harmless no-op, the same way config/settings.rb treats
+  # a missing dotenv gem. Present or not, it's what decides whether this
+  # process authenticates connections below.
+  begin
+    require_relative "../config/auth"
+  rescue LoadError
+  end
+
+  # Monk::Live: the browsers' sockets end here. The handler takes their
+  # subscribe/unsubscribe messages, checks each topic against the rules in
+  # config/live.rb, and relays whatever bin/server's process publishes over
+  # Redis.
+  require_relative "../config/live"
+
+  # This process holds the browsers' sockets, so it's the only one that
+  # listens for updates published elsewhere (bin/server, bin/jobs): the
+  # fanout's subscriber connection is opened here, at boot, and an
+  # unreachable Redis/Postgres fails right here.
+  Monk::Live.listen!
+
+  # With Monk::Auth (--auth), a socket with a valid session gets its user,
+  # and one without -- a visitor, or a session since revoked -- comes in
+  # anonymous instead of refused. The rules in config/live.rb decide what
+  # each may subscribe to: a topic is open to visitors only if its rule says
+  # `anonymous: true`, like the demo's "demo:hits". Without Monk::Auth every
+  # socket is anonymous.
+  authenticate = defined?(Monk::Auth) && Monk::Auth.config ? :optional : false
+  # Sessions are checked through config/auth.rb's :auth pool rather than in
+  # each socket's own Ractor, which would hold a Postgres connection per
+  # open page. This is the only process that uses the pool, so it starts it.
+  db_pool = (:auth if authenticate)
+  Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
+
+  port = ENV.fetch("WS_PORT", "9293").to_i
+  # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
+  # keeps this in sync with the app's actual origin instead of two vars
+  # drifting apart; set WS_ALLOWED_ORIGINS directly for anything more, e.g.
+  # more than one origin (comma-separated).
+  allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
+
+  server = Monk::WebSocket::Server.new(
+    port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+  )
+  puts "Monk::Live WebSocket server listening on ws://0.0.0.0:#{port} (authenticate: #{authenticate})"
+  server.run(&Monk::Live::HANDLER)
 end
-
-# Monk::Live: the browsers' sockets end here. The handler takes their
-# subscribe/unsubscribe messages, checks each topic against the rules in
-# config/live.rb, and relays whatever bin/server's process publishes over
-# Redis.
-require_relative "../config/live"
-
-# This process holds the browsers' sockets, so it's the only one that
-# listens for updates published elsewhere (bin/server, bin/jobs): the
-# fanout's subscriber connection is opened here, at boot, and an
-# unreachable Redis/Postgres fails right here.
-Monk::Live.listen!
-
-# With Monk::Auth (--auth), a socket with a valid session gets its user,
-# and one without -- a visitor, or a session since revoked -- comes in
-# anonymous instead of refused. The rules in config/live.rb decide what
-# each may subscribe to: a topic is open to visitors only if its rule says
-# `anonymous: true`, like the demo's "demo:hits". Without Monk::Auth every
-# socket is anonymous.
-authenticate = defined?(Monk::Auth) && Monk::Auth.config ? :optional : false
-# Sessions are checked through config/auth.rb's :auth pool rather than in
-# each socket's own Ractor, which would hold a Postgres connection per
-# open page. This is the only process that uses the pool, so it starts it.
-db_pool = (:auth if authenticate)
-Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
-
-port = ENV.fetch("WS_PORT", "9293").to_i
-# Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
-# keeps this in sync with the app's actual origin instead of two vars
-# drifting apart; set WS_ALLOWED_ORIGINS directly for anything more, e.g.
-# more than one origin (comma-separated).
-allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
-
-server = Monk::WebSocket::Server.new(
-  port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
-)
-puts "Monk::Live WebSocket server listening on ws://0.0.0.0:#{port} (authenticate: #{authenticate})"
-server.run(&Monk::Live::HANDLER)

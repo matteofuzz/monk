@@ -52,7 +52,7 @@ class HeadTest < Minitest::Test
       head = Monk::Context.new({}).monk_head.to_s
 
       assert_includes head, %(<meta name="monk-live-url" content="ws://localhost:9293/&quot;x">)
-      assert_match(%r{<script type="module" src="[^"]*monk_live\.js"></script>}, head)
+      assert_match(%r{<script type="module" src="[^"]*monk_live\.js(\?v=\h+)?"></script>}, head)
     end
   end
 

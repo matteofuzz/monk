@@ -1,77 +1,83 @@
 #!/usr/bin/env ruby
 require "bundler/setup"
-require_relative "../config/settings"
+# A service that's down, a missing database or setting ends this script
+# with what to fix (SETUP.md's commands), not a backtrace.
+require "monk/bin"
 
-# config/auth.rb only exists if this app was scaffolded with --auth -- a
-# missing file is a harmless no-op, the same way config/settings.rb treats
-# a missing dotenv gem. Present or not, it's what decides whether this
-# process authenticates connections below.
-begin
-  require_relative "../config/auth"
-rescue LoadError
-end
+Monk::Bin.run(__FILE__) do
+  require_relative "../config/settings"
 
-require "monk/websocket"
+  # config/auth.rb only exists if this app was scaffolded with --auth -- a
+  # missing file is a harmless no-op, the same way config/settings.rb treats
+  # a missing dotenv gem. Present or not, it's what decides whether this
+  # process authenticates connections below.
+  begin
+    require_relative "../config/auth"
+  rescue LoadError
+  end
 
-# A single broadcast chat channel: every connection subscribes to :chat,
-# and whatever one connection sends is broadcast to everyone on it
-# (including itself), prefixed with the authenticated subject when there
-# is one.
-#
-# Defined inside a module, not at this script's own top level -- self at a
-# script's top level is the main object, which is *not* Ractor-shareable,
-# so a proc built there fails Server#run's Ractor.make_shareable check.
-# Module bodies are always shareable, same as StateRactor#update's block
-# requirement.
-module ChatServer
-  # REDIS_URL set (by an app scaffolded with --redis, or by hand) wraps the
-  # registry so :chat also fans out to every other Monk::WebSocket::Server
-  # process sharing that Redis -- unset, it's in-process only. Either way
-  # the app code above never has to know which: RedisFanout has the exact
-  # same #register/#unregister/#count/#broadcast interface as Registry.
-  REGISTRY =
-    if (redis_url = ENV["REDIS_URL"])
-      require "monk/websocket/redis_fanout"
-      Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_url)
-    else
-      Monk::WebSocket::Registry.new
-    end
+  require "monk/websocket"
 
-  HANDLER = proc do |connection|
-    connection.subscribe(REGISTRY, :chat)
-    loop do
-      message = connection.read
-      break unless message
+  # A single broadcast chat channel: every connection subscribes to :chat,
+  # and whatever one connection sends is broadcast to everyone on it
+  # (including itself), prefixed with the authenticated subject when there
+  # is one.
+  #
+  # Defined inside a module, not at this script's own top level -- self at a
+  # script's top level is the main object, which is *not* Ractor-shareable,
+  # so a proc built there fails Server#run's Ractor.make_shareable check.
+  # Module bodies are always shareable, same as StateRactor#update's block
+  # requirement.
+  module ChatServer
+    # REDIS_URL set (by an app scaffolded with --redis, or by hand) wraps the
+    # registry so :chat also fans out to every other Monk::WebSocket::Server
+    # process sharing that Redis -- unset, it's in-process only. Either way
+    # the app code above never has to know which: RedisFanout has the exact
+    # same #register/#unregister/#count/#broadcast interface as Registry.
+    REGISTRY =
+      if (redis_url = ENV["REDIS_URL"])
+        require "monk/websocket/redis_fanout"
+        Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: redis_url)
+      else
+        Monk::WebSocket::Registry.new
+      end
 
-      REGISTRY.broadcast(:chat, "#{connection.subject || "guest"}: #{message}")
+    HANDLER = proc do |connection|
+      connection.subscribe(REGISTRY, :chat)
+      loop do
+        message = connection.read
+        break unless message
+
+        REGISTRY.broadcast(:chat, "#{connection.subject || "guest"}: #{message}")
+      end
     end
   end
+
+  # This process holds the sockets, so it's the one that listens for other
+  # processes' broadcasts: with REDIS_URL, a subscriber connection, opened
+  # here at boot (an unreachable Redis fails right here). A plain Registry
+  # has nothing to listen to, and listen! does nothing.
+  ChatServer::REGISTRY.listen!
+
+  # false, not nil, without --auth: Server.new refuses nil.
+  authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)
+  # Sessions are checked through config/auth.rb's :auth pool rather than in
+  # each socket's own Ractor, which would hold a Postgres connection per
+  # open page. This is the only process that uses the pool, so it starts it.
+  db_pool = (:auth if authenticate)
+  Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
+
+  port = ENV.fetch("WS_PORT", "9293").to_i
+  # Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
+  # keeps this in sync with the app's actual origin instead of two vars
+  # drifting apart; set WS_ALLOWED_ORIGINS directly for anything more, e.g.
+  # more than one origin (comma-separated).
+  allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
+
+  server = Monk::WebSocket::Server.new(
+    port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+  )
+  puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
+    "(authenticate: #{authenticate}, redis fan-out: #{ENV["REDIS_URL"] ? "on" : "off"})"
+  server.run(&ChatServer::HANDLER)
 end
-
-# This process holds the sockets, so it's the one that listens for other
-# processes' broadcasts: with REDIS_URL, a subscriber connection, opened
-# here at boot (an unreachable Redis fails right here). A plain Registry
-# has nothing to listen to, and listen! does nothing.
-ChatServer::REGISTRY.listen!
-
-# false, not nil, without --auth: Server.new refuses nil.
-authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)
-# Sessions are checked through config/auth.rb's :auth pool rather than in
-# each socket's own Ractor, which would hold a Postgres connection per
-# open page. This is the only process that uses the pool, so it starts it.
-db_pool = (:auth if authenticate)
-Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
-
-port = ENV.fetch("WS_PORT", "9293").to_i
-# Defaults to public_url (config/settings.rb) so one PUBLIC_URL env var
-# keeps this in sync with the app's actual origin instead of two vars
-# drifting apart; set WS_ALLOWED_ORIGINS directly for anything more, e.g.
-# more than one origin (comma-separated).
-allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
-
-server = Monk::WebSocket::Server.new(
-  port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
-)
-puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
-  "(authenticate: #{authenticate}, redis fan-out: #{ENV["REDIS_URL"] ? "on" : "off"})"
-server.run(&ChatServer::HANDLER)
