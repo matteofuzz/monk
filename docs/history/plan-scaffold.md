@@ -5,8 +5,9 @@
 Branch: `main_dev/refactor_scaffolding`.
 Status: complete 2026-10-08 (Phases 0–8, on `main_dev/refactor_scaffolding`),
 not yet released. Choices made along the way are recorded in decisions
-9, 14, 21, Phase 2 step 6, Phase 4 and auth. Phase 9 (optional) wasn't
-built. The scheduled-jobs and storage plans' scaffold steps are updated
+9, 14, 21, Phase 2 step 6, Phase 4 and auth. Phase 9 (optional) was
+left out on 2026-10-08: `monk new` makes the core app, modules come from
+`monk add`, and `--with` stays as a shortcut for both. The scheduled-jobs and storage plans' scaffold steps are updated
 when those branches are rebased. Ergonomics for humans and agents were
 reviewed on 2026-10-08 (decisions 25–30).
 Companion record: [`adr/0017-scaffold-by-module-generators.md`](../adr/0017-scaffold-by-module-generators.md)
@@ -786,7 +787,7 @@ added dependencies in its result instead).
   "Other branches that touch the scaffold").
 - When everything is done, this plan moves to `docs/history/`.
 
-### Phase 9 (optional): interactive `monk new`
+### Phase 9 (optional, left out): interactive `monk new`
 With a terminal and no `--with`, ask which modules to add, a checklist
 built from the generators. It's only a front end on `--with`.
 
