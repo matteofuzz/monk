@@ -660,10 +660,13 @@ Considered and rejected:
 3. Dotenv always on (decision 17).
 4. The test setup in the base app (decision 18).
 5. The Dockerfile (decision 21): check the precompiled `pg` gem first.
-6. `config/websocket.rb` with `AppWebSocket::REGISTRY`, and
-   `bin/websocket_server` and `config/live.rb` both using it
-   (decision 13). Until Phase 4, the base app still writes the script
-   and `--redis` stays as it is.
+6. ~~`config/websocket.rb` with `AppWebSocket::REGISTRY`~~ Moved to
+   Phase 4 (settled 2026-10-08): done now, it needed a temporary
+   in-process variant for apps with neither transport, deleted again in
+   Phase 7. The websocket generator builds `config/websocket.rb`, the new
+   `bin/websocket_server` and `app/sockets/chat.rb` once, in their final
+   form; until then the old scaffold keeps its two `bin/websocket_server`
+   files.
 7. The `bin/` scripts' errors (decision 29): an unreachable Postgres or
    Redis, or a missing setting, prints what failed, the setting, and
    SETUP.md's commands, then exits 1. One test per script.
@@ -702,7 +705,10 @@ Tested on temporary directories with fake modules, before any real one.
 
 ### Phase 4: the generators
 One slice per module, in dependency order: base, postgres, redis, mail,
-auth, jobs, websocket (with each transport), live. For each:
+auth, jobs, websocket (with each transport), live. The websocket slice
+also does what Phase 2 step 6 deferred: `config/websocket.rb` with
+`AppWebSocket::REGISTRY`, the new `bin/websocket_server`, and
+`config/live.rb` using the same registry (decision 13). For each:
 - the files and appended lines, exactly;
 - running it twice changes nothing;
 - the generated app's own `rake test` passes;
