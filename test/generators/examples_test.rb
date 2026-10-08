@@ -8,9 +8,10 @@ require "pg"
 class GeneratorsExamplesTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
+  include RedisTestHelpers
 
   # The modules whose examples are checked: every module with a generator.
-  MODULES = %i[postgres].freeze
+  MODULES = %i[postgres redis].freeze
 
   # What each example does once uncommented, as test methods in the app.
   # `request` (defined below, in PROBE_HELPERS) goes through the booted APP.
@@ -26,6 +27,17 @@ class GeneratorsExamplesTest < Minitest::Test
 
         assert_equal 200, status
         assert_equal ["hello"], JSON.parse(body)["notes"].map { |note| note["body"] }
+      end
+    RUBY
+    "redis-cache" => <<~RUBY,
+      def test_redis_cache
+        Redis.new(url: Monk::Settings[:redis_url]).then { |redis| redis.del("cached:now") && redis.close }
+
+        first = JSON.parse(request("GET", "/cached/now").last)["now"]
+        second = JSON.parse(request("GET", "/cached/now").last)["now"]
+
+        refute_nil first
+        assert_equal first, second, "the second request reads the cached value"
       end
     RUBY
   }.freeze
@@ -54,7 +66,8 @@ class GeneratorsExamplesTest < Minitest::Test
       uncomment_examples(dest)
       write_probes(dest)
 
-      with_generated_database do |env|
+      with_generated_database do |database|
+        env = database.merge("REDIS_URL" => redis_test_url)
         out, status = run_generated_script(dest, "bin/setup_db", env)
         assert status.success?, out
 
