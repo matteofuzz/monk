@@ -9,14 +9,13 @@ your own. Design rationale is in `docs/history/reactive-partials.md` and ADRs
 it.
 
 ```
-monk new my_app --live --redis
+monk add live
 ```
 
-scaffolds a working demo (a counter whose tabs update together); everything
-below is what that demo is made of. `--live` needs `--redis` or `--postgres`
-(see "Without Redis" below) — there's no default, since guessing which one
-your app has available would be as likely to hand back a template that can't
-connect as one that can.
+adds it on top of `websocket` (and its transport, Postgres or Redis: see
+"Without Redis" below), with a demo in development, a counter whose tabs
+update together at `/demo/live` (`--no-demo` leaves it out). Everything
+below is what that demo is made of.
 
 ## The shape
 
@@ -30,19 +29,22 @@ carry sockets):
  renders the partial once                   checks each subscription against your rules
 ```
 
-Redis (`Monk::WebSocket::RedisFanout`) is what carries an update between the
-two by default (`--redis`).
-
-**If your app already runs Postgres and doesn't need Redis**, `--postgres`
-(without `--redis`) wires `Monk::WebSocket::PgFanout` instead — same
-interface, no second piece of infrastructure to run. See "Without Redis"
-below.
+What carries an update between the two is websocket's transport, chosen once
+in `config/websocket.rb` (`monk add websocket --transport=redis|postgres`):
+Redis (`Monk::WebSocket::RedisFanout`), or, **if your app already runs
+Postgres and doesn't need Redis**, `Monk::WebSocket::PgFanout`, the same
+interface with no second piece of infrastructure to run. Live uses that
+registry, `AppWebSocket::REGISTRY`, and has no transport of its own. See
+"Without Redis" below.
 
 ## Publishing (server side)
 
 ```ruby
+# config/websocket.rb: the registry, over the transport
+AppWebSocket::REGISTRY = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: Monk::Settings[:redis_url])
+
 # config/live.rb, required by both processes
-Monk::Live.configure(registry: Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: ENV.fetch("REDIS_URL")))
+Monk::Live.configure(registry: AppWebSocket::REGISTRY)
 
 # bin/websocket_server, once at boot, before server.run
 Monk::Live.listen!
@@ -214,32 +216,28 @@ with recipient topics.
 
 ## Without Redis: Postgres LISTEN/NOTIFY instead
 
-`--live` needs `--redis` or `--postgres` because `bin/server` and
-`bin/websocket_server` are always two processes, and *something* has to
-carry a publish between them — not because of horizontal scaling (that's
-still a separate, unbuilt feature; see
-`docs/design/ws-horizontal-scaling-considerations.md` in the monk gem's own
-repo). Neither flag is a silent default: passing neither raises
-`Monk::AmbiguousLiveTransportError` rather than guessing.
+websocket needs a transport because `bin/server` and `bin/websocket_server`
+are always two processes, and *something* has to carry a publish between
+them — not because of horizontal scaling (that's still a separate, unbuilt
+feature; see `docs/design/ws-horizontal-scaling-considerations.md` in the
+monk gem's own repo). When exactly one of Postgres and Redis is installed,
+or added in the same command, `monk add` uses it; otherwise you pass
+`--transport`, since guessing which one your app has would be as likely to
+give it a config that can't connect as one that can.
 
-`monk new my_app --live --postgres` (and not `--redis`) wires
-`Monk::WebSocket::PgFanout` instead, carrying the publish over
-`LISTEN`/`NOTIFY`, so there's no Redis to run at all:
+With `--transport=postgres`, `config/websocket.rb` builds
+`Monk::WebSocket::PgFanout`, carrying the publish over `LISTEN`/`NOTIFY`,
+so there's no Redis to run at all:
 
 ```ruby
-# config/live.rb, required by both processes
-Monk::Live.configure(
-  registry: Monk::WebSocket::PgFanout.new(
-    Monk::WebSocket::Registry.new,
-    pg_opts: { host: ENV.fetch("DB_HOST", "127.0.0.1"), port: ENV.fetch("DB_PORT", "5432").to_i,
-               user: ENV.fetch("DB_USER", "postgres"), password: ENV.fetch("DB_PASSWORD", "postgres"),
-               dbname: ENV.fetch("DB_NAME", "app_development") },
-  ),
+# config/websocket.rb
+AppWebSocket::REGISTRY = Monk::WebSocket::PgFanout.new(
+  Monk::WebSocket::Registry.new, pg_opts: Monk::Persistence::Pg.connection_options(:primary),
 )
 ```
 
-Reuses the same `DB_*` env vars `config/persistence.rb` already reads — no
-new configuration, no `REDIS_URL`.
+It reuses the `:primary` connection's settings (`DB_*`) — no new
+configuration, no `REDIS_URL`.
 
 Each Ractor that publishes holds a publishing connection of its own (8 for
 8 web workers). `db_pool:` publishes through a [pool](persistence.md#pools)
@@ -249,8 +247,8 @@ database:
 ```ruby
 # config/persistence.rb
 Monk::Persistence::Pg.pool(:notify, size: 1)
-# config/live.rb
-Monk::Live.configure(registry: Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify))
+# config/websocket.rb
+AppWebSocket::REGISTRY = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
 # at boot, in every process that publishes (the LISTEN has its own connection)
 Monk::Persistence::Pg.start_pools!(:notify)
 ```
@@ -258,10 +256,7 @@ Monk::Persistence::Pg.start_pools!(:notify)
 Through the pool, `Monk::Live.patch` doesn't wait for Postgres: a publish
 that fails is logged instead of raised, and the page catches up at its
 next resync. Size 1 because one worker keeps a sender's patches in the
-order they were published; a larger pool is refused. Passing both `--redis` and `--postgres`
-picks `--redis` (an explicit ask beats an implied default); `--auth` and
-`--jobs` both imply `--postgres`, so `--live --auth` or `--live --jobs`
-alone also picks PgFanout (`monk new` prints which transport it chose). See `docs/design/live-pg-fanout.md`/
+order they were published; a larger pool is refused. See `docs/design/live-pg-fanout.md`/
 `docs/history/plan-live-pg-fanout.md` in the monk gem's own repo for the full
 design.
 

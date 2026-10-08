@@ -3,18 +3,12 @@
 Features to add. Not a commitment: each one gets its own design doc and plan
 when work on it starts.
 
-- **Scaffolding by module: `monk new` + `monk add`.** One generator per
-  module replaces `monk new`'s flags, so a module can be added to an
-  existing app too. Generators only create files and append lines. Each
-  module comes with commented examples and a generated test. Text and
-  `--json` output, for people and agents. Planned in
-  `docs/plan-scaffold.md`. Comes first: scheduled jobs and storage, which
-  both change the scaffold, then add their parts as generator changes
-  (that plan's "Other branches that touch the scaffold").
 - **Scheduled jobs.** Recurring jobs on a cron-like schedule in `Monk::Jobs`.
   One-off delayed jobs already exist (`enqueue(..., wait:)` / `at:`); recurring
   ones were left out of the first version (`docs/guides/jobs.md`, "What's not
-  here").
+  here"). Its scaffold step is now a change to the jobs generator
+  (`monk add jobs`): `docs/plan-scaffold.md`, "Other branches that touch
+  the scaffold".
 - **File storage, `Monk::Storage`.** An opt-in storage layer configured by
   one `STORAGE_URL`. It has one S3-compatible backend (Hetzner, R2, B2, AWS,
   MinIO) that signs its own SigV4 requests, and local files in development and
@@ -23,7 +17,9 @@ when work on it starts.
   in ADR 0016, which is on the `main_dev/monk_storage` branch for now. Before
   the S3 backend ships, four open items need checking on a real Hetzner
   bucket: the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle
-  rule, and same-bucket copy.
+  rule, and same-bucket copy. Its scaffold step is now a generator of its
+  own (`monk add storage`): `docs/plan-scaffold.md`, "Other branches that
+  touch the scaffold".
 - **`monk check`: verifying an environment's wiring.** `bin/check` (written
   by the base app) loads `config/load` and runs a read-only check for each
   loaded module. The checks belong to the framework modules
@@ -50,10 +46,11 @@ when work on it starts.
     the app lacks, such as a new migration.
 
   It isn't a load balancer's health check: it's heavier and runs once per
-  deploy. A test email is opt-in (`--send-test-mail=addr`). Comes after
-  scaffolding by module (above; its decision 29 already declares a check
-  command for each service), after storage, its best use case, and after
-  recurring jobs, whose missing-migration case it should catch.
+  deploy. A test email is opt-in (`--send-test-mail=addr`). It builds on the
+  check command each `monk add` generator declares for its service
+  (`docs/plan-scaffold.md` decision 29), and comes after storage, its best
+  use case, and recurring jobs, whose missing-migration case it should
+  catch.
 - **Richer HTML support, forms first.** Views offer only `render`, `h`,
   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
   deliberately left them out). Templates write every form by hand, including

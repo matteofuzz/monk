@@ -8,7 +8,7 @@ Ractor serves the request: the `mail` gem, and so Action Mailer, raises
 attachments, no inline images, no BCC lists, no bulk sending.
 
 ```ruby
-# config/mail.rb -- `monk new my_app --mail` writes this (as Settings) for you
+# config/mail.rb -- `monk add mail` writes this (as Settings) for you
 require "monk/mail"
 
 Monk::Mail.configure(url: ENV["MAIL_URL"], from: ENV["MAIL_FROM"])
@@ -196,9 +196,10 @@ Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
 
 ## With `Monk::Auth`
 
-`monk new --auth` wires this for you: `config/mail.rb`,
-`app/mailers/app_mailer.rb`, `app/views/mail/magic_link.erb`,
-`gem "net-smtp"`, and a `deliver:` in `config/auth.rb`. By hand,
+`monk add auth` wires this for you: `config/mail.rb`,
+`app/mailers/auth_mailer.rb` (`AuthMailer::MAGIC_LINK`),
+`app/views/mail/magic_link.erb`, `gem "net-smtp"`, and a `deliver:` in
+`config/auth.rb`. By hand,
 `Monk::Auth.deliver_link` calls a `deliver:` callable when one is
 configured; point it at `Monk::Mail`, built as a module constant so it's
 `Ractor.shareable?` (see [`auth.md`](auth.md)). A mailer is app code, so
@@ -206,7 +207,7 @@ it lives in `app/mailers/` with the app's other emails:
 
 ```ruby
 # app/mailers/app_mailer.rb
-module AppMailer
+module AuthMailer
   MAGIC_LINK = lambda do |email:, link:, token:|
     Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
     Monk::Mail.deliver(to: email, subject: "Your login link",
@@ -219,7 +220,7 @@ end
 # config/auth.rb
 require_relative "../app/mailers/app_mailer" # configure checks deliver: right away
 
-Monk::Auth.configure(..., deliver: AppMailer::MAGIC_LINK)
+Monk::Auth.configure(..., deliver: AuthMailer::MAGIC_LINK)
 ```
 
 Require `config/mail.rb` from `config/load.rb`, not from `config/auth.rb`:

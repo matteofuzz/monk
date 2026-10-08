@@ -84,3 +84,19 @@ _Avoid_: Worker (one worker Ractor inside it), daemon, consumer
 The job process supervisor's once-a-tick step that turns due `scheduled` jobs into `available` ones, in batches. Every job process runs it; `SKIP LOCKED` keeps two from moving the same job. It's why a scheduled job or a retry can start up to one tick late.
 _Avoid_: Scheduler (that's recurring jobs, which Monk doesn't have), dispatcher, promoter
 
+
+**Monk module**:
+A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
+_Avoid_: Feature, plugin, flag (`monk new` had flags before ADR 0017)
+
+**Generator**:
+The code behind `monk add <module>`: one per Monk module, declared with `Monk::Generator.define`. It only creates files and appends lines to the end of a few shared ones, so the result doesn't depend on which other modules an app has or the order they came in. Its files have roles: wiring (the module runs without it), example, test, view or demo.
+_Avoid_: Scaffold (the whole of what `monk new` and `monk add` write), template (a file a generator copies)
+
+**Example**:
+A block of commented code a Generator writes where that code would go, between `# monk:example <tag>` and `# monk:end`: what an app writes to use a module (routes, a rule, a mailer). Lines `# # ...` are notes; the rest is code to uncomment. Monk's tests uncomment every Example and run it. A demo is different: working code, development only (live's `/demo/live`).
+_Avoid_: Sample, snippet, demo
+
+**Transport**:
+What carries a broadcast between `bin/server`, `bin/jobs` and `bin/websocket_server`, which are always separate processes: Postgres `LISTEN`/`NOTIFY` (`PgFanout`) or Redis (`RedisFanout`), chosen once per app in `config/websocket.rb`. Live has none of its own: it uses websocket's.
+_Avoid_: Fanout (the object that uses a transport), backend, adapter

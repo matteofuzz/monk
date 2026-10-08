@@ -18,13 +18,14 @@ gem install monkrb
 monk new my_app && cd my_app
 bundle install
 bin/server           # -> http://localhost:9292/hello
+monk add --list      # the modules you can add: postgres, auth, jobs, live...
 ```
 
 `monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", require: "monk"`.
 
-`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `public/`, a `SETUP.md`), with the app's own code under `app/`: `app/app.rb` for routes, `app/views/`, and one directory per role (`models/`, `presenters/`, `helpers/`, `mailers/`, `broadcasts/`, `jobs/`). Flags add Postgres, auth, email, background jobs, Redis and live updates: see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md), which also says where each kind of code goes.
+`monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `public/`, its tests, a `SETUP.md` and an `AGENTS.md` for coding agents), with the app's own code under `app/`: `app/app.rb` and `app/routes/` for routes, `app/views/`, and one directory per role (`models/`, `presenters/`, `helpers/`, `mailers/`, `broadcasts/`, `jobs/`). `monk add` adds Postgres, Redis, email, auth, background jobs, WebSocket and live updates, to a new app or an old one, each with its wiring, commented examples of how to use it, and a test (`monk new my_app --with auth,jobs` does both at once): see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md), which also says where each kind of code goes.
 
-All `monk` commands and flags are listed by:
+All `monk` commands and options are listed by:
 
 ```
 monk --help
@@ -60,11 +61,11 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/guides/persistence.md) |
 | Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/guides/migrations.md) |
 | Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
-| Email | `Monk::Mail`: text/HTML email over SMTP or a local relay, one `MAIL_URL`, sent from any worker Ractor, or from a background job with `deliver_later` | `require "monk/mail"` (+ `require "monk/mail/later"` for `deliver_later`, which needs background jobs); SMTP needs the `net-smtp` gem | [`mail.md`](docs/guides/mail.md) |
+| Email | `Monk::Mail`: text/HTML email over SMTP or a local relay, one `MAIL_URL`, sent from any worker Ractor, or from a background job with `deliver_later` | `require "monk/mail"`; `deliver_later` is there once `monk/jobs` is loaded too; SMTP needs the `net-smtp` gem | [`mail.md`](docs/guides/mail.md) |
 | Background jobs | `Monk::Jobs`: a queue in Postgres, run by `bin/jobs` on worker Ractors; retries with backoff, scheduled jobs, enqueue inside the app's own transaction, `drain!` for tests | `require "monk/jobs"` (+ `require "monk/jobs/runtime"` in the job process); needs the `pg` gem and a registered Postgres connection | [`jobs.md`](docs/guides/jobs.md) |
 | WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis or Postgres fan-out | `require "monk/websocket"`; fan-out: `require "monk/websocket/redis_fanout"` (+ the `redis` gem) or `require "monk/websocket/pg_fanout"` (+ the `pg` gem) | [`websocket.md`](docs/guides/websocket.md) |
 | Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis or Postgres | [`live.md`](docs/guides/live.md) |
-| Scaffolding | `monk new` and its flags; retrofitting Postgres, Auth, Redis or Jobs | — (the `monk` command; flags `--postgres`, `--auth`, `--mail`, `--jobs`, `--redis`, `--live`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
+| Scaffolding | `monk new` and `monk add`: one generator per module, for a new app or an existing one; text or `--json` output | — (the `monk` command: `monk new NAME --with ...`, `monk add MODULE`, `monk add --list`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 
 ## More documentation
 

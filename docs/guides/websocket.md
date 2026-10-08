@@ -96,6 +96,37 @@ anonymous. Anonymous sockets cost the server a Ractor each, like any
 other, and anyone can open them: an app whose live pages are all private
 should keep `true`, which refuses them at the door.
 
+## In a Monk app: `monk add websocket`
+
+`monk add websocket --transport=postgres|redis` sets all of this up
+([`scaffolding.md`](scaffolding.md)):
+
+- **`config/websocket.rb`** builds the app's one registry,
+  `AppWebSocket::REGISTRY`, over the transport: a `PgFanout` on the
+  `:primary` connection's settings, or a `RedisFanout` at
+  `Monk::Settings[:redis_url]`. Every process loads it; `bin/server` and
+  `bin/jobs` only publish through it. `AppWebSocket::TRANSPORT` says which.
+- **`bin/websocket_server`** loads it, plus `config/auth.rb` and
+  `config/live.rb` if the app has them, and runs Live's handler with live,
+  or else the app's `AppSockets::HANDLER` from `app/sockets/` (the
+  `websocket-chat` example there is the chat above). With neither, it says
+  so and exits. It's the only process that calls `listen!`. With auth it
+  authenticates sockets, through the `:auth` pool: `:optional` with live,
+  whose rules decide what visitors get, and `true` otherwise.
+- **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
+  configure it.
+
+**Switching transports** is three steps:
+
+1. If the other one isn't installed, add it: `monk add redis` or
+   `monk add postgres`.
+2. In `config/websocket.rb`, swap the fanout: `Monk::WebSocket::RedisFanout`
+   with `redis_url: Monk::Settings[:redis_url]` (and `require_relative
+   "redis"`), or `Monk::WebSocket::PgFanout` with
+   `pg_opts: Monk::Persistence::Pg.connection_options(:primary)` (and
+   `require_relative "persistence"`).
+3. Restart `bin/server`, `bin/websocket_server` and `bin/jobs`.
+
 ## Stopping and restarting
 
 `server.run` returns on Ctrl-C or `TERM` (what `docker stop` and every
@@ -140,7 +171,7 @@ subscriber connection. `#register` on a fanout that isn't listening raises
 `Monk::WebSocket::NotListeningError`. A plain `Registry` has `#listen!` too,
 as a no-op, so the same line works whichever one `REGISTRY` holds. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it
-needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
+needs the `redis` gem (`monk add redis` adds it to an app).
 
 `Monk::WebSocket::PgFanout` implements the identical interface over Postgres
 `LISTEN`/`NOTIFY` instead — for an app that already runs Postgres and would
