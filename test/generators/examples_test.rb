@@ -96,12 +96,12 @@ class GeneratorsExamplesTest < Minitest::Test
   end
 
   def write_probes(dest)
-    methods = example_tags(dest).map { |tag| PROBES.fetch(tag) }.join("\n")
+    body = [PROBE_HELPERS, *example_tags(dest).map { |tag| PROBES.fetch(tag) }].join("\n")
     File.write(File.join(dest, "test/examples_probe_test.rb"), <<~RUBY)
       require_relative "test_helper"
 
       class ExamplesProbeTest < Minitest::Test
-      #{(PROBE_HELPERS + "\n" + methods).gsub(/^(?=.)/, "  ")}
+      #{body.gsub(/^(?=.)/, "  ")}
       end
     RUBY
   end
