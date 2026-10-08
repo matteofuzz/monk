@@ -87,11 +87,6 @@ module Monk
       "app/jobs/send_login_link.rb" => "jobs/app/jobs/send_login_link.rb",
     }.freeze
 
-    # --mail --jobs (or --auth --jobs): Monk::Mail.deliver_later, loaded in
-    # config/jobs.rb right after Monk::Jobs itself.
-    JOBS_REQUIRE_ANCHOR = %(require "monk/jobs"\n).freeze
-    JOBS_MAIL_REQUIRE = %(require "monk/mail/later"\n).freeze
-
     # --jobs's demo route, added right after this line in app/app.rb (the
     # base and the --live one both end their routes with it), so the
     # round trip -- enqueue from a request, run in bin/jobs -- works out of
@@ -244,7 +239,6 @@ module Monk
         JOBS_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
         JOBS_AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
         add_jobs_route!
-        add_deliver_later! if @mail
       end
 
       wire_load! if @postgres || @mail || @live
@@ -285,10 +279,6 @@ module Monk
     def combinations
       pairs = []
       pairs << ["--auth + --jobs", "app/jobs/send_login_link.rb: login links are sent from a job"] if @auth && @jobs
-      if @mail && @jobs
-        pairs << ["--mail + --jobs",
-                  "config/jobs.rb loads Monk::Mail.deliver_later; JOBS_QUEUES serves mailers first",]
-      end
       pairs << live_combination if @live
       pairs
     end
@@ -384,14 +374,6 @@ module Monk
       File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
 
-    def add_deliver_later!
-      path = File.join(@dir, "config/jobs.rb")
-      content = File.read(path)
-      raise "config/jobs.rb wiring failed: #{JOBS_REQUIRE_ANCHOR.inspect} not found" unless content.include?(JOBS_REQUIRE_ANCHOR)
-
-      File.write(path, content.sub(JOBS_REQUIRE_ANCHOR, "#{JOBS_REQUIRE_ANCHOR}#{JOBS_MAIL_REQUIRE}"))
-    end
-
     # .env/.env.test/.env.example are the other deliberate exception to
     # "templates are static files, copied verbatim" (see the class comment
     # above): DB_NAME needs this app's own directory name in it -- the one
@@ -424,12 +406,12 @@ module Monk
       end
 
       # bin/jobs's settings. Not in .env.test: tests run jobs with
-      # Monk::Jobs.drain!, never a job process.
-      # With mail, the mailers queue is served first, so a backlog of other
-      # work never delays a login email (docs/adr/0014).
+      # Monk::Jobs.drain!, never a job process. The mailers queue is served
+      # first, so a backlog of other work never delays a login email
+      # (docs/adr/0014) -- with or without mail, since an empty queue costs
+      # nothing (docs/adr/0017).
       if @jobs
-        queues = @mail ? "mailers,default" : "default"
-        [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=#{queues}") }
+        [dev, example].each { |lines| lines.push("JOBS_WORKERS=2", "JOBS_QUEUES=mailers,default") }
       end
 
       # REDIS_URL is absent from .env.test for --redis alone -- only a test

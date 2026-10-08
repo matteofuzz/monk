@@ -119,3 +119,7 @@ module Monk
     Monk.freeze_hooks << self
   end
 end
+
+# Monk::Mail.deliver_later, when jobs are loaded too -- either order works
+# (lib/monk/jobs.rb ends the same way, docs/adr/0017).
+require_relative "mail/deliver_later" if Monk.const_defined?(:Jobs)

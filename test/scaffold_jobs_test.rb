@@ -77,7 +77,7 @@ class ScaffoldJobsTest < Minitest::Test
     in_scaffold(jobs: true) do |dest|
       %w[.env .env.example].each do |file|
         assert_includes read(dest, file), "JOBS_WORKERS="
-        assert_includes read(dest, file), "JOBS_QUEUES=default"
+        assert_includes read(dest, file), "JOBS_QUEUES=mailers,default"
       end
       refute_includes read(dest, ".env.test"), "JOBS_"
     end
@@ -115,19 +115,21 @@ class ScaffoldJobsTest < Minitest::Test
     end
   end
 
-  def test_mail_and_jobs_load_deliver_later_and_serve_mailers_first
+  # Monk loads deliver_later itself once mail and jobs are both loaded
+  # (docs/adr/0017), so config/jobs.rb is the same with or without mail.
+  def test_mail_and_jobs_leave_config_jobs_as_the_template_and_document_deliver_later
     in_scaffold(jobs: true, mail: true) do |dest|
-      assert_includes read(dest, "config/jobs.rb"), %(require "monk/jobs"\nrequire "monk/mail/later"\n)
-      assert_includes read(dest, ".env"), "JOBS_QUEUES=mailers,default"
-      assert_includes read(dest, ".env.example"), "JOBS_QUEUES=mailers,default"
+      assert_equal template("jobs/config/jobs.rb"), read(dest, "config/jobs.rb")
       assert_includes read(dest, "SETUP.md"), "Monk::Mail.deliver_later"
     end
   end
 
-  def test_jobs_without_mail_neither_load_deliver_later_nor_add_a_mailers_queue
+  # The mailers queue is served first whether or not the app sends mail:
+  # an empty queue costs nothing, and adding mail later needs no change.
+  def test_jobs_without_mail_still_serve_mailers_first
     in_scaffold(jobs: true) do |dest|
-      refute_includes read(dest, "config/jobs.rb"), "monk/mail/later"
-      assert_includes read(dest, ".env"), "JOBS_QUEUES=default\n"
+      assert_includes read(dest, ".env"), "JOBS_QUEUES=mailers,default\n"
+      assert_includes read(dest, "bin/jobs"), %(ENV.fetch("JOBS_QUEUES", "mailers,default"))
     end
   end
 

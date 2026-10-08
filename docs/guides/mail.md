@@ -158,11 +158,11 @@ Without them, two ways to keep it short:
 ### Sending from a job: `deliver_later`
 
 With [`Monk::Jobs`](jobs.md) set up, `deliver_later` hands the send to the
-job process (`bin/jobs`), so the request doesn't wait for SMTP at all:
+job process (`bin/jobs`), so the request doesn't wait for SMTP at all. It's
+defined as soon as both `monk/mail` and `monk/jobs` are loaded, in either
+order, so there's nothing to require for it:
 
 ```ruby
-require "monk/mail/later" # monk new --mail --jobs adds this to config/jobs.rb
-
 Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
   text: receipt_text, html: Monk::Mail.render("mail/receipt", order: order))
 ```

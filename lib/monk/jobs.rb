@@ -227,3 +227,8 @@ module Monk
 end
 
 require_relative "jobs/job"
+
+# Monk::Mail.deliver_later, when mail is loaded too -- either order works
+# (lib/monk/mail.rb ends the same way), so an app's config files never
+# need `require "monk/mail/later"` themselves (docs/adr/0017).
+require_relative "mail/deliver_later" if Monk.const_defined?(:Mail)
