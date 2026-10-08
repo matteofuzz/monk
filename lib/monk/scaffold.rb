@@ -116,16 +116,6 @@ module Monk
       postgres: "live/config/live_pg.rb",
     }.freeze
 
-    # Where the client runtime lands in the app's public root (an app serves
-    # it like any other static file; its files import each other by relative
-    # path, so they stay together in one directory).
-    LIVE_CLIENT_DIR = "public/js/monk_live".freeze
-
-    LIVE_HEAD = <<~HTML.gsub(/^/, "    ").freeze
-      <meta name="monk-live-url" content="<%= settings[:live_ws_url] %>">
-      <script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>
-    HTML
-
     EXECUTABLE_FILES = %w[bin/server bin/websocket_server bin/console bin/setup_db bin/migrate bin/jobs].freeze
 
     # auth: implies postgres -- Monk::Auth is Postgres-only (lib/monk/auth.rb
@@ -287,25 +277,6 @@ module Monk
     def write_live!
       write_file("config/live.rb", LIVE_CONFIG_TEMPLATES.fetch(@live_transport))
       LIVE_FILES.each { |relative, template| write_file(relative, template) }
-      copy_live_client!
-      add_live_to_layout!
-    end
-
-    # The runtime ships inside the gem (Monk::Live.client_dir); copied, not
-    # duplicated under templates/, so there is one source of truth.
-    def copy_live_client!
-      source = File.join(__dir__, "live/client")
-      target = File.join(@dir, LIVE_CLIENT_DIR)
-      FileUtils.mkdir_p(target)
-      FileUtils.cp(Dir.children(source).map { |name| File.join(source, name) }, target)
-    end
-
-    def add_live_to_layout!
-      path = File.join(@dir, "app/views/layouts/app.erb")
-      content = File.read(path)
-      raise "layout wiring failed: </head> not found" unless content.include?("  </head>\n")
-
-      File.write(path, content.sub("  </head>\n", "#{LIVE_HEAD}  </head>\n"))
     end
 
     def append_gemfile_extra(template_path)
@@ -479,9 +450,10 @@ module Monk
         - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
           only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
           publish.
-        - `public/js/monk_live/` -- the browser runtime, copied from the gem.
-          The layout points at it and at `LIVE_WS_URL` (default
-          `ws://localhost:9293`; use `wss://` in production).
+        - The browser runtime is served by Monk from the gem, at
+          `/_monk/live/`. The layout's `<%= monk_head %>` loads it and
+          points it at `LIVE_WS_URL` (default `ws://localhost:9293`; use
+          `wss://` in production).
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.
@@ -520,9 +492,10 @@ module Monk
         - `bin/websocket_server` -- calls `Monk::Live.listen!` at boot: the
           only process that listens for updates. `bin/server`#{@jobs ? " and `bin/jobs`" : ""} only
           publish.
-        - `public/js/monk_live/` -- the browser runtime, copied from the gem.
-          The layout points at it and at `LIVE_WS_URL` (default
-          `ws://localhost:9293`; use `wss://` in production).
+        - The browser runtime is served by Monk from the gem, at
+          `/_monk/live/`. The layout's `<%= monk_head %>` loads it and
+          points it at `LIVE_WS_URL` (default `ws://localhost:9293`; use
+          `wss://` in production).
 
         `WS_ALLOWED_ORIGINS` (default `http://localhost:9292`) must list the
         origin your pages are served from, or the browser's socket is refused.

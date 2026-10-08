@@ -4,8 +4,18 @@ require_relative "views"
 require_relative "assets"
 
 module Monk
+  # The base of Context#head_tags: no tags. A module's helpers, included
+  # into Context after this, add theirs with `def head_tags = super + [...]`
+  # (Monk::Live::Helpers does), so a layout's <%= monk_head %> renders
+  # every loaded module's tags and adding a module never edits the layout
+  # (docs/adr/0017).
+  module HeadTags
+    def head_tags = []
+  end
+
   class Context
     include Monk::Views::Compiled
+    include Monk::HeadTags
 
     attr_reader :params, :env, :headers
     attr_accessor :status
@@ -66,6 +76,13 @@ module Monk
 
     def asset_path(path)
       Monk::Assets.path_for(path)
+    end
+
+    # Every loaded module's <head> tags, one per line, for the layout:
+    #   <head> ... <%= monk_head %> </head>
+    # Each tag is built by Monk, which escapes what it interpolates.
+    def monk_head
+      raw(head_tags.join("\n"))
     end
 
     # Same frozen values Monk::Settings[] reads, e.g. `settings[:api_key]`

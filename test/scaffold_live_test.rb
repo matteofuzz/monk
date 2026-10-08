@@ -22,25 +22,19 @@ class ScaffoldLiveTest < Minitest::Test
     end
   end
 
-  def test_live_copies_the_client_files_out_of_the_gem_byte_for_byte
+  # Monk serves the client from the gem (docs/adr/0017), so no copy can
+  # fall behind the gem's version.
+  def test_live_copies_no_client_files_into_the_app
     in_app do |dest|
-      client_files = Dir.children(Monk::Live.client_dir).sort
-
-      assert_includes client_files, "monk_live.js"
-      assert_equal client_files, Dir.children(File.join(dest, "public/js/monk_live")).sort
-      client_files.each do |name|
-        assert_equal File.read(File.join(Monk::Live.client_dir, name)), read(dest, "public/js/monk_live/#{name}")
-      end
+      refute File.exist?(File.join(dest, "public/js/monk_live"))
     end
   end
 
-  def test_live_adds_the_meta_tag_and_module_script_to_the_layout_head
+  # The layout's <%= monk_head %> renders Live's tags once config/live.rb
+  # has run (docs/adr/0017), so live leaves the base layout as it is.
+  def test_live_leaves_the_layout_as_the_base_one
     in_app do |dest|
-      layout = read(dest, "app/views/layouts/app.erb")
-
-      assert_includes layout, %(<meta name="monk-live-url" content="<%= settings[:live_ws_url] %>">)
-      assert_includes layout, %(<script type="module" src="<%= asset_path "/js/monk_live/monk_live.js" %>"></script>)
-      assert_operator layout.index("monk-live-url"), :<, layout.index("</head>")
+      assert_equal template("base/app/views/layouts/app.erb"), read(dest, "app/views/layouts/app.erb")
     end
   end
 
@@ -156,6 +150,10 @@ class ScaffoldLiveTest < Minitest::Test
 
             _status, _headers, body = app.call(env_for("GET", "/"))
             assert_includes body.join, %(<strong id="hits">0</strong>)
+            assert_includes body.join, %(<meta name="monk-live-url" content=")
+            client = body.join[%r{<script type="module" src="(/_monk/live/monk_live\.js[^"]*)"}, 1]
+            refute_nil client, "the layout loads Live's client"
+            assert_equal 200, app.call(env_for("GET", client.split("?").first))[0], "Monk serves it"
 
             status, headers, _body = app.call(env_for("POST", "/hit"))
             assert_equal 302, status

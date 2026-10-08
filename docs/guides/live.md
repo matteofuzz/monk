@@ -94,17 +94,21 @@ applied, and passing a `layout:` local raises.
 
 `live_topic` renders `data-live-topic="..."` (several topics allowed,
 space-separated) and refuses a topic the server would refuse. The layout loads
-the client:
+the client with `<%= monk_head %>` in its `<head>`, which, once
+`config/live.rb` has configured Live, renders:
 
 ```html
 <meta name="monk-live-url" content="ws://localhost:9293">
-<script type="module" src="/js/monk_live/monk_live.js"></script>
+<script type="module" src="/_monk/live/monk_live.js"></script>
 ```
 
-The runtime lives in the gem (`Monk::Live.client_dir`; `monk new --live` copies
-it to `public/js/monk_live/`, and its files import each other by relative
-path, so keep them together). A page with no `data-live-topic` never opens a
-socket.
+The runtime lives in the gem (`Monk::Live.client_dir`), and Monk serves it at
+`/_monk/live/` like any other static file, stamped and cached the same way,
+so an app never copies it and never serves an older copy than its gem. Apps
+that copied it into `public/js/monk_live/` before can delete that directory
+and their own two tags. An app with `assets false` serves no static files
+at all, this client included: serve `Monk::Live.client_dir` at `/_monk/live/`
+yourself. A page with no `data-live-topic` never opens a socket.
 
 What the client does for you:
 
