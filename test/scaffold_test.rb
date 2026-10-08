@@ -427,10 +427,8 @@ class ScaffoldTest < Minitest::Test
   end
 
   # --redis alone (no --postgres) still gets a real .env with REDIS_URL,
-  # and dotenv uncommented to actually load it -- otherwise
-  # bin/websocket_server's REDIS_URL check silently never sees it, same
-  # class of bug --postgres's own .env had before dotenv was wired up.
-  def test_write_bang_with_redis_only_writes_env_files_and_uncomments_dotenv
+  # which the base Gemfile's dotenv loads.
+  def test_write_bang_with_redis_only_writes_env_files
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
@@ -472,24 +470,24 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # --postgres writes a real .env/.env.test (see write_env_files!) -- if
-  # dotenv stayed commented out, as it does in the base skeleton,
-  # config/settings.rb's `require "dotenv/load"` would never run, and
+  # dotenv is in every app's Gemfile (docs/adr/0017): modules add .env lines,
+  # and config/settings.rb's `require "dotenv/load"` must find the gem, or
   # bin/setup_db would silently fall back to config/persistence.rb's own
   # ENV.fetch defaults instead of the app-specific values .env provides.
-  def test_write_bang_with_postgres_uncomments_dotenv_in_the_gemfile
+  # Flags only append to the Gemfile, never edit its base lines.
+  def test_every_gemfile_loads_dotenv_and_starts_with_the_base_one
+    assert_match(/^gem "dotenv"/, template("base/Gemfile"))
+
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
-      Monk::Scaffold.new(dest, postgres: true).write!
+      Monk::Scaffold.new(dest, postgres: true, mail: true, redis: true).write!
 
-      gemfile = read(dest, "Gemfile")
-      assert_match(/^gem "dotenv"/, gemfile)
-      refute_match(/^# gem "dotenv"/, gemfile)
+      assert read(dest, "Gemfile").start_with?(template("base/Gemfile"))
     end
   end
 
-  def test_write_bang_without_postgres_leaves_dotenv_commented_out
+  def test_write_bang_without_flags_writes_the_base_gemfile
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
@@ -571,9 +569,8 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # No Postgres, but MAIL_* are still worth an env file -- and without
-  # dotenv uncommented, nothing would load it.
-  def test_write_bang_with_mail_writes_env_files_and_uncomments_dotenv
+  # No Postgres, but MAIL_* are still worth an env file.
+  def test_write_bang_with_mail_writes_env_files
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
 
@@ -583,7 +580,6 @@ class ScaffoldTest < Minitest::Test
       refute_includes read(dest, ".env"), "DB_NAME"
       assert_includes read(dest, ".env.test"), "MAIL_URL=log://"
       assert_includes read(dest, ".env.example"), "MAIL_URL=smtp://"
-      assert_includes read(dest, "Gemfile"), %(gem "dotenv" # loads)
     end
   end
 

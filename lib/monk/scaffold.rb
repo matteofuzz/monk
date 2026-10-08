@@ -221,7 +221,6 @@ module Monk
       # base skeleton alone has nothing to configure this way.
       if @postgres || @redis || @mail
         write_env_files!
-        uncomment_dotenv!
       end
 
       AUTH_FILES.each { |relative, template| write_file(relative, template) } if @auth
@@ -271,24 +270,6 @@ module Monk
     def append_gemfile_extra(template_path)
       extra = File.read(File.join(TEMPLATES_DIR, template_path))
       File.write(File.join(@dir, "Gemfile"), "\n#{extra}", mode: "a")
-    end
-
-    # --postgres/--redis write a real .env (see write_env_files!) -- if the
-    # dotenv gem stays commented out, as it does in the base skeleton,
-    # config/settings.rb's `require "dotenv/load"` never runs, so nothing
-    # ever actually loads them: bin/setup_db (or bin/websocket_server's
-    # REDIS_URL check) silently falls back to config/persistence.rb's own
-    # ENV.fetch defaults, or no REDIS_URL at all, instead of the
-    # app-specific values .env was written to provide.
-    DOTENV_COMMENTED_LINE = %(# gem "dotenv" # uncomment to load a local .env file (config/settings.rb)\n).freeze
-    DOTENV_LINE = %(gem "dotenv" # loads .env/.env.test -- see config/settings.rb\n).freeze
-
-    def uncomment_dotenv!
-      path = File.join(@dir, "Gemfile")
-      content = File.read(path)
-      raise "Gemfile wiring failed: #{DOTENV_COMMENTED_LINE.inspect} not found" unless content.include?(DOTENV_COMMENTED_LINE)
-
-      File.write(path, content.sub(DOTENV_COMMENTED_LINE, DOTENV_LINE))
     end
 
     # .env/.env.test/.env.example are the other deliberate exception to

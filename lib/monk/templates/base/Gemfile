@@ -4,4 +4,4 @@ gem "monkrb", require: "monk"
 gem "rackup"
 gem "webrick"
 gem "kino"
-# gem "dotenv" # uncomment to load a local .env file (config/settings.rb)
+gem "dotenv" # loads .env in development, see config/settings.rb
