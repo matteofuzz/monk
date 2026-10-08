@@ -11,7 +11,7 @@ class GeneratorsExamplesTest < Minitest::Test
   include RedisTestHelpers
 
   # The modules whose examples are checked: every module with a generator.
-  MODULES = %i[postgres redis].freeze
+  MODULES = %i[postgres redis mail].freeze
 
   # What each example does once uncommented, as test methods in the app.
   # `request` (defined below, in PROBE_HELPERS) goes through the booted APP.
@@ -38,6 +38,13 @@ class GeneratorsExamplesTest < Minitest::Test
 
         refute_nil first
         assert_equal first, second, "the second request reads the cached value"
+      end
+    RUBY
+    "mail-welcome" => <<~RUBY,
+      def test_mail_welcome
+        assert_equal 200, request("POST", "/welcome", email: "ann@example.test", name: "Ann").first
+
+        assert_includes File.read(File.expand_path("../log/test.log", __dir__)), %(subject="Welcome, Ann")
       end
     RUBY
   }.freeze
