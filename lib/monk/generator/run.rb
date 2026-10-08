@@ -120,7 +120,7 @@ module Monk
 
       def resolve_options(definition, available)
         definition.options.to_h do |option|
-          given = @options[option.name]
+          given = @options[option.name] || option.default
           next [option.name, given] if given
 
           candidates = option.infer_from & available
@@ -144,7 +144,8 @@ module Monk
       end
 
       def entries_for(definition, options)
-        entries = definition.copies.map { |copy| copy_entry(definition, copy, options) }
+        copies = definition.copies.select { |copy| copy.condition.nil? || copy.condition.call(options) }
+        entries = copies.map { |copy| copy_entry(definition, copy, options) }
         entries.concat(definition.migrations.flat_map { |migration| migration_entries(definition, migration) })
         entries.concat(gem_entries(definition))
         entries.concat(env_entries(definition))
@@ -229,7 +230,7 @@ module Monk
             next if section.nil? || @files.read(path).include?(marker)
 
             body = File.read(template(section)).gsub("{{app}}", app_name)
-            @files.append(path, "\n#{marker}\n#{body}")
+            @files.append(path, "#{"\n" unless @files.read(path).empty?}#{marker}\n#{body}")
             definition.name
           end
           { path: path, action: :appended, items: names, sections: true } unless names.empty?
@@ -252,7 +253,7 @@ module Monk
           status: :ok, written: !@dry_run && !done.empty?, dry_run: @dry_run, requested: @requested,
           modules: module_entries, files: done, skipped: conflicts.map { |entry| skipped(entry) },
           env: production_entries, examples: examples(entries), services: services, next_steps: next_steps(entries),
-          docs: docs(entries), closing: @plan.map { |definition, _| definition.closing }.compact.last,
+          docs: docs(entries), closing: closing,
           command: @command,
         )
       end
@@ -316,7 +317,11 @@ module Monk
         steps = []
         gems_added = entries.any? { |entry| entry[:path] == "Gemfile" && entry[:action] == :appended }
         steps << { run: "bundle install" } if gems_added
-        @plan.map(&:first).each { |definition| definition.steps.each { |step| steps << step_entry(step) } }
+        @plan.each do |definition, options|
+          definition.steps.each do |step|
+            steps << step_entry(step) if step.condition.nil? || step.condition.call(options)
+          end
+        end
         migrating = entries.select { |entry| entry[:path].start_with?("db/migrate/") && entry[:action] == :created }
         unless migrating.empty?
           needed = services_of(migrating.map { |entry| entry[:module] }.uniq)
@@ -342,8 +347,16 @@ module Monk
         seen.flat_map { |name| @registry.fetch(name).services }.map(&:name).uniq
       end
 
+      # The last added module's closing line that applies.
+      def closing
+        @plan.filter_map do |definition, options|
+          text = definition.closing
+          text.respond_to?(:call) ? text.call(options) : text
+        end.last
+      end
+
       def step_entry(step)
-        key = step.text.match?(%r{\A(bin/|bundle |ruby |curl |open )}) ? :run : :do
+        key = step.text.match?(%r{\A(bin/|bundle |ruby |curl )}) ? :run : :do
         { key => step.text, needs_service: step.needs_service }.compact
       end
 

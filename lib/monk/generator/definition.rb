@@ -4,12 +4,12 @@ module Monk
     # declares it. Only declarations: Run decides what they mean for a given
     # app, and writes nothing until it has checked every file.
     class Definition
-      Copy = Data.define(:path, :from, :role, :executable)
+      Copy = Data.define(:path, :from, :role, :executable, :condition)
       Migration = Data.define(:name)
       Env = Data.define(:file, :key, :value, :commented)
-      Option = Data.define(:name, :values, :infer_from, :describe)
+      Option = Data.define(:name, :values, :infer_from, :describe, :default)
       Service = Data.define(:name, :check, :setup)
-      Step = Data.define(:text, :needs_service)
+      Step = Data.define(:text, :needs_service, :condition)
       Example = Data.define(:tag, :todo)
       Production = Data.define(:key, :note, :placeholder)
 
@@ -57,10 +57,11 @@ module Monk
 
       # A choice the user makes (websocket's transport). It's inferred when
       # exactly one of `infer_from` is installed or being added, and the
-      # chosen value is a dependency when `dependency: true`.
-      def option(name, values:, infer_from: values, dependency: false, describe: {})
+      # chosen value is a dependency when `dependency: true`. An option with
+      # a `default:` (live's demo) is never inferred.
+      def option(name, values:, infer_from: values, dependency: false, describe: {}, default: nil)
         @options << Option.new(name: name.to_sym, values: values.map(&:to_s), infer_from: infer_from.map(&:to_s),
-          describe: describe.transform_keys(&:to_s),)
+          describe: describe.transform_keys(&:to_s), default: default&.to_s,)
         @option_dependencies << name.to_sym if dependency
       end
 
@@ -72,12 +73,16 @@ module Monk
       end
 
       # A file copied verbatim from templates/<module>/<path>, or from
-      # `from:`, a template path or a block taking the options.
-      def copy(*paths, role:, from: nil, executable: false)
+      # `from:`, a template path or a block taking the options. `if:`, a
+      # block taking the options, decides whether it's copied at all.
+      def copy(*paths, role:, from: nil, executable: false, if: nil)
         raise ArgumentError, "unknown role #{role.inspect}, one of #{ROLES.inspect}" unless ROLES.include?(role)
         raise ArgumentError, "from: needs a single path" if from && paths.size > 1
 
-        paths.each { |path| @copies << Copy.new(path: path, from: from, role: role, executable: executable) }
+        condition = binding.local_variable_get(:if)
+        paths.each do |path|
+          @copies << Copy.new(path: path, from: from, role: role, executable: executable, condition: condition)
+        end
       end
 
       # db/migrate/<timestamp>_<name>.{up,down}.sql, from the template
@@ -117,8 +122,8 @@ module Monk
         @productions << Production.new(key: key, note: note, placeholder: placeholder)
       end
 
-      def next_step(text, needs_service: nil)
-        @steps << Step.new(text: text, needs_service: needs_service&.to_s)
+      def next_step(text, needs_service: nil, if: nil)
+        @steps << Step.new(text: text, needs_service: needs_service&.to_s, condition: binding.local_variable_get(:if))
       end
 
       # What to do with an example block (`# monk:example <tag>`). `todo`
@@ -127,7 +132,8 @@ module Monk
         @examples << Example.new(tag: tag, todo: todo)
       end
 
-      # The one thing that matters most after adding this module.
+      # The one thing that matters most after adding this module: a String,
+      # or a block taking the options.
       def closing(text = nil)
         return @closing if text.nil?
 

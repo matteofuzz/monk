@@ -199,6 +199,30 @@ class GeneratorTest < Minitest::Test
     assert_includes result.message, "egg -> hen -> egg"
   end
 
+  # A flag-like option (live's --no-demo) has a default instead of being
+  # inferred, and files, steps and the closing line can depend on it.
+  def test_an_option_with_a_default_switches_files_steps_and_closing
+    result = add(:widget)
+
+    assert File.exist?(File.join(@app, "app/widget_demo.rb"))
+    assert_includes result.next_steps, { do: "open the demo" }
+    assert_equal "Remove the demo when done.", result.closing
+
+    FileUtils.rm_rf(Dir.children(@app).map { |child| File.join(@app, child) })
+    result = add(:widget, options: { demo: "off" })
+
+    refute File.exist?(File.join(@app, "app/widget_demo.rb"))
+    refute_includes result.next_steps, { do: "open the demo" }
+    assert_nil result.closing
+  end
+
+  # The first section in a new SETUP.md starts it, without a blank line.
+  def test_a_section_starts_a_new_file_without_a_blank_line
+    add(:db)
+
+    assert app_file("SETUP.md").start_with?("<!-- monk:module db -->\n## db\n")
+  end
+
   # --- conflicts ---
 
   def test_a_wiring_conflict_stops_everything_before_anything_is_written
@@ -405,6 +429,13 @@ class GeneratorTest < Minitest::Test
       }
       closing %(Then enable the login routes: app/routes/login.rb, block "login-routes".)
     end
+    registry.define(:widget) do
+      option :demo, values: %w[on off], default: "on"
+      copy "config/widget.rb", role: :wiring
+      copy "app/widget_demo.rb", role: :demo, if: ->(options) { options[:demo] == "on" }
+      next_step "open the demo", if: ->(options) { options[:demo] == "on" }
+      closing ->(options) { "Remove the demo when done." if options[:demo] == "on" }
+    end
     registry.define(:sockets) do
       option :transport, values: %w[db cache], dependency: true,
         describe: { db: "the database carries it", cache: "needs the cache running" }
@@ -431,6 +462,8 @@ class GeneratorTest < Minitest::Test
       "login/db/migrate/00000000000002_create_logins.down.sql" => "DROP TABLE logins;\n",
       "login/setup.md" => "## login\n",
       "login/agents.md" => "## login\n",
+      "widget/config/widget.rb" => "WIDGET = true\n",
+      "widget/app/widget_demo.rb" => "# demo\n",
       "sockets/config/sockets_db.rb" => "SOCKETS = :db\n",
       "sockets/config/sockets_cache.rb" => "SOCKETS = :cache\n",
     }.each { |path, content| write_file(@templates, path, content) }
