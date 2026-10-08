@@ -142,6 +142,9 @@ module Monk
         @closing = text
       end
 
+      # The options whose value is a module to depend on (websocket's transport).
+      def dependency_options = @option_dependencies
+
       def dependencies(options = {})
         @dependencies + @option_dependencies.filter_map { |option| options[option]&.to_sym }
       end

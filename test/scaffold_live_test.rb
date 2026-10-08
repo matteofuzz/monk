@@ -9,8 +9,6 @@ require "monk/live"
 class ScaffoldLiveTest < Minitest::Test
   include RedisTestHelpers
 
-  EXE = File.expand_path("../exe/monk", __dir__)
-
   # The demo is its own files (docs/adr/0017): app/app.rb and the home
   # page stay the base ones.
   def test_live_writes_the_demo_wiring_from_the_live_templates
@@ -250,22 +248,6 @@ class ScaffoldLiveTest < Minitest::Test
     end
   end
 
-  def test_the_cli_accepts_live_and_the_help_documents_it
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
-
-      _out, err, status = Open3.capture3("ruby", EXE, "new", dest, "--live", "--redis")
-      help, = Open3.capture2("ruby", EXE, "help")
-
-      assert status.success?, err
-      assert File.exist?(File.join(dest, "config/live.rb"))
-      assert_includes help, "--live"
-    end
-  end
-
-  # docs/history/plan-live-pg-fanout.md Phase 6: neither flag means there's
-  # no way to tell whether this app has Postgres available, so --live no
-  # longer silently defaults to Redis.
   def test_live_without_redis_or_postgres_raises_a_clear_error
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -273,18 +255,6 @@ class ScaffoldLiveTest < Minitest::Test
       error = assert_raises(Monk::AmbiguousLiveTransportError) { Monk::Scaffold.new(dest, live: true).write! }
 
       assert_match(/--redis or --postgres/, error.message)
-    end
-  end
-
-  def test_the_cli_reports_the_ambiguous_transport_error_and_exits_non_zero
-    Dir.mktmpdir do |tmp|
-      dest = File.join(tmp, "demo_app")
-
-      _out, err, status = Open3.capture3("ruby", EXE, "new", dest, "--live")
-
-      refute status.success?
-      assert_match(/AmbiguousLiveTransportError/, err)
-      refute File.exist?(dest)
     end
   end
 

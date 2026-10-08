@@ -15,5 +15,5 @@ Monk::Generator.define(:base) do
 
   setup_section "base/setup.md"
   agents_section "base/agents.md"
-  next_step "bin/server"
+  next_step "bin/server", note: "http://localhost:9292"
 end

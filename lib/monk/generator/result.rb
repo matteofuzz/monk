@@ -76,7 +76,50 @@ module Monk
         end
       end
 
+      # `monk new`'s text: the app created, its base files by directory, then
+      # each module added on top of it, as `monk add` shows them.
+      def new_text(app)
+        return to_text unless ok?
+
+        added = modules.select { |entry| entry[:action] == :added && entry[:name] != :base }
+        lines = [new_header(app, added), "", *base_summary]
+        added.each { |entry| lines.push("", entry[:name].to_s, *module_lines(entry[:name])) }
+        lines.concat(production_text)
+        lines.push("", "Next:", "  cd #{app}", *step_lines)
+        lines << "  then: monk add --list   the modules you can add" if added.empty?
+        lines.push("", closing) if closing && !dry_run
+        "#{lines.join("\n")}\n"
+      end
+
       private
+
+      def new_header(app, added)
+        verb = dry_run ? "Would create" : "Created"
+        return "#{verb} #{app}/ (bare Monk app)#{" — nothing written" if dry_run}." if added.empty?
+
+        requested_added = added.reject { |entry| entry[:reason] }.map { |entry| entry[:name] }
+        dependencies = added.select { |entry| entry[:reason] }.map { |entry| entry[:name] }
+        line = "#{verb} #{app}/ with #{names(requested_added)}"
+        if dependencies.any?
+          line += ", and #{names(dependencies)}, which #{requested_added.size > 1 ? "they need" : "it needs"}"
+        end
+        "#{line}#{" — nothing written" if dry_run}."
+      end
+
+      # The base app's files, one line per top-level directory.
+      def base_summary
+        base = files.select { |entry| entry[:module] == :base && entry[:action] == :created }
+        paths = base.map { |entry| entry[:path] }
+        top, nested = paths.partition { |path| !path.include?("/") }
+        lines = top.empty? ? [] : ["  + #{top.join(", ")}"]
+        nested.group_by { |path| path.split("/").first }.each do |dir, inside|
+          children = inside.map { |path| path.split("/")[1] + (path.count("/") > 1 ? "/" : "") }.uniq
+          lines << "  + #{"#{dir}/".ljust(9)}#{children.join(", ")}"
+        end
+        sections = files.select { |entry| entry[:sections] }.map { |entry| entry[:path] }
+        lines << "  + #{sections.join(", ")}" unless sections.empty?
+        lines
+      end
 
       def ok_text
         added = modules.select { |entry| entry[:action] == :added }
@@ -111,15 +154,14 @@ module Monk
         installed = modules.select { |entry| entry[:action] == :already_installed }.map { |entry| entry[:name] }
         verb = dry_run ? "Would add" : "Adding"
         line = "#{verb} #{names(to_add)}"
-        line += if dependencies.any?
-                  ", which #{to_add.size > 1 ? "need" : "needs"} #{names(dependencies)} — adding " \
-                    "#{dependencies.size > 1 ? "those" : "it"} first."
-                elsif installed.any?
-                  " (#{names(installed)} already installed)."
-                else
-                  "."
-                end
-        dry_run ? "#{line.chomp(".")} (nothing written):" : line
+        if dependencies.any?
+          line += ", which #{to_add.size > 1 ? "need" : "needs"} #{names(dependencies)} — adding " \
+                  "#{dependencies.size > 1 ? "those" : "it"} first"
+        end
+        already = "#{names(installed)} already installed" if installed.any? && dependencies.empty?
+        return "#{line} (#{["nothing written", already].compact.join("; ")}):" if dry_run
+
+        already ? "#{line} (#{already})." : "#{line}."
       end
 
       def module_lines(name)
@@ -172,12 +214,15 @@ module Monk
         ["", "Set before production:", *env.map { |entry| "  #{entry[:key].ljust(width)}  #{entry[:note]}" }]
       end
 
-      # At most three numbered steps: the first two and the tests, with
-      # bin/setup_db joined to the tests. What's left is named on one more
-      # line each, with the SETUP.md section that explains it.
-      def next_text
+      def next_text = ["", "Next:", *step_lines]
+
+      # At most three numbered steps, in the order they're done. Past three,
+      # bin/setup_db joins the tests' line, the first two and that line are
+      # numbered, and what's left is named on one more line each, with the
+      # SETUP.md section that explains it.
+      def step_lines
         steps = next_steps.dup
-        if (migrate = steps.find { |step| step[:run] == "bin/setup_db" }) && steps.last != migrate
+        if steps.size > MAX_STEPS && (migrate = steps.find { |step| step[:run] == "bin/setup_db" })
           steps.delete(migrate)
           steps[-1] = steps.last.merge(run: "bin/setup_db && #{steps.last[:run]}")
         end
@@ -187,8 +232,7 @@ module Monk
           steps = steps.first(MAX_STEPS - 1) + [steps.last]
         end
         lines = steps.each_with_index.map { |step, index| "  #{index + 1}. #{step_text(step)}" }
-        lines += rest.map { |step| "  … also: #{step_text(step)}#{" (SETUP.md › #{step[:module]})" if step[:module]}" }
-        ["", "Next:", *lines]
+        lines + rest.map { |step| "  … also: #{step_text(step)}#{" (SETUP.md › #{step[:module]})" if step[:module]}" }
       end
 
       def step_text(step)

@@ -317,7 +317,7 @@ module Monk
         all_services = (@installed.map { |name| @registry.fetch(name) } + @plan.map(&:first))
                        .flat_map(&:services).map(&:name).uniq
         steps = []
-        gems_added = entries.any? { |entry| entry[:path] == "Gemfile" && entry[:action] == :appended }
+        gems_added = entries.any? { |entry| entry[:path] == "Gemfile" && %i[appended created].include?(entry[:action]) }
         steps << { run: "bundle install" } if gems_added
         own = @plan.flat_map do |definition, options|
           definition.steps.select { |step| step.condition.nil? || step.condition.call(options) }
