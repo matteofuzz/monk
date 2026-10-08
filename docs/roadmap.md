@@ -3,6 +3,14 @@
 Features to add. Not a commitment: each one gets its own design doc and plan
 when work on it starts.
 
+- **Scaffolding by module: `monk new` + `monk add`.** One generator per
+  module replaces `monk new`'s flags, so a module can be added to an
+  existing app too. Generators only create files and append lines. Each
+  module comes with commented examples and a generated test. Text and
+  `--json` output, for people and agents. Planned in
+  `docs/plan-scaffold.md`. Comes first: scheduled jobs and storage, which
+  both change the scaffold, then add their parts as generator changes
+  (that plan's "Other branches that touch the scaffold").
 - **Scheduled jobs.** Recurring jobs on a cron-like schedule in `Monk::Jobs`.
   One-off delayed jobs already exist (`enqueue(..., wait:)` / `at:`); recurring
   ones were left out of the first version (`docs/guides/jobs.md`, "What's not
@@ -16,6 +24,36 @@ when work on it starts.
   the S3 backend ships, four open items need checking on a real Hetzner
   bucket: the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle
   rule, and same-bucket copy.
+- **`monk check`: verifying an environment's wiring.** `bin/check` (written
+  by the base app) loads `config/load` and runs a read-only check for each
+  loaded module. The checks belong to the framework modules
+  (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
+  they work in a deployed app. Output and exit codes match `monk add`'s
+  (text and `--json`). It covers what boot (missing settings) and
+  `rake test` (wiring in the test environment) can't: problems that
+  otherwise show up the first time a real user hits them.
+  - **Before switching traffic to a deploy**, the main use:
+    - SMTP connect and login without sending;
+    - bucket access and CORS for `PUBLIC_URL`;
+    - Postgres reachable with no migrations pending;
+    - Redis and `LISTEN` reachable (`LISTEN` doesn't work through
+      PgBouncer in transaction mode);
+    - values that are present but wrong: a placeholder `AUTH_SECRET`,
+      `PUBLIC_URL` on `http://`, `LIVE_WS_URL` not on `wss://`,
+      `WS_ALLOWED_ORIGINS` missing `PUBLIC_URL`.
+  - **A local "doctor"**: services up, env files filled in, versions
+    matching `.ruby-version`/`Gemfile.lock`.
+  - **Agents** get one diagnosis to act on (`--json`).
+  - **Bug reports** get versions, modules and failed checks, with secrets
+    redacted.
+  - **After upgrading Monk**, a first signal that a module needs something
+    the app lacks, such as a new migration.
+
+  It isn't a load balancer's health check: it's heavier and runs once per
+  deploy. A test email is opt-in (`--send-test-mail=addr`). Comes after
+  scaffolding by module (above; its decision 29 already declares a check
+  command for each service), after storage, its best use case, and after
+  recurring jobs, whose missing-migration case it should catch.
 - **Richer HTML support, forms first.** Views offer only `render`, `h`,
   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
   deliberately left them out). Templates write every form by hand, including
