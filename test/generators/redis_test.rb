@@ -20,7 +20,7 @@ class GeneratorsRedisTest < Minitest::Test
     with_new_app do |dest|
       result = add_modules(dest, :redis)
 
-      assert_equal [:redis], result.modules.map { |entry| entry[:name] }
+      assert_equal([:redis], result.modules.map { |entry| entry[:name] })
       refute File.exist?(File.join(dest, "config/persistence.rb"))
     end
   end
