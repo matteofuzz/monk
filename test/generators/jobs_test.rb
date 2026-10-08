@@ -48,4 +48,63 @@ class GeneratorsJobsTest < Minitest::Test
       end
     end
   end
+
+  # bin/jobs as a real process, the way a developer runs it: it registers,
+  # runs a job, and stops cleanly on TERM.
+  def test_bin_jobs_runs_jobs_and_stops_on_term
+    with_running_jobs(:jobs) do |dest, env|
+      assert_includes generated(dest, "log/test.log"), "Hello, Ann, from a background job"
+      assert_equal 1, count(env, "monk_processes")
+    end
+  end
+
+  # In a live app bin/jobs loads config/live.rb, so a job can push an
+  # update. It only publishes: it never LISTENs.
+  def test_bin_jobs_of_a_live_app_never_listens
+    with_running_jobs(:jobs, :live, options: { transport: "postgres" }) do |_dest, env|
+      assert_equal 0, count(env, "pg_stat_activity", "query LIKE 'LISTEN %' AND datname = current_database()")
+    end
+  end
+
+  private
+
+  def with_running_jobs(*modules, options: {})
+    with_new_app(*modules, options: options) do |dest|
+      with_generated_database do |env|
+        env = env.merge("MONK_ENV" => "test")
+        out, status = run_generated_script(dest, "bin/setup_db", env)
+        assert status.success?, out
+        out, status = Open3.capture2e(env.merge("BUNDLE_GEMFILE" => File.expand_path("../../Gemfile", __dir__)),
+          RbConfig.ruby, "-W0", "-rbundler/setup", "-e", %(require "./config/load"; HelloJob.enqueue("Ann")),
+          chdir: dest,)
+        assert status.success?, out
+
+        pid = Process.spawn(env.merge("BUNDLE_GEMFILE" => File.expand_path("../../Gemfile", __dir__)),
+          RbConfig.ruby, "-W0", "bin/jobs", chdir: dest, out: File::NULL, err: File::NULL,)
+        begin
+          wait_until { count(env, "monk_jobs").zero? && count(env, "monk_processes") == 1 }
+          yield dest, env
+        ensure
+          Process.kill("TERM", pid)
+          _, status = Process.wait2(pid)
+        end
+        assert_predicate status, :success?
+        assert_equal 0, count(env, "monk_processes"), "it unregisters on the way out"
+      end
+    end
+  end
+
+  def count(env, table, where = "true")
+    conn = PG.connect(host: env["DB_HOST"], port: env["DB_PORT"], user: env["DB_USER"], password: env["DB_PASSWORD"],
+      dbname: env["DB_NAME"],)
+    conn.exec("SELECT count(*) FROM #{table} WHERE #{where}").getvalue(0, 0).to_i
+  ensure
+    conn&.close
+  end
+
+  def wait_until(timeout: 15)
+    deadline = Time.now + timeout
+    sleep 0.1 until yield || Time.now > deadline
+    assert yield, "timed out"
+  end
 end

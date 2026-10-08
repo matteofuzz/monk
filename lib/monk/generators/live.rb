@@ -7,7 +7,7 @@ Monk::Generator.define(:live) do
 
   demo = ->(options) { options[:demo] == "on" }
   copy "config/live.rb", role: :wiring,
-    from: ->(options) { demo.call(options) ? "live/config/live_with_demo.rb" : "live/config/live_without_demo.rb" }
+    from: ->(options) { demo.call(options) ? "live/config/live.rb" : "live/config/live_without_demo.rb" }
   copy "app/broadcasts/greeting.rb", "app/routes/live.rb", role: :example
   copy "app/views/live/_greeting.erb", role: :view
   copy "app/routes/demo_live.rb", "app/views/demo/live.erb", "app/views/demo/_hits.erb", role: :demo, if: demo

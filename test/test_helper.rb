@@ -115,22 +115,6 @@ end
 
 Minitest::Test.include(ViewTestHelpers)
 
-# Shared by the scaffold tests: a generated app's app/app.rb, loaded the
-# way config.ru loads it, at the top level -- the files under app/routes/
-# reopen `class App`, so a wrapper module won't do -- and removed again
-# afterwards so the next test's App starts fresh. Call after
-# config/load.rb, from the app's root.
-module GeneratedAppHelpers
-  def with_generated_app_class(dest)
-    load File.join(dest, "app/app.rb")
-    yield ::App
-  ensure
-    Object.send(:remove_const, :App) if Object.const_defined?(:App, false)
-  end
-end
-
-Minitest::Test.include(GeneratedAppHelpers)
-
 # Shared by the generator tests (test/generators/): an app made the way
 # `monk new shop --with ...` makes it, in a temp directory, and its own
 # test suite run in a fresh Ruby on Monk's bundle (the app's Gemfile
@@ -186,7 +170,41 @@ module GeneratorTestHelpers
   end
 
   def generated(dest, path) = File.read(File.join(dest, path))
-  def template(path) = File.read(File.join(Monk::Generator::TEMPLATES_DIR, path))
+
+  def template(path)
+    require "monk/generator"
+    File.read(File.join(Monk::Generator::TEMPLATES_DIR, path))
+  end
+
+  def example_files(dest)
+    Dir.glob("{app,config}/**/*.rb", base: dest).select { |path| generated(dest, path).include?("monk:example") }
+  end
+
+  def example_tags(dest)
+    example_files(dest).flat_map { |path| generated(dest, path).scan(/#\s*monk:example\s+(\S+)/).flatten }.uniq
+  end
+
+  # Inside each block, "# code" becomes "code" and "# # note" stays a
+  # comment, "# note"; the marker lines stay as they are.
+  def uncomment_examples(dest)
+    example_files(dest).each do |path|
+      inside = false
+      lines = generated(dest, path).lines.map do |line|
+        if line.match?(/#\s*monk:example\s/)
+          inside = true
+          line
+        elsif inside && line.strip == "# monk:end"
+          inside = false
+          line
+        elsif inside
+          line.sub(/\A(\s*)# ?/, '\1')
+        else
+          line
+        end
+      end
+      File.write(File.join(dest, path), lines.join)
+    end
+  end
 
   private
 

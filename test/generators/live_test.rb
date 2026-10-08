@@ -78,4 +78,24 @@ class GeneratorsLiveTest < Minitest::Test
       with_generated_database { |env| assert_generated_tests_pass(dest, env.merge("MONK_ENV" => "development")) }
     end
   end
+
+  # Where the browser opens its socket: the direct port in development,
+  # a /ws path under PUBLIC_URL elsewhere, wss:// for an https:// origin.
+  def test_live_ws_url_defaults
+    with_new_app(:live, options: { transport: "postgres" }) do |dest|
+      assert_equal "ws://localhost:9293", live_ws_url(dest, "MONK_ENV" => "development")
+      assert_equal "wss://chat.example.com/ws",
+        live_ws_url(dest, "MONK_ENV" => "production", "PUBLIC_URL" => "https://chat.example.com")
+    end
+  end
+
+  private
+
+  def live_ws_url(dest, env)
+    script = %(require "./config/settings"; require "./config/live"; print Monk::Settings[:live_ws_url])
+    out, status = Open3.capture2e(env.merge("BUNDLE_GEMFILE" => File.expand_path("../../Gemfile", __dir__)),
+      RbConfig.ruby, "-W0", "-rbundler/setup", "-e", script, chdir: dest,)
+    assert status.success?, out
+    out
+  end
 end

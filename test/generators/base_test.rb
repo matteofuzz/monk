@@ -46,4 +46,76 @@ class GeneratorsBaseTest < Minitest::Test
   def test_the_new_apps_own_tests_pass
     with_new_app { |dest| assert_generated_tests_pass(dest) }
   end
+
+  # The bare app as config.ru runs it: its page and stylesheet, a route in
+  # app/routes/ (docs/adr/0017), a helper in app/helpers/, and app code
+  # loaded by role, in config/load.rb's order (docs/adr/0015).
+  def test_the_app_serves_its_page_and_loads_routes_helpers_and_code_by_role
+    with_new_app do |dest|
+      write_file(dest, "app/routes/extra.rb", %(class App\n  get("/extra") { probe_greeting }\nend\n))
+      write_file(dest, "app/helpers/probe_helpers.rb", <<~RUBY)
+        module ProbeHelpers
+          def probe_greeting = "hello from app/helpers"
+        end
+        Monk::Context.include(ProbeHelpers)
+      RUBY
+      write_file(dest, "app/models/probe.rb", "LOAD_ORDER = [:models]\n")
+      %w[presenters helpers mailers broadcasts jobs].each do |role|
+        write_file(dest, "app/#{role}/probe_order.rb", "LOAD_ORDER << :#{role}\n")
+      end
+      write_file(dest, "test/base_probe_test.rb", <<~RUBY)
+        require_relative "test_helper"
+        require "rack"
+
+        class BaseProbeTest < Minitest::Test
+          def get(path) = APP.call(Rack::MockRequest.env_for(path))
+
+          def test_the_page_and_its_stylesheet
+            status, headers, body = get("/")
+            assert_equal [200, "text/html; charset=utf-8"], [status, headers["content-type"]]
+            assert_includes body.join, "<h1>It works</h1>"
+            assert_equal "text/css; charset=utf-8", get("/css/app.css")[1]["content-type"]
+          end
+
+          def test_a_route_in_app_routes_calling_an_app_helper
+            assert_equal "hello from app/helpers", get("/extra")[2].join
+          end
+
+          def test_code_loads_by_role_in_order
+            assert_equal %i[models presenters helpers mailers broadcasts jobs], LOAD_ORDER
+          end
+        end
+      RUBY
+
+      assert_generated_tests_pass(dest)
+    end
+  end
+
+  # config/settings.rb loads on its own: without the dotenv gem it's a
+  # no-op, and Monk::Settings' built-in :monk_env is readable afterwards.
+  def test_config_settings_loads_standalone
+    with_new_app do |dest|
+      out, status = Open3.capture2e(RbConfig.ruby, "-I", File.expand_path("../../lib", __dir__), "-e",
+        %(load "config/settings.rb"; print Monk::Settings[:monk_env].class), chdir: dest,)
+
+      assert status.success?, out
+      assert_equal "String", out
+    end
+  end
+
+  # config/load.rb requires the module configs that exist, in Monk's fixed
+  # order, whatever order they were added in (docs/plan-scaffold.md
+  # decision 6): stub configs print their names.
+  def test_config_load_requires_the_module_configs_that_exist_in_monks_order
+    Dir.mktmpdir do |dir|
+      write_file(dir, "config/load.rb", template("base/config/load.rb"))
+      write_file(dir, "config/settings.rb", %(print "settings "\n))
+      %w[live jobs mail persistence].each { |name| write_file(dir, "config/#{name}.rb", %(print "#{name} "\n)) }
+
+      out, status = Open3.capture2e(RbConfig.ruby, "-e", %(require "./config/load"), chdir: dir)
+
+      assert status.success?, out
+      assert_equal "settings persistence mail jobs live ", out
+    end
+  end
 end

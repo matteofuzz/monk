@@ -216,36 +216,6 @@ class GeneratorsExamplesTest < Minitest::Test
     end
   end
 
-  def example_files(dest)
-    Dir.glob("{app,config}/**/*.rb", base: dest).select { |path| generated(dest, path).include?("monk:example") }
-  end
-
-  def example_tags(dest)
-    example_files(dest).flat_map { |path| generated(dest, path).scan(/#\s*monk:example\s+(\S+)/).flatten }.uniq
-  end
-
-  # Inside each block, "# code" becomes "code" and "# # note" stays a
-  # comment, "# note"; the marker lines stay as they are.
-  def uncomment_examples(dest)
-    example_files(dest).each do |path|
-      inside = false
-      lines = generated(dest, path).lines.map do |line|
-        if line.match?(/#\s*monk:example\s/)
-          inside = true
-          line
-        elsif inside && line.strip == "# monk:end"
-          inside = false
-          line
-        elsif inside
-          line.sub(/\A(\s*)# ?/, '\1')
-        else
-          line
-        end
-      end
-      File.write(File.join(dest, path), lines.join)
-    end
-  end
-
   def write_probes(dest)
     body = [PROBE_HELPERS, *example_tags(dest).map { |tag| PROBES.fetch(tag) }].join("\n")
     File.write(File.join(dest, "test/examples_probe_test.rb"), <<~RUBY)
