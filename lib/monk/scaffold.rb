@@ -34,6 +34,10 @@ module Monk
       **APP_ROLES.to_h { |role| ["app/#{role}/.keep", "base/app/#{role}/.keep"] },
       "public/css/app.css" => "base/public/css/app.css",
       "public/js/app.js" => "base/public/js/app.js",
+      # The test setup every module's tests build on (docs/adr/0017).
+      "Rakefile" => "base/Rakefile",
+      "test/test_helper.rb" => "base/test/test_helper.rb",
+      "test/app_test.rb" => "base/test/app_test.rb",
     }.freeze
 
     POSTGRES_FILES = {
@@ -481,48 +485,9 @@ module Monk
         #{redis_only_note}#{mail_setup_note}
         ## Test environment
 
-        `monk new` scaffolds no test framework at all -- this is the minimum to
-        get `bundle exec rake test` working, using Minitest (matches `monk`'s
-        own suite):
-
-        **Gemfile** -- add:
-
-        ```ruby
-        group :test do
-          gem "minitest"
-          gem "rake"
-        end
-        ```
-
-        **test/test_helper.rb**:
-
-        ```ruby
-        $LOAD_PATH.unshift(File.expand_path("..", __dir__))
-
-        ENV["MONK_ENV"] ||= "test"
-        #{base_test_dotenv_lines}
-        #{test_helper_app_lines}
-        ```
-
-        **Rakefile**:
-
-        ```ruby
-        require "rake/testtask"
-
-        Rake::TestTask.new do |t|
-          t.libs << "test"
-          t.pattern = "test/**/*_test.rb"
-        end
-
-        task default: :test
-        ```
-
-        #{app_test_sample}
-
-        Then:
+        #{shipped_tests_note}
 
         ```bash
-        bundle install
         bundle exec rake test
         ```
       MARKDOWN
@@ -641,50 +606,11 @@ module Monk
         DB_NAME=#{app_name}_test bin/setup_db
         ```
 
-        ### 3. Add a test framework and run it
+        ### 3. Run the tests
 
-        `monk new` scaffolds no test framework at all -- this is the minimum to
-        get `bundle exec rake test` working, using Minitest (matches `monk`'s
-        own suite):
+        #{shipped_tests_note}
 
-        **Gemfile** -- add:
-
-        ```ruby
-        group :test do
-          gem "minitest"
-          gem "rake"
-        end
-        ```
-
-        **test/test_helper.rb** -- loads `.env.test` explicitly (not the default
-        dotenv-in-`config/settings.rb` path, which only loads plain `.env`), then
-        loads and boots the app the same way `config.ru` does:
-
-        ```ruby
-        $LOAD_PATH.unshift(File.expand_path("..", __dir__))
-
-        ENV["MONK_ENV"] ||= "test"
-
-        require "dotenv"
-        Dotenv.load(File.expand_path(".env.test", __dir__ + "/.."))
-
-        #{test_helper_app_lines}
-        ```
-
-        **Rakefile**:
-
-        ```ruby
-        require "rake/testtask"
-
-        Rake::TestTask.new do |t|
-          t.libs << "test"
-          t.pattern = "test/**/*_test.rb"
-        end
-
-        task default: :test
-        ```
-
-        **test/persistence_test.rb** -- a real smoke test, not just a
+        **test/persistence_test.rb** -- add a real smoke test, not just a
         connectivity check:
 
         ```ruby
@@ -695,18 +621,15 @@ module Monk
         end
         ```
 
-        #{app_test_sample}
         #{jobs_test_sample}
         Then:
 
         ```bash
-        bundle install
         bundle exec rake test
         ```
 
-        `test/test_helper.rb` sets `MONK_ENV=test` itself (so `Monk.env.test?`
-        reads correctly if the app ever branches on it) and loads `.env.test` for
-        the actual connection details -- but per the note at the top, those are
+        `test/test_helper.rb` sets `MONK_ENV=test` itself and loads `.env.test`
+        for the connection details -- but per the note at the top, those are
         two separate knobs: `MONK_ENV` doesn't affect `DB_NAME` on its own,
         `.env.test`'s `DB_NAME=#{app_name}_test` is what actually points tests at
         the right database.
@@ -871,17 +794,6 @@ module Monk
       MARKDOWN
     end
 
-    # The no-Postgres test helper normally has nothing to load from
-    # .env.test -- but with --mail it has MAIL_URL=log://, which tests need
-    # (they boot outside development, where an unset MAIL_URL raises), and
-    # with --live --redis it has REDIS_URL, which config/live.rb needs.
-    # Interpolated into a squiggly heredoc, so no indentation of its own.
-    def base_test_dotenv_lines
-      return "" unless @mail || live_over_redis?
-
-      %(\nrequire "dotenv"\nDotenv.load(File.expand_path(".env.test", __dir__ + "/.."))\n)
-    end
-
     def auth_mail_sentence
       return "" unless @auth
 
@@ -912,40 +824,12 @@ module Monk
 
     def live_over_redis? = @live && @live_transport == :redis
 
-    # The end of every SETUP.md test helper: the app loaded the way
-    # config.ru loads it (config/load.rb, then app/app.rb), booted once.
     # Interpolated into a squiggly heredoc, so no indentation of its own.
-    def test_helper_app_lines
-      <<~RUBY.chomp
-        require "minitest/autorun"
-        require_relative "../config/load"
-        require_relative "../app/app"
-
-        # Booted once, as config.ru does: request tests call APP.
-        APP = Monk.boot(App)
-      RUBY
-    end
-
-    # A request through the booted app. Every generated app, --live's
-    # included, has GET /hello.
-    def app_test_sample
-      <<~MARKDOWN.chomp
-        **test/app_test.rb** -- a request through the booted app:
-
-        ```ruby
-        require_relative "test_helper"
-        require "rack/mock_request"
-
-        class AppTest < Minitest::Test
-          def test_hello
-            status, _headers, body = APP.call(Rack::MockRequest.env_for("/hello"))
-
-            assert_equal 200, status
-            assert_equal "hello from monk", body.join
-          end
-        end
-        ```
-      MARKDOWN
+    def shipped_tests_note
+      "The test setup ships with the app: `test/test_helper.rb` loads `.env.test` " \
+        "(if there is one), then the app the way `config.ru` does, booted once as " \
+        "`APP`; `test/app_test.rb` makes a request through it; the `Rakefile` runs " \
+        "`test/**/*_test.rb`. Minitest, like Monk's own suite."
     end
 
     def write_file(relative_path, template_path, executable: false)

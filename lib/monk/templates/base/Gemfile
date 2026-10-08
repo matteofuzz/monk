@@ -4,4 +4,9 @@ gem "monkrb", require: "monk"
 gem "rackup"
 gem "webrick"
 gem "kino"
-gem "dotenv" # loads .env in development, see config/settings.rb
+gem "dotenv" # loads .env files, see config/settings.rb
+
+group :test do
+  gem "minitest"
+  gem "rake"
+end

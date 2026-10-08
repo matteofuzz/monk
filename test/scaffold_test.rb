@@ -28,6 +28,29 @@ class ScaffoldTest < Minitest::Test
       assert_equal template("base/app/views/index.erb"), read(dest, "app/views/index.erb")
       assert_equal template("base/public/css/app.css"), read(dest, "public/css/app.css")
       assert_equal template("base/public/js/app.js"), read(dest, "public/js/app.js")
+      assert_equal template("base/Rakefile"), read(dest, "Rakefile")
+      assert_equal template("base/test/test_helper.rb"), read(dest, "test/test_helper.rb")
+      assert_equal template("base/test/app_test.rb"), read(dest, "test/app_test.rb")
+    end
+  end
+
+  # The base app ships its test setup (docs/adr/0017), and the generated
+  # app's own suite passes as written -- run here in a fresh Ruby, the way
+  # `bundle exec rake test` runs it, on Monk's bundle instead of the app's
+  # (whose Gemfile would fetch monkrb from rubygems.org). The mail app's
+  # helper has to load .env.test (MAIL_URL=log://, or booting outside
+  # development raises); the live app's config/live.rb needs REDIS_URL.
+  def test_the_generated_apps_own_tests_pass
+    [{}, { mail: true }, { live: true, redis: true }].each do |flags|
+      Dir.mktmpdir do |tmp|
+        dest = File.join(tmp, "demo_app")
+        Monk::Scaffold.new(dest, **flags).write!
+
+        out, status = run_generated_tests(dest)
+
+        assert status.success?, "#{flags.inspect}:\n#{out}"
+        assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, out, flags.inspect)
+      end
     end
   end
 
@@ -411,8 +434,7 @@ class ScaffoldTest < Minitest::Test
   end
 
   # Every flag combination gets a SETUP.md, not just --postgres -- even the
-  # base skeleton has a dev step (bin/server) and an unscaffolded test
-  # framework to set up.
+  # base skeleton has a dev step (bin/server) and its tests to run.
   def test_write_bang_without_postgres_still_writes_a_setup_md
     Dir.mktmpdir do |tmp|
       dest = File.join(tmp, "demo_app")
@@ -518,23 +540,19 @@ class ScaffoldTest < Minitest::Test
     end
   end
 
-  # Whatever the flags, the SETUP.md test helper loads the app the way
-  # config.ru does -- config/load.rb, then app/app.rb, booted once -- and a
-  # sample test makes a request through it. App lives in app/app.rb now,
-  # so the old "extract App from config.ru first" advice is gone.
-  def test_setup_md_test_helper_loads_and_boots_the_app_for_every_flag_set
+  # The test setup ships as files, so SETUP.md says how to run it and no
+  # longer how to write it, whatever the flags.
+  def test_setup_md_runs_the_shipped_tests_instead_of_explaining_how_to_set_them_up
     [{}, { mail: true }, { postgres: true }, { auth: true, jobs: true }, { live: true, redis: true }].each do |flags|
       Dir.mktmpdir do |tmp|
         dest = File.join(tmp, "demo_app")
         Monk::Scaffold.new(dest, **flags).write!
 
         setup_md = read(dest, "SETUP.md")
-        helper = %(require_relative "../config/load"\nrequire_relative "../app/app"\n)
-        assert_includes setup_md, helper, "flags: #{flags}"
-        assert_includes setup_md, "APP = Monk.boot(App)", "flags: #{flags}"
-        assert_includes setup_md, %(Rack::MockRequest.env_for("/hello")), "flags: #{flags}"
-        refute_includes setup_md, "Extract `App`", "flags: #{flags}"
-        refute_match(/`config\.ru`'s `class App`|config\.ru` requires/, setup_md, "flags: #{flags}")
+        assert_includes setup_md, "bundle exec rake test", "flags: #{flags}"
+        refute_includes setup_md, "**test/test_helper.rb**", "flags: #{flags}"
+        refute_includes setup_md, "**Rakefile**", "flags: #{flags}"
+        refute_includes setup_md, %(gem "minitest"), "flags: #{flags}"
       end
     end
   end
@@ -591,14 +609,14 @@ class ScaffoldTest < Minitest::Test
 
       setup_md = read(dest, "SETUP.md")
       assert_includes setup_md, "MAIL_URL"
-      assert_includes setup_md, %(require_relative "../config/load")
       refute_includes setup_md, "AppMailer"
       # Tests boot outside development, where an unset MAIL_URL raises --
-      # so the test helper has to load .env.test (MAIL_URL=log://) before
-      # config/mail.rb, as the --postgres variant already does for DB_NAME.
-      dotenv_at = setup_md.index('Dotenv.load(File.expand_path(".env.test"')
+      # so the shipped test helper loads .env.test (MAIL_URL=log://) before
+      # config/mail.rb, as it does for DB_NAME.
+      helper = read(dest, "test/test_helper.rb")
+      dotenv_at = helper.index("Dotenv.load(env_test)")
       refute_nil dotenv_at, "expected the test helper to load .env.test"
-      assert_operator dotenv_at, :<, setup_md.index('require_relative "../config/load"')
+      assert_operator dotenv_at, :<, helper.index('require_relative "../config/load"')
     end
   end
 
@@ -733,9 +751,7 @@ class ScaffoldTest < Minitest::Test
 
       Monk::Scaffold.new(dest, auth: true).write!
 
-      setup_md = read(dest, "SETUP.md")
-      assert_includes setup_md, "MAIL_URL"
-      assert_includes setup_md, %(require_relative "../config/load")
+      assert_includes read(dest, "SETUP.md"), "MAIL_URL"
     end
   end
 
@@ -813,6 +829,12 @@ class ScaffoldTest < Minitest::Test
 
   def template(relative)
     File.read(File.expand_path("../lib/monk/templates/#{relative}", __dir__))
+  end
+
+  def run_generated_tests(dest)
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }
+    script = %(Dir["test/**/*_test.rb"].each { |file| require File.expand_path(file) })
+    Open3.capture2e(env, RbConfig.ruby, "-rbundler/setup", "-Itest", "-e", script, chdir: dest)
   end
 
   def read(dest, relative)
