@@ -15,6 +15,7 @@ class GeneratorsExamplesTest < Minitest::Test
   # chat example's -- and that way each transport is used by one.
   SUITES = {
     without_live: [%i[postgres redis mail auth jobs websocket], { transport: "redis" }],
+    with_live: [%i[live], { transport: "postgres" }],
   }.freeze
 
   # What each example does once uncommented, as test methods in the app.
@@ -110,12 +111,35 @@ class GeneratorsExamplesTest < Minitest::Test
         Process.kill("TERM", pid) && Process.wait(pid) if pid
       end
     RUBY
+    "live-rule" => <<~RUBY,
+      def test_live_rule
+        assert Monk::Live.authorized?("7", "contacts:7")
+        refute Monk::Live.authorized?("7", "contacts:8")
+        refute Monk::Live.authorized?(nil, "contacts:")
+      end
+    RUBY
+    "live-broadcast" => <<~RUBY,
+      def test_live_broadcast
+        AppWebSocket::REGISTRY.listen!
+        port = Ractor::Port.new
+        AppWebSocket::REGISTRY.register(:greeting, port)
+
+        assert_equal 200, request("POST", "/greeting", text: "Hi all").first
+
+        envelope = JSON.parse(Timeout.timeout(5) { port.receive })
+        assert_equal %(<span id="greeting">Hi all</span>\\n), envelope["html"]
+      ensure
+        AppWebSocket::REGISTRY.unregister(:greeting, port) if port
+        port&.close
+      end
+    RUBY
   }.freeze
 
   PROBE_HELPERS = <<~'RUBY'.freeze
     require "json"
     require "rack"
     require "socket"
+    require "timeout"
 
     # A WebSocket client, just enough to talk to bin/websocket_server.
     def ws_connect(port, cookie: nil, deadline: Time.now + 20)
