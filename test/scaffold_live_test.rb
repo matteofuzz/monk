@@ -81,17 +81,21 @@ class ScaffoldLiveTest < Minitest::Test
       refute File.exist?(File.join(dest, "public/js/monk_live"))
       assert_equal template("base/app/views/layouts/app.erb"), read(dest, "app/views/layouts/app.erb")
       assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
-      refute_includes read(dest, "config/load.rb"), %(require_relative "live")
+    end
+  end
+
+  # Module routes live in app/routes/ (docs/adr/0017), so whatever app/app.rb
+  # an app has must load them.
+  def test_the_live_app_rb_loads_app_routes_too
+    in_app do |dest|
+      assert_includes read(dest, "app/app.rb"), %(Dir[File.expand_path("routes/*.rb", __dir__)])
     end
   end
 
   def test_live_composes_with_postgres_and_auth
     in_app(auth: true) do |dest|
-      load_rb = read(dest, "config/load.rb")
-
-      assert_includes load_rb, %(require_relative "auth")
-      assert_includes load_rb, %(require_relative "live")
       assert File.exist?(File.join(dest, "config/auth.rb"))
+      assert File.exist?(File.join(dest, "config/live.rb"))
     end
   end
 
@@ -133,8 +137,8 @@ class ScaffoldLiveTest < Minitest::Test
   # then config/live.rb), app/app.rb, Monk.boot. GET / renders the counter
   # through app/views; POST /hit publishes through Monk::Live.patch, which
   # renders app/views/live/_hits.erb and sends it over Redis -- a wrong
-  # template path or wiring would fail the request. app/app.rb goes into a
-  # throwaway module so its top-level App doesn't leak into other tests.
+  # template path or wiring would fail the request. with_generated_app_class removes
+  # its top-level App afterwards, so it doesn't leak into other tests.
   def test_the_generated_live_app_boots_renders_and_publishes_a_hit
     skip_unless_redis_available
 
@@ -143,24 +147,23 @@ class ScaffoldLiveTest < Minitest::Test
         with_env("REDIS_URL", redis_test_url) do
           Dir.chdir(dest) do
             require File.join(dest, "config/load")
-            wrapper = Module.new
-            load File.join(dest, "app/app.rb"), wrapper
-            app = wrapper::App
-            Monk.boot(app)
+            with_generated_app_class(dest) do |app|
+              Monk.boot(app)
 
-            _status, _headers, body = app.call(env_for("GET", "/"))
-            assert_includes body.join, %(<strong id="hits">0</strong>)
-            assert_includes body.join, %(<meta name="monk-live-url" content=")
-            client = body.join[%r{<script type="module" src="(/_monk/live/monk_live\.js[^"]*)"}, 1]
-            refute_nil client, "the layout loads Live's client"
-            assert_equal 200, app.call(env_for("GET", client.split("?").first))[0], "Monk serves it"
+              _status, _headers, body = app.call(env_for("GET", "/"))
+              assert_includes body.join, %(<strong id="hits">0</strong>)
+              assert_includes body.join, %(<meta name="monk-live-url" content=")
+              client = body.join[%r{<script type="module" src="(/_monk/live/monk_live\.js[^"]*)"}, 1]
+              refute_nil client, "the layout loads Live's client"
+              assert_equal 200, app.call(env_for("GET", client.split("?").first))[0], "Monk serves it"
 
-            status, headers, _body = app.call(env_for("POST", "/hit"))
-            assert_equal 302, status
-            assert_equal "/", headers["location"]
+              status, headers, _body = app.call(env_for("POST", "/hit"))
+              assert_equal 302, status
+              assert_equal "/", headers["location"]
 
-            _status, _headers, body = app.call(env_for("GET", "/"))
-            assert_includes body.join, %(<strong id="hits">1</strong>)
+              _status, _headers, body = app.call(env_for("GET", "/"))
+              assert_includes body.join, %(<strong id="hits">1</strong>)
+            end
           end
         end
       end

@@ -114,6 +114,22 @@ end
 
 Minitest::Test.include(ViewTestHelpers)
 
+# Shared by the scaffold tests: a generated app's app/app.rb, loaded the
+# way config.ru loads it, at the top level -- the files under app/routes/
+# reopen `class App`, so a wrapper module won't do -- and removed again
+# afterwards so the next test's App starts fresh. Call after
+# config/load.rb, from the app's root.
+module GeneratedAppHelpers
+  def with_generated_app_class(dest)
+    load File.join(dest, "app/app.rb")
+    yield ::App
+  ensure
+    Object.send(:remove_const, :App) if Object.const_defined?(:App, false)
+  end
+end
+
+Minitest::Test.include(GeneratedAppHelpers)
+
 # Shared by tests that need a real Postgres connection (persistence_*_test.rb).
 # Not included globally -- `include PersistenceTestHelpers` where needed.
 module PersistenceTestHelpers

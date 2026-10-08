@@ -45,30 +45,22 @@ class ScaffoldJobsTest < Minitest::Test
     in_scaffold(postgres: true) do |dest|
       refute File.exist?(File.join(dest, "config/jobs.rb"))
       refute File.exist?(File.join(dest, "bin/jobs"))
-      refute_includes read(dest, "config/load.rb"), %(require_relative "jobs")
-      refute_includes read(dest, "app/app.rb"), "/jobs/hello"
+      refute File.exist?(File.join(dest, "app/routes/jobs.rb"))
       refute_includes read(dest, ".env"), "JOBS_"
     end
   end
 
-  def test_config_load_requires_jobs_after_persistence_and_the_app_gets_the_demo_route
+  # In its own file under app/routes/, so app/app.rb stays the base one.
+  def test_the_app_gets_the_demo_route
     in_scaffold(jobs: true) do |dest|
-      assert_includes read(dest, "config/load.rb"), %(require_relative "persistence"\nrequire_relative "jobs"\n)
-      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
-    end
-  end
-
-  def test_config_load_requires_jobs_after_auth_and_mail
-    in_scaffold(jobs: true, auth: true) do |dest|
-      assert_includes read(dest, "config/load.rb"),
-        %(require_relative "auth"\nrequire_relative "mail"\nrequire_relative "jobs"\n)
+      assert_includes read(dest, "app/routes/jobs.rb"), %(post("/jobs/hello"))
+      assert_equal template("base/app/app.rb"), read(dest, "app/app.rb")
     end
   end
 
   def test_the_live_app_gets_the_demo_route_too
     in_scaffold(jobs: true, live: true) do |dest|
-      assert_includes read(dest, "app/app.rb"), %(post("/jobs/hello"))
-      assert_includes read(dest, "config/load.rb"), %(require_relative "jobs")
+      assert_includes read(dest, "app/routes/jobs.rb"), %(post("/jobs/hello"))
     end
   end
 

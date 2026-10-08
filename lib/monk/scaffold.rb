@@ -27,6 +27,8 @@ module Monk
       "bin/websocket_server" => "base/bin/websocket_server",
       "app/views/layouts/app.erb" => "base/app/views/layouts/app.erb",
       "app/views/index.erb" => "base/app/views/index.erb",
+      # Loaded by app/app.rb; module routes go here (docs/adr/0017).
+      "app/routes/.keep" => "base/app/routes/.keep",
       # Every role directory, whatever the flags (docs/adr/0015): the tree
       # shows where each kind of code goes. Flags add files next to these.
       **APP_ROLES.to_h { |role| ["app/#{role}/.keep", "base/app/#{role}/.keep"] },
@@ -75,23 +77,12 @@ module Monk
     JOBS_FILES = {
       "config/jobs.rb" => "jobs/config/jobs.rb",
       "app/jobs/hello_job.rb" => "jobs/app/jobs/hello_job.rb",
+      "app/routes/jobs.rb" => "jobs/app/routes/jobs.rb",
       "bin/jobs" => "jobs/bin/jobs",
       "db/migrate/00000000000002_create_jobs_tables.up.sql" => "jobs/db/migrate/00000000000002_create_jobs_tables.up.sql",
       "db/migrate/00000000000002_create_jobs_tables.down.sql" =>
         "jobs/db/migrate/00000000000002_create_jobs_tables.down.sql",
     }.freeze
-
-    # --jobs's demo route, added right after this line in app/app.rb (the
-    # base and the --live one both end their routes with it), so the
-    # round trip -- enqueue from a request, run in bin/jobs -- works out of
-    # the box.
-    JOBS_ROUTE_ANCHOR = %(  get("/api/hello") { json(message: "hello from monk") }\n).freeze
-    JOBS_ROUTE = <<~RUBY.gsub(/^(?!$)/, "  ").freeze
-
-      # Enqueues the demo job (app/jobs/hello_job.rb) for bin/jobs to run:
-      #   curl -X POST "http://localhost:9292/jobs/hello?name=Ann"
-      post("/jobs/hello") { json(enqueued: HelloJob.enqueue(params[:name] || "world")) }
-    RUBY
 
     # --live: Monk::Live's demo (a counter whose open tabs update when
     # another request changes it). These replace three base files outright
@@ -221,10 +212,8 @@ module Monk
 
       if @jobs
         JOBS_FILES.each { |relative, template| write_file(relative, template, executable: EXECUTABLE_FILES.include?(relative)) }
-        add_jobs_route!
       end
 
-      wire_load! if @postgres || @mail || @live
       append_gemfile_extra("redis/Gemfile.extra") if @redis
 
       # --postgres, --redis and --mail are the flags with anything worth
@@ -300,41 +289,6 @@ module Monk
       raise "Gemfile wiring failed: #{DOTENV_COMMENTED_LINE.inspect} not found" unless content.include?(DOTENV_COMMENTED_LINE)
 
       File.write(path, content.sub(DOTENV_COMMENTED_LINE, DOTENV_LINE))
-    end
-
-    # config/load.rb ships in BASE_FILES unconditionally (config.ru and the
-    # tests require it), so the flags can't gate whether it exists, only
-    # which module configs it requires. Unlike BASE_FILES/POSTGRES_FILES/
-    # AUTH_FILES, this is a post-write edit rather than a verbatim copy --
-    # the alternative (a second, fuller load.rb template per flag
-    # combination) would duplicate the whole file for a few lines of diff.
-    def wire_load!
-      path = File.join(@dir, "config/load.rb")
-      settings_require = %(require_relative "settings"\n)
-      requires = +""
-      if @postgres
-        target = @auth ? "auth" : "persistence" # config/auth.rb itself require_relative "persistence"
-        requires << "require_relative \"#{target}\"\n"
-      end
-      # config/mail.rb from config/load.rb only, never from config/auth.rb:
-      # bin/websocket_server loads config/auth.rb too and never sends mail,
-      # so it shouldn't need MAIL_URL to boot.
-      requires << "require_relative \"mail\"\n" if @mail
-      requires << "require_relative \"jobs\"\n" if @jobs
-      requires << "require_relative \"live\"\n" if @live
-
-      content = File.read(path)
-      raise "config/load.rb wiring failed: #{settings_require.inspect} not found" unless content.include?(settings_require)
-
-      File.write(path, content.sub(settings_require, "#{settings_require}#{requires}"))
-    end
-
-    def add_jobs_route!
-      path = File.join(@dir, "app/app.rb")
-      content = File.read(path)
-      raise "app/app.rb wiring failed: #{JOBS_ROUTE_ANCHOR.inspect} not found" unless content.include?(JOBS_ROUTE_ANCHOR)
-
-      File.write(path, content.sub(JOBS_ROUTE_ANCHOR, "#{JOBS_ROUTE_ANCHOR}#{JOBS_ROUTE}"))
     end
 
     # .env/.env.test/.env.example are the other deliberate exception to
