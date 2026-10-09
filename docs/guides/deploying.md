@@ -1,44 +1,44 @@
 # Deploying a Monk app
 
-Example deployment cases for an app scaffolded with `monk new --postgres`
+Example deployment cases for an app made with `monk new my_app --with postgres`
 (`Gemfile`, `config.ru`, `config/load.rb`, `config/persistence.rb`,
 `app/`, `bin/setup_db`, `bin/migrate`, `bin/console`, `db/migrate/`). Both cases below assume that
-scaffold as the starting point.
+app as the starting point.
 
 Neither case changes anything in this repo (`monk` itself) — they describe
 how a generated app deploys.
 
 Every scaffold also ships a `Dockerfile` and `.dockerignore` — `monk new`
-writes them unconditionally, and `--postgres`/`--auth` swap in a variant
-that adds `libpq` for the `pg` gem's native extension. Neither the Fly.io
+writes them unconditionally, the same for every app: no system packages,
+since kino and `pg` (1.6+, which brings its own `libpq`) are precompiled
+gems. Neither the Fly.io
 Dockerfile in section 2 nor the Compose setup in section 4 needs copying by
 hand any more; they're shown there because those sections still have to
 explain what the file does and how it's used, not because you write it
 yourself.
 
-## What each scaffold needs
+## What each module needs
 
-An app needs what the base skeleton needs, plus the row of every flag it
-was scaffolded with, including flags another flag implied (`--auth` turns
-on `--postgres` and `--mail`, and `--jobs` turns on `--postgres`: see
-[`scaffolding.md`](scaffolding.md), "How flags combine"; `monk new` prints
-which ones it turned on).
+An app needs what the base app needs, plus the row of every module it has
+(`monk add --list` marks them; [`scaffolding.md`](scaffolding.md) says what
+each is). `monk add` lists the values to set before production for the
+modules it adds.
 
-| Flag | Processes | Services | Env vars | Extra gems |
+| Module | Processes | Services | Env vars | Gems |
 |---|---|---|---|---|
-| (base) | `bin/server`; `bin/websocket_server` only if the app uses WebSockets | none | `PUBLIC_URL` (see below) | none |
-| `--postgres` | one-off `bin/setup_db` on each deploy (applies migrations) | Postgres | `DB_*` | `pg`, `dotenv` |
-| `--auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
-| `--mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp`, `dotenv` |
-| `--redis` | — | Redis, only once more than one WebSocket process runs | `REDIS_URL` | `redis`, `dotenv` |
-| `--live --redis` | `bin/websocket_server` **required** | Redis, **required** | `REDIS_URL`, `PUBLIC_URL` | `redis`, `dotenv` |
-| `--live --postgres` | `bin/websocket_server` **required** | Postgres (`LISTEN`/`NOTIFY`), no Redis | `PUBLIC_URL` | — |
-| `--jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
+| (base) | `bin/server` | none | `PUBLIC_URL` (see below) | none |
+| `postgres` | one-off `bin/setup_db` on each deploy (applies migrations) | Postgres | `DB_*` | `pg` |
+| `redis` | — | Redis | `REDIS_URL` | `redis` |
+| `mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp` |
+| `auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
+| `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
+| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`) | — |
+| `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
 
 `PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
 own origin. Its default, `http://localhost:9292`, is only harmless without
-`--auth` and `--live`: `--auth`'s magic link builds itself from it, and
-`--live`'s `WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` default from it too, so
+auth and live: auth's magic link builds itself from it, and websocket's
+`WS_ALLOWED_ORIGINS` and live's `LIVE_WS_URL` default from it too, so
 setting it once keeps all three in sync instead of drifting apart. See
 auth.md's "Sending the magic link" and live.md's "Running it".
 
@@ -47,26 +47,24 @@ When the WebSocket process runs:
 - It is its own deploy unit: its own port and public URL, and
   `WS_ALLOWED_ORIGINS` must match the app's origin — set `PUBLIC_URL` and
   it does, by default (below).
-- With `--auth`, connections must present a valid session; without it they
-  are anonymous.
-- With `--redis` but not `--live`, Redis only matters once you run more than
-  one WebSocket instance (the `:chat` channel then fans out through it).
-  With `--live`, Redis or Postgres is the link between the app and the
-  WebSocket process: with `--live --redis` the app raises at boot without
-  `REDIS_URL`, and `--live --postgres` reuses the `DB_*` settings. Only
-  the WebSocket process listens (`Monk::Live.listen!` at its boot, which
-  fails right there if Redis or Postgres is unreachable); `bin/server`
-  and `bin/jobs` only publish, and open a connection for that the first
-  time they do.
+- With auth, a socket carries its user's session: required for the app's
+  own socket handler, optional with live (whose rules decide what visitors
+  get).
+- The transport in `config/websocket.rb`, Redis or Postgres, is the link
+  between the app and the WebSocket process: with Redis the app needs
+  `REDIS_URL` outside development, and with Postgres it reuses the `DB_*`
+  settings. Only the WebSocket process listens (at its boot, which fails
+  right there if Redis or Postgres is unreachable); `bin/server` and
+  `bin/jobs` only publish, and open a connection for that the first time
+  they do.
 
-**With `--jobs`**, there's one more process: `bin/jobs`, which runs the
+**With jobs**, there's one more process: `bin/jobs`, which runs the
 background jobs. Like the WebSocket process it runs from the same image
 with its own command (`bin/jobs`), but it serves no port and needs no
 proxy route. It loads the same `config/load.rb` as `bin/server`, so give
 it the same environment: `DB_*`, `MAIL_*` when the app sends mail (with
-`--auth` it does: login links are sent from a job), and with `--live
---redis`, `REDIS_URL` (`config/live.rb` raises without it, and jobs can
-push Live updates). It also needs the jobs migration applied (by
+auth it does, if login links are sent from a job), and `REDIS_URL` when
+Redis is websocket's transport (jobs can push Live updates through it). It also needs the jobs migration applied (by
 `bin/setup_db`, like any other).
 `JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes the jobs
 in hand, for up to 25 seconds, and puts back whatever is still running for
@@ -77,7 +75,7 @@ and a job killed mid-run is only picked up again once another job process
 notices its process went silent, after 2 minutes. Scale it by running more
 instances, or with more workers per instance.
 
-The rest of this page walks through deploying a `--postgres` app on Render
+The rest of this page walks through deploying an app with Postgres on Render
 and Fly.io; adding the WebSocket process is covered in section 3, and a
 single-server alternative in section 4.
 
@@ -86,7 +84,7 @@ single-server alternative in section 4.
 **Local setup**
 
 ```
-monk new my_app --postgres
+monk new my_app --with postgres
 cd my_app && bundle install
 ```
 
@@ -123,8 +121,8 @@ Fly.io case below for what it contains.
 
 ## 2. Fly.io (Docker + managed Postgres)
 
-**Dockerfile**: already there — `monk new --postgres` (this case implies
-it) writes this exact file, no `git` runtime dependency needed since a
+**Dockerfile**: already there — `monk new` writes this exact file, no
+`git` runtime dependency needed since a
 scaffolded app's `Gemfile` pulls in `monkrb` as a normal gem (published on
 rubygems.org, `require: "monk"`), not via the local gemspec:
 
@@ -132,19 +130,11 @@ rubygems.org, `require: "monk"`), not via the local gemspec:
 FROM ruby:4.0-slim AS builder
 WORKDIR /app
 
-RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY Gemfile Gemfile.lock* ./
 RUN bundle install
 
 FROM ruby:4.0-slim
 WORKDIR /app
-
-RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends libpq5 \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY . .
@@ -153,9 +143,9 @@ EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]
 ```
 
-`libpq-dev` is needed at build time for the `pg` gem's native extension;
-`libpq5` — the runtime lib, no headers — is enough in the final stage. Port
-9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
+No `apt-get`: the `pg` gem (1.6+) installs precompiled for Linux with its
+own `libpq`, so neither stage needs `libpq-dev`, `libpq5` or a compiler.
+Port 9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
 default for the separate WebSocket process (section 3, below); running
 both on 9293 would collide them.
 
@@ -281,10 +271,9 @@ backups and the firewall are yours.
 Build one image from the app's own (scaffolded) Dockerfile and run it
 twice with different commands — `web` needs none, since its command is
 already the image's default `CMD`; `ws` overrides it. Drop the `postgres`
-service for combinations without `--postgres`/`--auth`, and the `redis`
-service for ones without `--redis`/`--live`. Keep the `ws` service for
-combinations that use WebSockets; it is mandatory under `--live`. Keep
-the `jobs` service only with `--jobs`.
+service for apps without Postgres, and the `redis` service for ones
+without Redis. Keep the `ws` service only with websocket (and so live),
+and the `jobs` service only with jobs.
 
 ```yaml
 # compose.yaml
@@ -298,7 +287,7 @@ services:
     command: bin/websocket_server
     env_file: .env.production
     depends_on: [redis]
-  jobs:                         # with --jobs
+  jobs:                         # with jobs
     build: .
     command: bin/jobs
     env_file: .env.production

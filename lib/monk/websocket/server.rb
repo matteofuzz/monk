@@ -271,7 +271,9 @@ module Monk
         return true if credential&.fetch(:via) == :bearer
 
         origin = headers["origin"]
-        allowed = credential ? origin && allowed_origins.include?(origin) : origin.nil? || allowed_origins.include?(origin)
+        # A cookie needs an allowed Origin; without one, only a non-browser
+        # client (no Origin at all) is let in.
+        allowed = origin.nil? ? !credential : allowed_origins.include?(origin)
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n") unless allowed
         allowed
       end

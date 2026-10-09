@@ -1,10 +1,10 @@
 require "monk"
 require "monk/mail"
 
-# Sends email with Monk::Mail.deliver(to:, subject:, text:, html:) from
-# any route -- and, with --auth, the magic links AppMailer::MAGIC_LINK
-# (app/mailers/app_mailer.rb) delivers. See docs/guides/mail.md. Required from config/load.rb (not from
-# config/auth.rb: bin/websocket_server loads that too, and never sends mail).
+# Sends email with Monk::Mail.deliver(to:, subject:, text:, html:): the
+# app's mailers (app/mailers/) and, with auth, its magic links. See
+# docs/guides/mail.md in the monk repo. Loaded by config/load.rb, never by
+# config/auth.rb: bin/websocket_server loads that, and never sends mail.
 Monk::Settings.configure do
   # Where mail goes. Unset in development means log:// (printed to the
   # console, nothing sent); anywhere else an unset one fails the boot.

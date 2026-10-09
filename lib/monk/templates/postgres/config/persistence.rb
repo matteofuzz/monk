@@ -1,5 +1,6 @@
 require "monk"
 require "monk/persistence/pg"
+require "monk/persistence/pg/model" # Monk::Persistence::Pg::Model, for app/models/
 
 Monk::Persistence::Pg.register(:primary,
   host: ENV.fetch("DB_HOST", "127.0.0.1"),

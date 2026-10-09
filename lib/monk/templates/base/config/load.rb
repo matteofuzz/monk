@@ -3,6 +3,14 @@
 # it never boots the app itself (that's config.ru's Monk.boot).
 require_relative "settings"
 
+# Each Monk module's config, if this app has it (`monk add <module>` writes
+# it), in Monk's fixed order: a module's config may rely on the ones
+# before it. Nothing to edit here when a module is added.
+%w[persistence redis auth mail jobs websocket live storage].each do |name|
+  path = File.expand_path("#{name}.rb", __dir__)
+  require path if File.exist?(path)
+end
+
 # The app's code, one directory per role, in the order they call each
 # other: presenters read models, helpers, mailers and broadcasts use both,
 # and jobs call all of them. Everything is loaded here, before Monk.boot

@@ -77,6 +77,19 @@ class LoggingTest < Minitest::Test
     assert_equal 2, contents.lines.size
   end
 
+  # Before Boot -- bin/console, or a script loading config/load.rb -- the
+  # path isn't frozen yet: the first write works it out, rather than
+  # raising on a nil path.
+  def test_logs_before_boot_to_the_environments_file
+    with_log do |dir|
+      with_settings do
+        with_monk_env("development") { Monk::Log.info("from the console") }
+
+        assert_includes File.read(File.join(dir, "development.log")), "INFO from the console"
+      end
+    end
+  end
+
   def test_level_methods_default_to_info_and_above
     contents = with_log do |dir|
       boot_app!

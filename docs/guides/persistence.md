@@ -48,7 +48,7 @@ waiting indefinitely.
 
 **Per-environment database names.** `MONK_ENV` (see [`settings.md`](settings.md)) and
 the database name are two separate, unlinked knobs — setting `MONK_ENV=test`
-does not change which database you connect to. The `--postgres` scaffold's
+does not change which database you connect to. `monk add postgres`'s
 `config/persistence.rb` reads a single `DB_NAME` env var with a static
 fallback (`app_development`), so naming a database per environment is
 entirely by convention/operator action, not framework magic:

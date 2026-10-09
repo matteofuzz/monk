@@ -5,8 +5,8 @@
 # (Gemfile.lock committed) already resolves every compatible platform, not
 # just the machine that ran it -- nothing to add by hand before building on
 # a different host (docs/guides/deploying.md, "Before the first build").
-# monk/rackup/webrick are pure Ruby. The --postgres/--auth scaffold
-# overrides this file to add libpq for the pg gem's native extension.
+# monk/rackup/webrick are pure Ruby, and pg (monk add postgres) 1.6+
+# ships precompiled with its own libpq.
 FROM ruby:4.0-slim AS builder
 WORKDIR /app
 
@@ -23,6 +23,7 @@ COPY . .
 # platform that assigns its own). bin/websocket_server (WS_PORT default
 # 9293) is a separate process/deploy unit -- run this same image with
 # `bin/websocket_server` as the command instead of publishing another
-# port from this Dockerfile -- see docs/guides/deploying.md.
+# port from this Dockerfile -- see docs/guides/deploying.md. Every other
+# process in bin/ (bin/jobs, say) is the same: this image, that command.
 EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]

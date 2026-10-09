@@ -7,8 +7,8 @@ separate job process, `bin/jobs`, on a pool of worker Ractors. Opt-in:
 Redis, no other gem. The design, and the measurements behind it, are in
 [`docs/adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md).
 
-`monk new my_app --jobs` writes everything below for you (see
-[`scaffolding.md`](scaffolding.md)).
+`monk add jobs` writes everything below for you, and adds `postgres` if the
+app doesn't have it (see [`scaffolding.md`](scaffolding.md)).
 
 ```ruby
 # app/jobs/send_receipt.rb
@@ -72,9 +72,9 @@ Job classes live in `app/jobs/`, and `config/load.rb` loads them after
 so both processes have every job (see [`scaffolding.md`](scaffolding.md),
 "Where code goes").
 
-The queue's three tables come from the migration `monk new --jobs` writes
-(`db/migrate/00000000000002_create_jobs_tables.{up,down}.sql`).
-`bin/setup_db` applies it like any other.
+The queue's three tables come from the migration `monk add jobs` writes
+(`db/migrate/<timestamp>_create_jobs_tables.{up,down}.sql`, versioned when
+it's added). `bin/setup_db` applies it like any other.
 
 ## Defining a job
 

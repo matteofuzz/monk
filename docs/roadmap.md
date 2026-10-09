@@ -6,7 +6,9 @@ when work on it starts.
 - **Scheduled jobs.** Recurring jobs on a cron-like schedule in `Monk::Jobs`.
   One-off delayed jobs already exist (`enqueue(..., wait:)` / `at:`); recurring
   ones were left out of the first version (`docs/guides/jobs.md`, "What's not
-  here").
+  here"). Its scaffold step is now a change to the jobs generator
+  (`monk add jobs`): `docs/history/plan-scaffold.md`, "Other branches that touch
+  the scaffold".
 - **File storage, `Monk::Storage`.** An opt-in storage layer configured by
   one `STORAGE_URL`. It has one S3-compatible backend (Hetzner, R2, B2, AWS,
   MinIO) that signs its own SigV4 requests, and local files in development and
@@ -15,11 +17,49 @@ when work on it starts.
   in ADR 0016, which is on the `main_dev/monk_storage` branch for now. Before
   the S3 backend ships, four open items need checking on a real Hetzner
   bucket: the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle
-  rule, and same-bucket copy.
+  rule, and same-bucket copy. Its scaffold step is now a generator of its
+  own (`monk add storage`): `docs/history/plan-scaffold.md`, "Other branches that
+  touch the scaffold".
+- **`monk check`: verifying an environment's wiring.** `bin/check` (written
+  by the base app) loads `config/load` and runs a read-only check for each
+  loaded module. The checks belong to the framework modules
+  (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
+  they work in a deployed app. Output and exit codes match `monk add`'s
+  (text and `--json`). It covers what boot (missing settings) and
+  `rake test` (wiring in the test environment) can't: problems that
+  otherwise show up the first time a real user hits them.
+  - **Before switching traffic to a deploy**, the main use:
+    - SMTP connect and login without sending;
+    - bucket access and CORS for `PUBLIC_URL`;
+    - Postgres reachable with no migrations pending;
+    - Redis and `LISTEN` reachable (`LISTEN` doesn't work through
+      PgBouncer in transaction mode);
+    - values that are present but wrong: a placeholder `AUTH_SECRET`,
+      `PUBLIC_URL` on `http://`, `LIVE_WS_URL` not on `wss://`,
+      `WS_ALLOWED_ORIGINS` missing `PUBLIC_URL`.
+  - **A local "doctor"**: services up, env files filled in, versions
+    matching `.ruby-version`/`Gemfile.lock`.
+  - **Agents** get one diagnosis to act on (`--json`).
+  - **Bug reports** get versions, modules and failed checks, with secrets
+    redacted.
+  - **After upgrading Monk**, a first signal that a module needs something
+    the app lacks, such as a new migration.
+
+  It isn't a load balancer's health check: it's heavier and runs once per
+  deploy. A test email is opt-in (`--send-test-mail=addr`). It builds on the
+  check command each `monk add` generator declares for its service
+  (`docs/history/plan-scaffold.md` decision 29), and comes after storage, its best
+  use case, and recurring jobs, whose missing-migration case it should
+  catch.
 - **Richer HTML support, forms first.** Views offer only `render`, `h`,
   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
   deliberately left them out). Templates write every form by hand, including
   its CSRF field and the values to fill back in after a failed submit.
+  Before helpers, plain forms need two things Monk lacks: `params` from an
+  `application/x-www-form-urlencoded` body (only the query string and JSON
+  bodies are parsed today), and `require_csrf!` accepting a form field, not
+  only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
+  the auth module's login page does.
 
 ## To evaluate
 

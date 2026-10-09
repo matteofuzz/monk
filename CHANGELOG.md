@@ -4,6 +4,83 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.21.0 - 2026-10-09
+
+### Changed (breaking)
+
+- **`monk new` no longer takes module flags.** `--postgres`, `--auth`,
+  `--mail`, `--jobs`, `--redis` and `--live` are a usage error that shows
+  the same command's new form, and nothing is written. Modules are added
+  with `monk add MODULE`, on any app, new or existing, or with
+  `monk new NAME --with a,b` (ADR 0017, `docs/guides/scaffolding.md`).
+
+### Added
+
+- **`monk add`**: one generator per module (`postgres`, `redis`, `mail`,
+  `auth`, `jobs`, `websocket`, `live`). Each adds its dependencies first,
+  creates files and appends lines (never edits or replaces one), and
+  brings its wiring, commented examples of how to use it (tagged
+  `# monk:example`), a test in `test/`, and its sections of `SETUP.md` and
+  `AGENTS.md`. Adding a module twice does nothing. A file the module needs
+  that the app already has with other content stops the command before
+  anything is written; any other is left alone. `monk add --list`,
+  `monk help MODULE [--file PATH]`, `--dry-run`, and `--json` for agents
+  and scripts, with exit codes 0 (done), 1 (usage), 2 (a missing choice)
+  and 3 (a conflict). A missing choice is asked in a terminal, never
+  elsewhere.
+- **Redis and WebSocket are modules of their own.** `monk add redis` is for
+  any use of Redis (a cache, rate limits). `monk add websocket
+  --transport=postgres|redis` writes `config/websocket.rb`, one registry
+  (`AppWebSocket::REGISTRY`) over the chosen transport, and the new
+  `bin/websocket_server`; the transport is inferred when only one is
+  installed. Live uses websocket's registry.
+- **Every app ships its tests** (`Rakefile`, `test/test_helper.rb`,
+  `test/app_test.rb`), an `AGENTS.md` for coding agents and a `CLAUDE.md`
+  importing it; dotenv is in every `Gemfile`.
+- **Module routes live in `app/routes/`**, which `app/app.rb` loads; each
+  file reopens `class App` (amends ADR 0015). `config/load.rb` is the same
+  for every app: it requires each module's config that exists, in a fixed
+  order.
+- `Monk::Auth.configure(callback_path:)` (default `"/auth/callback"`) and
+  `Monk::Auth.login_link(token)`. `Monk::Auth::SendLoginLink`, the job that
+  creates and sends a login link, ships with Monk, once auth and jobs are
+  both loaded. `log_out!` ends the current session and clears its cookies.
+- `Monk::Mail.deliver_later` is defined once `monk/mail` and `monk/jobs`
+  are both loaded, in either order; `require "monk/mail/later"` still
+  works.
+- `<%= monk_head %>` in a layout renders the `<head>` tags of the loaded
+  modules (Live's, once `config/live.rb` has configured it).
+- `Monk::Assets.mount(prefix, dir)` serves a module's files from the gem
+  under `/_monk/`; Monk::Live's browser client is served at
+  `/_monk/live/`, so apps no longer copy it.
+- `Monk::Live::ALLOW_ALL`, a shareable rule block letting everyone in.
+- `Monk::Bin.run(__FILE__) { ... }`: a scaffolded app's `bin/` scripts end
+  with what failed and the command that fixes it (Postgres or Redis not
+  running, a missing database, refused credentials, an unset setting),
+  exit 1, instead of a backtrace.
+
+### Changed
+
+- `monk new`'s `Gemfile` asks for `gem "monkrb", "~> 0.21"`: a new app
+  needs this version's APIs (`monk_head`, `log_out!`, `Monk::Bin`), so an
+  older monkrb installed on the machine can't satisfy it.
+- `JOBS_QUEUES` defaults to `mailers,default` in `bin/jobs`, with or
+  without mail.
+- `monk add postgres` adds `gem "pg", "~> 1.6"`: 1.6+ installs precompiled
+  with its own libpq, so the one `Dockerfile` needs no system packages.
+- `config/persistence.rb` loads `Monk::Persistence::Pg::Model`, so an app
+  with only Postgres can define models.
+- Live's demo is its own files, at `/demo/live`, in development only
+  (`--no-demo` to leave it out); it no longer replaces `app/app.rb` and the
+  home page.
+
+### Fixed
+
+- `Monk::Log` works before Boot. In `bin/console`, which never boots,
+  anything that logged raised on a nil path: `Monk::Mail.deliver` through
+  `log://`, a job's `perform`, `Monk::Log.info`. Before Boot the first
+  write now works out the same `log/<env>.log` path.
+
 ## 0.20.0 - 2026-10-05
 
 ### Fixed

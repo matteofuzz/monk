@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+# A service that's down, a missing database or setting ends this script
+# with what to fix (SETUP.md's commands), not a backtrace.
+require "monk/bin"
+
+Monk::Bin.run(__FILE__) do
+  require_relative "../config/settings"
+  require_relative "../config/websocket"
+
+  # Each only if this app has it: auth says whose a socket is, live what it
+  # may subscribe to.
+  %w[auth live].each do |name|
+    path = File.expand_path("../config/#{name}.rb", __dir__)
+    require path if File.exist?(path)
+  end
+  live = defined?(Monk::Live) && Monk::Live.registry
+
+  # Without live, the app's own handler: AppSockets::HANDLER, in app/sockets/.
+  Dir[File.expand_path("../app/sockets/*.rb", __dir__)].sort.each { |file| require file }
+  handler = live ? Monk::Live::HANDLER : (AppSockets::HANDLER if defined?(AppSockets::HANDLER))
+  unless handler
+    $stderr.puts "bin/websocket_server: nothing to serve. Add live (monk add live), or define " \
+      "AppSockets::HANDLER in app/sockets/ -- the websocket-chat example in app/sockets/chat.rb is one."
+    exit 1
+  end
+
+  # This process holds the sockets, so it's the only one that listens for
+  # what the others publish: the transport's subscriber connection opens
+  # here, and an unreachable Postgres or Redis fails right here.
+  AppWebSocket::REGISTRY.listen!
+
+  # With auth, a socket carries its user's session. With live, a visitor's
+  # socket comes in anonymous instead of refused, and live's rules
+  # (config/live.rb) decide what it may subscribe to.
+  authenticate = if defined?(Monk::Auth) && Monk::Auth.config
+    live ? :optional : true
+  else
+    false
+  end
+  # Sessions are checked through config/auth.rb's :auth pool, not in each
+  # socket's own Ractor, which would hold a Postgres connection per open
+  # page. This is the only process that uses the pool, so it starts it.
+  db_pool = (:auth if authenticate)
+  Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
+
+  port = ENV.fetch("WS_PORT", "9293").to_i
+  # Defaults to public_url (config/settings.rb): one PUBLIC_URL keeps both
+  # in sync. More than one origin: comma-separated.
+  allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
+
+  server = Monk::WebSocket::Server.new(
+    port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+  )
+  puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
+    "(#{live ? "live" : "app/sockets"}, transport: #{AppWebSocket::TRANSPORT}, authenticate: #{authenticate})"
+  server.run(&handler)
+end

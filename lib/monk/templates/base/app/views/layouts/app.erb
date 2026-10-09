@@ -11,6 +11,8 @@
       { "imports": {} }
     </script>
     <script type="module" src="<%= asset_path "/js/app.js" %>"></script>
+    <%# The <head> tags of the Monk modules this app uses (Monk::Live's, say). %>
+    <%= monk_head %>
   </head>
   <body>
     <main><%= yield %></main>
