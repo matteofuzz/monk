@@ -245,7 +245,8 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://example.com" })
+    cookie = "session_token=#{session[:token]}"
+    handshake!(socket, extra_headers: { "Cookie" => cookie, "Origin" => "https://example.com" })
 
     assert_equal "a@b.com", who_am_i(socket)
   ensure
@@ -262,7 +263,8 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://example.com" })
+    cookie = "session_token=#{session[:token]}"
+    response = handshake!(socket, extra_headers: { "Cookie" => cookie, "Origin" => "https://example.com" })
 
     assert_equal "HTTP/1.1 101 Switching Protocols", status_line(response)
     assert_equal "anonymous", who_am_i(socket)
@@ -276,7 +278,8 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
-    response = handshake!(socket, extra_headers: { "Cookie" => "session_token=#{session[:token]}", "Origin" => "https://evil.example" })
+    cookie = "session_token=#{session[:token]}"
+    response = handshake!(socket, extra_headers: { "Cookie" => cookie, "Origin" => "https://evil.example" })
 
     assert_equal "HTTP/1.1 403 Forbidden", status_line(response)
   ensure
@@ -291,7 +294,8 @@ class WebSocketAuthTest < Minitest::Test
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     refused = TCPSocket.new("127.0.0.1", server.port)
-    assert_equal "HTTP/1.1 403 Forbidden", status_line(handshake!(refused, extra_headers: { "Origin" => "https://evil.example" }))
+    response = handshake!(refused, extra_headers: { "Origin" => "https://evil.example" })
+    assert_equal "HTTP/1.1 403 Forbidden", status_line(response)
 
     no_origin = TCPSocket.new("127.0.0.1", server.port)
     assert_equal "HTTP/1.1 101 Switching Protocols", status_line(handshake!(no_origin))
