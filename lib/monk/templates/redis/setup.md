@@ -15,4 +15,6 @@ docker run --rm -d -p 6379:6379 --name {{app}}_redis redis:7
 
 ### Check it works
 
-`bundle exec rake test` runs `test/redis_test.rb`, which pings it.
+1. `bundle exec rake test` runs `test/redis_test.rb`, which pings it.
+2. By hand, in `bin/console`: `Redis.new(url: Monk::Settings[:redis_url]).ping`
+   answers `"PONG"`.

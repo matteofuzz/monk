@@ -21,5 +21,19 @@ for an `https://` origin: the proxy in front routes `/ws` to
 
 ### Check it works
 
-`bundle exec rake test` runs `test/live_test.rb`: an update reaches a socket
-subscribed to its topic.
+1. `bundle exec rake test` runs `test/live_test.rb`: an update reaches a
+   socket subscribed to its topic.
+2. By hand: the demo, above.
+3. The example: uncomment `live-broadcast` (in
+   `app/broadcasts/greeting.rb` and `app/routes/live.rb`) and add a rule
+   for its topic in `config/live.rb`, e.g.
+   `Monk::Live.authorize("greeting", anonymous: true, &Monk::Live::ALLOW_ALL)`.
+   Put `<p <%= live_topic "greeting" %>><%= render "live/_greeting", text: "Hello", layout: false %></p>`
+   in a page, open it in two tabs, and change the greeting:
+
+   ```bash
+   curl -X POST http://localhost:9292/greeting -H "content-type: application/json" \
+     -d '{"text": "Hi all"}'
+   ```
+
+   Both tabs update.

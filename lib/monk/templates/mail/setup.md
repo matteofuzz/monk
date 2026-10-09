@@ -14,5 +14,19 @@ fails the boot outside development. Provider examples:
 
 ### Check it works
 
-`bundle exec rake test` runs `test/mail_test.rb`, which delivers a message
-to `log/test.log`.
+1. `bundle exec rake test` runs `test/mail_test.rb`, which delivers a
+   message to `log/test.log`.
+2. By hand, in `bin/console`:
+   `Monk::Mail.deliver(to: "you@example.com", subject: "Hi", text: "Hello")`.
+   In development the message is printed right there (and in
+   `log/development.log`), not sent.
+3. The example: uncomment the `mail-welcome` blocks in
+   `app/mailers/app_mailer.rb` and `app/routes/mail.rb`, restart
+   `bin/server`, and send one:
+
+   ```bash
+   curl -X POST http://localhost:9292/welcome -H "content-type: application/json" \
+     -d '{"email": "ann@example.com", "name": "Ann"}'
+   ```
+
+   The welcome email is printed in `bin/server`'s console.

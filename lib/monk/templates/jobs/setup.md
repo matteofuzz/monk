@@ -20,7 +20,11 @@ its command.
 
 ### Check it works
 
-`bundle exec rake test` runs `test/jobs_test.rb`, which enqueues the demo
-job (`app/jobs/hello_job.rb`) and runs it. Or, with `bin/jobs` running,
-from `bin/console`: `HelloJob.enqueue("Ann")`, and watch
-`log/development.log`.
+1. `bundle exec rake test` runs `test/jobs_test.rb`, which enqueues the
+   demo job (`app/jobs/hello_job.rb`) and runs it.
+2. By hand, with `bin/jobs` running: in `bin/console`,
+   `HelloJob.enqueue("Ann")`, and `log/development.log` shows
+   `Hello, Ann, from a background job`.
+3. The example: uncomment the `jobs-enqueue` block in `app/routes/jobs.rb`,
+   restart `bin/server`, and
+   `curl -X POST "http://localhost:9292/jobs/hello?name=Bob"`.

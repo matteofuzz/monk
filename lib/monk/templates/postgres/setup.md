@@ -30,6 +30,9 @@ provide. Run both `bin/setup_db` lines again after adding a migration.
 
 ### Check it works
 
-`bundle exec rake test` runs `test/persistence_test.rb`, which connects to
-the test database. `bin/console` opens IRB with the app's configs and
-models loaded; `bin/migrate status` lists applied and pending migrations.
+1. `bundle exec rake test` runs `test/persistence_test.rb`, which connects
+   to the test database.
+2. By hand: `bin/console` opens IRB with the app's configs and models
+   loaded; `Monk::Persistence::Pg.checkout(:primary) { |conn| conn.exec("SELECT 1").values }`
+   answers `[[1]]`. `bin/migrate status` lists applied and pending
+   migrations.

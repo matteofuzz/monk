@@ -33,5 +33,19 @@ connect with `wss://`.
 
 ### Check it works
 
-`bundle exec rake test` runs `test/websocket_test.rb`: a broadcast crosses
-from one registry to another over the transport.
+1. `bundle exec rake test` runs `test/websocket_test.rb`: a broadcast
+   crosses from one registry to another over the transport.
+2. By hand, without live: uncomment the `websocket-chat` block in
+   `app/sockets/chat.rb` and start `bin/websocket_server` next to
+   `bin/server`. Open http://localhost:9292 in two tabs, and in each
+   browser console:
+
+   ```js
+   ws = new WebSocket("ws://localhost:9293")
+   ws.onmessage = (event) => console.log(event.data)
+   ```
+
+   `ws.send("hi")` in one tab logs `guest: hi` in both. With auth, the
+   server lets only logged-in sockets in: log in first (auth, above), and
+   the message carries your email. With live, `bin/websocket_server` runs
+   live's handler instead: live, below.
