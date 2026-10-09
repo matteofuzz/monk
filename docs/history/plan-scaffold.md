@@ -4,7 +4,7 @@
 
 Branch: `main_dev/refactor_scaffolding`.
 Status: complete 2026-10-08 (Phases 0–8, on `main_dev/refactor_scaffolding`),
-not yet released. Choices made along the way are recorded in decisions
+shipped in monkrb 0.21.0 on 2026-10-09. Choices made along the way are recorded in decisions
 9, 14, 21, Phase 2 step 6, Phase 4 and auth. Phase 9 (optional) was
 left out on 2026-10-08: `monk new` makes the core app, modules come from
 `monk add`, and `--with` stays as a shortcut for both. The scheduled-jobs and storage plans' scaffold steps are updated

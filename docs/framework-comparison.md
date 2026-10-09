@@ -1,10 +1,10 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase after v0.20.0, with scaffolding by module (not yet released; LOC recomputed for it: `monk new` makes the core app and `monk add` adds each module to any app, through one generator per module, a CLI with `--json` output, and the `bin/` scripts' error explanations; the framework gains `Monk::Auth.login_link`, `SendLoginLink` and `log_out!`, `monk_head` and module assets served from the gem). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at v0.21.0 (LOC recomputed for this version, which brings scaffolding by module: `monk new` makes the core app and `monk add` adds each module to any app, through one generator per module, a CLI with `--json` output, and the `bin/` scripts' error explanations; the framework gains `Monk::Auth.login_link`, `SendLoginLink` and `log_out!`, `monk_head` and module assets served from the gem). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
-- **Monk**: 8,556 lines of Ruby across 77 files (`lib/monk.rb` plus `lib/monk`, excluding the
+- **Monk**: 8,567 lines of Ruby across 77 files (`lib/monk.rb` plus `lib/monk`, excluding the
   scaffold templates) — routing, context, ERB views/layouts,
   a boot-time static-asset manifest, settings/env tiers, auth
   (sessions/tokens/cookies/CSRF/rate-limiting), Postgres persistence + model +
@@ -20,7 +20,7 @@ Complexity and weight comparison, based on the codebase after v0.20.0, with scaf
   (`monk new`, `monk add`).
   Runtime dependencies: `rack` and `base64` only; `pg`, `redis`, `rqrcode`,
   `net-smtp` and `dotenv` are opt-in per app (dev-only for Monk itself), and `kino` is only in the
-  repo's `Gemfile` for the demo app. 15,348 lines of tests.
+  repo's `Gemfile` for the demo app. 15,365 lines of tests.
 - **Sinatra**: core is comparable in size (~2,000 lines), but ships as a
   thin routing DSL only — everything else (sessions/CSRF protection,
   persistence, websockets, live updates, email, background jobs) is a
@@ -41,16 +41,16 @@ that covers each module.
 | Module | Files | LOC | Test LOC | What it holds |
 |---|---|---|---|---|
 | Scaffolding (`monk new`, `monk add`) | 15 | 1,506 | 2,088 (incl. `exe/monk`) | the generator engine: plan every module and option, check every file, then write (449); its result as text, JSON and an exit code (279); the CLI (277); the module DSL (153); the `bin/` scripts' error explanations (107); one generator of ~20 lines per module |
-| WebSocket | 10 | 1,470 | 2,381 | handshake, frames, connection, server incl. `authenticate: :optional`, `db_pool:` and stop on `TERM`, registry incl. `close_all`, Redis fan-out, Postgres fan-out incl. pooled publishing, listeners that reconnect, a socket's connections closed when it ends |
+| WebSocket | 10 | 1,472 | 2,385 | handshake, frames, connection, server incl. `authenticate: :optional`, `db_pool:` and stop on `TERM`, registry incl. `close_all`, Redis fan-out, Postgres fan-out incl. pooled publishing, listeners that reconnect, a socket's connections closed when it ends |
 | Persistence | 8 | 1,442 | 1,684 | connection pools for Ractors (513: dispatcher, workers, errors that keep their class across Ractors), registry and checkout with the dropped-connection probe and pool lifecycle, Postgres model, migrator, Postgres backend incl. a `json`/`jsonb` decoder |
 | Jobs | 8 | 1,039 | 1,824 (incl. child job processes) | Postgres adapter (274), runtime/supervisor (239), configure/enqueue/registry/`drain!`, `Monk::Job` and its settings, worker loop, argument check, errors, claim value |
-| Core | 10 | 935 | 1,948 (core + shared helpers) | `Monk::Base` routing/dispatch (343), settings (151), logging (130), context incl. `monk_head`, environment, errors, `StateRactor`, freeze hooks |
+| Core | 10 | 944 | 1,961 (core + shared helpers) | `Monk::Base` routing/dispatch (343), settings (151), logging (130), context incl. `monk_head`, environment, errors, `StateRactor`, freeze hooks |
 | Mail | 9 | 641 | 1,320 (incl. a fake SMTP server) | MIME builder, configure/deliver/render, SMTP and log transports, `MAIL_URL` parsing, message value, `deliver_later` and its job (loaded with jobs), address handling |
 | Live | 8 | 573 | 2,191 | publisher, session, policy incl. pooled rules, renderer, envelope, `live_topic` and its `<head>` tags, `listen!`, the client served from the gem |
 | Auth | 7 | 537 | 1,266 | sessions, tokens, cookies, CSRF, rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
 | Assets | 1 | 227 | 293 | boot-time static-asset manifest, plus modules' own files mounted under `/_monk/` |
 | Views | 1 | 186 | 353 | ERB views/layouts/partials |
-| **Total** | **77** | **8,556** | **15,348** | |
+| **Total** | **77** | **8,567** | **15,365** | |
 
 Not counted above: the Live browser runtime (`monk_live.js` 204,
 `protocol.js` 92, vendored minified idiomorph) and the JS tests under

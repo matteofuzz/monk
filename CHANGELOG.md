@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
-## Unreleased
+## 0.21.0 - 2026-10-09
 
 ### Changed (breaking)
 
@@ -70,6 +70,13 @@ in `lib/monk/version.rb`.
 - Live's demo is its own files, at `/demo/live`, in development only
   (`--no-demo` to leave it out); it no longer replaces `app/app.rb` and the
   home page.
+
+### Fixed
+
+- `Monk::Log` works before Boot. In `bin/console`, which never boots,
+  anything that logged raised on a nil path: `Monk::Mail.deliver` through
+  `log://`, a job's `perform`, `Monk::Log.info`. Before Boot the first
+  write now works out the same `log/<env>.log` path.
 
 ## 0.20.0 - 2026-10-05
 
