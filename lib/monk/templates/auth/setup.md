@@ -20,8 +20,10 @@ reads it with `ENV.fetch`: unset, the app doesn't boot.
    block `auth-routes`. Uncomment them and restart `bin/server`. Then:
    - http://localhost:9292/me answers `401`: nobody is logged in.
    - http://localhost:9292/login: enter an email. In development the link
-     is printed in `bin/server`'s console (and `log/development.log`), not
-     sent. Open it: it logs you in and goes back to `/`.
+     is printed, not sent: in `bin/server`'s console, or in `bin/jobs`'
+     when a job sends it (`Monk::Auth::SendLoginLink`), and in
+     `log/development.log` either way. Open it: it logs you in and goes
+     back to `/`.
    - http://localhost:9292/me now shows your email.
    - To log out, from the browser's console on any page of the app:
 
