@@ -19,6 +19,17 @@ class GeneratorsBaseTest < Minitest::Test
   end
 
   # WebSocket is a module of its own now (docs/adr/0017).
+  # The app needs Monk's APIs from this version on (monk_head, log_out!,
+  # Monk::Bin): an older monkrb installed on the machine must not satisfy
+  # the Gemfile, and the requirement must accept the version being built.
+  def test_the_gemfile_asks_for_this_monk_or_newer
+    requirement = template("base/Gemfile")[/^gem "monkrb", "([^"]+)"/, 1]
+
+    refute_nil requirement, "monkrb is pinned"
+    assert Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new(Monk::VERSION))
+    refute Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new("0.20.0"))
+  end
+
   def test_has_no_websocket_server
     with_new_app do |dest|
       refute File.exist?(File.join(dest, "bin/websocket_server"))

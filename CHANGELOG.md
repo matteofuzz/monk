@@ -61,6 +61,9 @@ in `lib/monk/version.rb`.
 
 ### Changed
 
+- `monk new`'s `Gemfile` asks for `gem "monkrb", "~> 0.21"`: a new app
+  needs this version's APIs (`monk_head`, `log_out!`, `Monk::Bin`), so an
+  older monkrb installed on the machine can't satisfy it.
 - `JOBS_QUEUES` defaults to `mailers,default` in `bin/jobs`, with or
   without mail.
 - `monk add postgres` adds `gem "pg", "~> 1.6"`: 1.6+ installs precompiled

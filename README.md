@@ -21,7 +21,7 @@ bin/server           # -> http://localhost:9292/hello
 monk add --list      # the modules you can add: postgres, auth, jobs, live...
 ```
 
-`monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", require: "monk"`.
+`monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", "~> 0.21", require: "monk"`.
 
 `monk new` writes a working skeleton (an HTML home page, a `/hello` route, a `/api/hello` JSON route, `public/`, its tests, a `SETUP.md` and an `AGENTS.md` for coding agents), with the app's own code under `app/`: `app/app.rb` and `app/routes/` for routes, `app/views/`, and one directory per role (`models/`, `presenters/`, `helpers/`, `mailers/`, `broadcasts/`, `jobs/`). `monk add` adds Postgres, Redis, email, auth, background jobs, WebSocket and live updates, to a new app or an old one, each with its wiring, commented examples of how to use it, and a test (`monk new my_app --with auth,jobs` does both at once): see [`docs/guides/scaffolding.md`](docs/guides/scaffolding.md), which also says where each kind of code goes.
 
