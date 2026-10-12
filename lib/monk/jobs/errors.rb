@@ -6,6 +6,11 @@ module Monk
     class NotFrozenError < StandardError
     end
 
+    # Declaring a recurring task after Monk.freeze! has sealed the
+    # registry: it would never be seen by the scheduler.
+    class RegistryFrozenError < StandardError
+    end
+
     # A job_class name that isn't a Monk::Job subclass this process knows
     # about: a job enqueued by a newer deploy, a renamed class, or a name
     # that was never a job at all.
