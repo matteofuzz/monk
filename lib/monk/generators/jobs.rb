@@ -4,7 +4,7 @@ Monk::Generator.define(:jobs) do
   installed_if "config/jobs.rb"
   depends_on :postgres
 
-  copy "config/jobs.rb", role: :wiring
+  copy "config/jobs.rb", "config/recurring.rb", role: :wiring
   copy "bin/jobs", role: :wiring, executable: true
   copy "app/jobs/hello_job.rb", "app/routes/jobs.rb", role: :example
   copy "test/jobs_test.rb", role: :test
@@ -19,4 +19,5 @@ Monk::Generator.define(:jobs) do
   agents_section "jobs/agents.md"
   next_step "bin/jobs", note: "beside bin/server"
   example "jobs-enqueue", todo: "uncomment, or enqueue your own jobs from any route"
+  example "jobs-recurring", todo: "uncomment to run the demo job every hour"
 end

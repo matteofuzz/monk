@@ -25,6 +25,11 @@ end
   Dir[File.expand_path("../app/#{role}/**/*.rb", __dir__)].sort.each { |file| require file }
 end
 
+# With jobs (monk add jobs), the schedules of recurring jobs. Last, because
+# each one names a job class from app/jobs/.
+recurring = File.expand_path("recurring.rb", __dir__)
+require recurring if File.exist?(recurring)
+
 # With websocket (monk add websocket), every process that loads this file
 # can broadcast (bin/server, bin/jobs, bin/console, the tests), so its
 # transport is started here, once everything above has declared its

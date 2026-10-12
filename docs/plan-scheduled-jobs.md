@@ -2,7 +2,7 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phases 0–5 done.
+(`monk add jobs`, ADR 0017). Phases 0–6 done.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -473,6 +473,15 @@ New terms for `CONTEXT.md` (Phase 7):
        passing with the new migration, which checks it applies.
    - `docs/guides/scaffolding.md`: the jobs entry lists
      `config/recurring.rb`, the second migration and the example.
+   **Done (2026-10-12).** As listed. The "example uncommented" check is
+   a `jobs-recurring` probe in `test/generators/examples_test.rb`, the
+   suite that already uncomments every example in a generated app: it
+   asserts `recurring_tasks` lists `hello_hourly`, then
+   `run_scheduler!` twice and `drain!` writes the demo job's log line.
+   The base template's load order is checked with stub files
+   (`test_config_load_requires_config_recurring_last`), like the module
+   configs' order. `monk add jobs` now lists `config/recurring.rb` after
+   `config/jobs.rb` (`test/exe_monk_test.rb`).
 
 7. **Docs.**
    - ADR 0016: why the scheduler runs on the job-process tick with one

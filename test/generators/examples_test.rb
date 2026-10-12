@@ -88,6 +88,18 @@ class GeneratorsExamplesTest < Minitest::Test
         Monk::Jobs.clear!
       end
     RUBY
+    "jobs-recurring" => <<~RUBY,
+      def test_jobs_recurring
+        assert_equal ["hello_hourly"], Monk::Jobs.recurring_tasks.map(&:key)
+
+        Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 8, 30))
+        assert_equal({ "hello_hourly" => :enqueued }, Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9)))
+        assert_equal 1, Monk::Jobs.drain!
+        assert_includes File.read(File.expand_path("../log/test.log", __dir__)), "Hello, cron, from a background job"
+      ensure
+        Monk::Jobs.clear!
+      end
+    RUBY
     "websocket-chat" => <<~RUBY,
       def test_websocket_chat
         skip "with live, bin/websocket_server runs live's handler" if File.exist?(File.expand_path("../config/live.rb", __dir__))

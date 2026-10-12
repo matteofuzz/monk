@@ -92,9 +92,10 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   example: request a link (with a rate limit), the callback, logout, a page
   for logged-in users. The routes stay commented until you've decided on
   their limits; `AGENTS.md` says why. A test sends a link and redeems it.
-- **jobs:** `config/jobs.rb`, `bin/jobs`, the queue's migration, the demo
-  `HelloJob` and the `jobs-enqueue` example; a test that enqueues and
-  drains. With mail installed, `Monk::Mail.deliver_later` exists; with
+- **jobs:** `config/jobs.rb`, `bin/jobs`, the queue's migration and the
+  recurring tasks' one, the demo `HelloJob`, the `jobs-enqueue` example,
+  and `config/recurring.rb` with the `jobs-recurring` example (the demo
+  job every hour); a test that enqueues and drains. With mail installed, `Monk::Mail.deliver_later` exists; with
   auth, `Monk::Auth::SendLoginLink`.
 - **websocket:** `config/websocket.rb` (`AppWebSocket::REGISTRY`, over the
   transport), `bin/websocket_server`, and the `websocket-chat` example in

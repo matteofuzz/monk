@@ -129,4 +129,22 @@ class GeneratorsBaseTest < Minitest::Test
       assert_equal "settings persistence mail jobs live ", out
     end
   end
+
+  # config/recurring.rb (monk add jobs) declares schedules for job
+  # classes, so it loads after app/, when they exist
+  # (docs/plan-scheduled-jobs.md decision 2).
+  def test_config_load_requires_config_recurring_last
+    Dir.mktmpdir do |dir|
+      write_file(dir, "config/load.rb", template("base/config/load.rb"))
+      write_file(dir, "config/settings.rb", "")
+      write_file(dir, "config/jobs.rb", %(print "config/jobs "\n))
+      write_file(dir, "app/jobs/hello_job.rb", %(print "app/jobs "\n))
+      write_file(dir, "config/recurring.rb", %(print "config/recurring "\n))
+
+      out, status = Open3.capture2e(RbConfig.ruby, "-e", %(require "./config/load"), chdir: dir)
+
+      assert status.success?, out
+      assert_equal "config/jobs app/jobs config/recurring ", out
+    end
+  end
 end

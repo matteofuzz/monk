@@ -28,6 +28,17 @@ class GeneratorsJobsTest < Minitest::Test
     end
   end
 
+  # config/recurring.rb holds the schedules, its demo task commented out
+  # so a new app's bin/jobs doesn't enqueue every hour.
+  def test_writes_config_recurring_with_a_commented_example
+    with_new_app(:jobs) do |dest, result|
+      assert_equal template("jobs/config/recurring.rb"), generated(dest, "config/recurring.rb")
+      assert_includes generated(dest, "config/recurring.rb"), "# monk:example jobs-recurring"
+      assert_equal "uncomment to run the demo job every hour",
+        result.examples.find { |entry| entry[:tag] == "jobs-recurring" }[:todo]
+    end
+  end
+
   def test_says_to_run_bin_jobs
     with_new_app do |dest|
       result = add_modules(dest, :jobs)
