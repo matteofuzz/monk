@@ -34,13 +34,18 @@ module Monk
         freeze_rqrcode!
       end
 
+      # callback_path: is where the app's own callback route redeems a
+      # token (GET "#{callback_path}/:token"). Monk doesn't define that
+      # route, but builds links to it: login_link below, and so
+      # Monk::Auth::SendLoginLink.
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil
+        deliver: nil, callback_path: "/auth/callback"
       )
         config = {
           db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
+          callback_path: checked_callback_path(callback_path),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -81,6 +86,17 @@ module Monk
         raw
       end
 
+      # The magic link for a raw token: the app's public_url
+      # (config/settings.rb, a trusted origin -- never request headers like
+      # X-Forwarded-Host, which any direct client can spoof), then
+      # callback_path:, then the token.
+      #
+      #   Monk::Auth.login_link(token) # => "https://app.example/auth/callback/<token>"
+      def login_link(token)
+        ensure_configured!
+        "#{Monk::Settings[:public_url]}#{config[:callback_path]}/#{token}"
+      end
+
       # The single place an app's login-request handler calls to get a
       # magic link to its owner: uses the `deliver:` callable passed to
       # `configure` (e.g. wrapping a mailer or a provider's HTTP API) when
@@ -94,10 +110,8 @@ module Monk
       # that Monk::Mail exists (docs/adr/0012-minimal-built-in-mailer.md):
       # it's usually a one-line Monk::Mail.deliver, but can be any channel.
       #
-      # `link` is the app's own job to build (Monk doesn't own routing, so
-      # it can't know the callback path) -- from a trusted origin, e.g.
-      # Monk::Settings[:public_url], never from request headers like
-      # X-Forwarded-Proto/Host, which any direct client can spoof.
+      # `link` is usually login_link(token), above. An app may build its
+      # own instead, from a trusted origin, never from request headers.
       # `token` is passed through for a deliver: that wants it (an SMS
       # body instead of a link, say); most won't need it.
       def deliver_link(email:, link:, token: nil)
@@ -254,6 +268,17 @@ module Monk
           "Monk::Auth is not configured -- call Monk::Auth.configure first" unless @config
       end
 
+      # An absolute path, kept without a trailing slash so login_link
+      # adds exactly one before the token.
+      def checked_callback_path(path)
+        unless path.is_a?(String) && path.start_with?("/")
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(callback_path:) must be an absolute path like \"/auth/callback\", got #{path.inspect}"
+        end
+
+        path.chomp("/").freeze
+      end
+
       def hash_token(raw)
         Digest::SHA256.hexdigest(raw)
       end
@@ -299,3 +324,7 @@ module Monk
     Monk.freeze_hooks << self
   end
 end
+
+# Monk::Auth::SendLoginLink, when jobs are loaded too -- either order works
+# (lib/monk/jobs.rb ends the same way, docs/adr/0017).
+require_relative "auth/send_login_link" if Monk.const_defined?(:Jobs)

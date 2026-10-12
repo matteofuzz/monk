@@ -1,9 +1,15 @@
 #!/usr/bin/env ruby
 require "bundler/setup"
-require_relative "../config/settings"
-require_relative "../config/persistence"
-require "monk/persistence/pg/migrator"
+# A service that's down, a missing database or setting ends this script
+# with what to fix (SETUP.md's commands), not a backtrace.
+require "monk/bin"
 
-Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.expand_path("../db/migrate", __dir__)).migrate!
+Monk::Bin.run(__FILE__) do
+  require_relative "../config/settings"
+  require_relative "../config/persistence"
+  require "monk/persistence/pg/migrator"
 
-puts "Migrated #{ENV.fetch("DB_NAME", "app_development")}."
+  Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: File.expand_path("../db/migrate", __dir__)).migrate!
+
+  puts "Migrated #{ENV.fetch("DB_NAME", "app_development")}."
+end

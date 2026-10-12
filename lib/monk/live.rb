@@ -35,14 +35,25 @@ module Monk
       ).run
     end
 
+    # A rule block that lets everyone in, for Monk::Live.authorize:
+    #   Monk::Live.authorize("demo:hits", anonymous: true, &Monk::Live::ALLOW_ALL)
+    # A block written at the top of config/live.rb isn't Ractor-shareable
+    # (self there is the main object), so rules need one built here.
+    ALLOW_ALL = Ractor.make_shareable(proc { |_subject, _topic| true })
+
     CLIENT_DIR = File.expand_path("live/client", __dir__).freeze
+    # Where Monk serves CLIENT_DIR from: the layout's <%= monk_head %> loads
+    # CLIENT_PATH/monk_live.js (Live::Helpers#head_tags), so an app never
+    # copies the client and never serves an older copy than its gem.
+    CLIENT_PATH = "/_monk/live".freeze
+    Monk::Assets.mount(CLIENT_PATH, CLIENT_DIR)
 
     class << self
       attr_reader :publisher, :registry, :rules, :max_topics
 
       # Where the browser runtime ships inside the gem: monk_live.js,
       # protocol.js and idiomorph.js (they import each other by relative
-      # path, so an app serves or copies the directory as a unit).
+      # path, so they're served as a unit, from CLIENT_PATH).
       def client_dir = CLIENT_DIR
 
       # Boot-time, main Ractor. `registry` is a Monk::WebSocket::Registry,

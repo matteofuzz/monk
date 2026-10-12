@@ -65,8 +65,27 @@ module Monk
       # hazard (Monk.env resolves this the same way, through Settings'
       # own frozen-at-Boot snapshot). `assets false` sets root to false
       # and disables serving.
-      attr_reader :root, :manifest
+      attr_reader :root, :manifest, :mounts
       attr_writer :root
+
+      # Serves a module's own static files from inside the gem, under a
+      # /_monk/ prefix, next to the app's public/: Monk::Live mounts its
+      # browser client at /_monk/live, so no app has to copy it
+      # (docs/adr/0017). Called when the module is required, before Boot;
+      # mounted files go in the same manifest, so they're served, stamped
+      # and cached exactly like the app's own.
+      def mount(prefix, dir)
+        prefix = prefix.chomp("/")
+        raise ArgumentError, "Monk::Assets.mount prefix must start with /_monk/, got #{prefix.inspect}" unless
+          prefix.start_with?("/_monk/")
+
+        @mounts = mounts.merge(prefix.freeze => File.expand_path(dir).freeze)
+      end
+
+      # Test-only.
+      def unmount(prefix)
+        @mounts = mounts.except(prefix)
+      end
 
       def enabled?
         !!root
@@ -117,6 +136,7 @@ module Monk
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks.
       def freeze_registry!
         @production = !Monk.env.development?
+        @mounts = Ractor.make_shareable(mounts)
         @manifest = Ractor.make_shareable(build_manifest)
         # #root is read on every request (#enabled?, and the disk lookup
         # in development). Left unfrozen, reading it from a worker Ractor
@@ -125,7 +145,7 @@ module Monk
         @root = root.freeze
       end
 
-      # Test-only.
+      # Test-only. Mounts stay: a module mounts once, when it's required.
       def reset!
         @root = DEFAULT_ROOT
         @manifest = {}
@@ -142,29 +162,38 @@ module Monk
       private
 
       def build_manifest
-        return {} unless enabled? && Dir.exist?(root)
+        return {} unless enabled?
 
-        Dir.glob("**/*", base: root).each_with_object({}) do |relative, manifest|
-          path = File.join(root, relative)
+        manifest = Dir.exist?(root) ? files_under(root, "") : {}
+        mounts.each { |prefix, dir| manifest.merge!(files_under(dir, prefix)) }
+        manifest
+      end
+
+      def files_under(dir, prefix)
+        Dir.glob("**/*", base: dir).each_with_object({}) do |relative, files|
+          path = File.join(dir, relative)
           next unless File.file?(path)
 
-          manifest["/#{relative}"] = entry_for(relative, File.binread(path))
+          files["#{prefix}/#{relative}"] = entry_for(relative, File.binread(path))
         end
       end
 
       def lookup(path)
         return manifest[path] if production?
 
-        disk_entry(path)
+        prefix, dir = mounts.find { |mount_prefix, _| path.start_with?("#{mount_prefix}/") }
+        return disk_entry(dir, path.delete_prefix(prefix)) if prefix
+
+        disk_entry(root, path)
       end
 
       # Development only. PATH_INFO is not un-escaped here on purpose: an
       # encoded "%2e%2e" stays a literal, nonexistent filename, and a
       # decoded ".." is caught by the containment check below.
-      def disk_entry(path)
+      def disk_entry(dir, path)
         return nil if path.empty? || path.include?("\0")
 
-        root_path = File.expand_path(root)
+        root_path = File.expand_path(dir)
         full = File.expand_path(File.join(root_path, path.delete_prefix("/")))
         return nil unless full.start_with?("#{root_path}#{File::SEPARATOR}")
         return nil unless File.file?(full)
@@ -190,6 +219,7 @@ module Monk
 
     @root = DEFAULT_ROOT
     @manifest = {}
+    @mounts = {}
     @production = false
 
     Monk.freeze_hooks << self

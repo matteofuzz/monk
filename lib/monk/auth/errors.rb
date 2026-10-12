@@ -8,6 +8,9 @@ module Monk
   class MissingAuthConfigError < StandardError
   end
 
+  class InvalidAuthConfigError < StandardError
+  end
+
   class MissingAuthDeliveryError < StandardError
   end
 end
