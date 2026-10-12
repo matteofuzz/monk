@@ -2,11 +2,13 @@ require "json"
 require "time"
 require_relative "../../persistence/pg"
 require_relative "../claim"
+require_relative "../firing"
 
 module Monk
   module Jobs
     module Adapters
-      # The queue on Postgres: monk_jobs + monk_job_payloads + monk_processes
+      # The queue on Postgres: monk_jobs + monk_job_payloads + monk_processes,
+      # plus monk_recurring_tasks for the scheduler
       # (docs/adr/0013-jobs-narrow-state-table-plus-payloads.md). Holds only
       # the registered database's name and freezes itself, so the one
       # instance is shareable with every Ractor; each Ractor reaches the
@@ -151,9 +153,70 @@ module Monk
           WHERE id = $1 AND state = 'running' AND locked_by = $2
         SQL
 
+        # The scheduler's one statement per occurrence (docs/plan-scheduled-jobs.md
+        # decisions 5-8). ins, reinit and advance touch the task's row in
+        # mutually exclusive cases; advance is a compare-and-set on the
+        # checkpoint, so of several processes firing the same occurrence
+        # exactly one moves it and enqueues. The job's id is drawn from the
+        # sequence first, so the same UPDATE records it as last_job_id;
+        # that burns an id on calls that don't enqueue, harmless on a
+        # BIGINT. The pending check sits inside advance, so READ
+        # COMMITTED's recheck sees the row a racing UPDATE left. $10 stands
+        # in for now() under Monk::Jobs.run_scheduler!(at:).
+        FIRE_RECURRING_SQL = <<~SQL.freeze
+          WITH gate AS (
+            SELECT $3::timestamptz <= COALESCE($10::timestamptz, now()) AS due
+          ), prev AS (
+            SELECT last_occurrence_at FROM monk_recurring_tasks WHERE key = $1
+          ), seq AS (
+            SELECT nextval(pg_get_serial_sequence('monk_jobs', 'id')) AS id
+          ), ins AS (
+            INSERT INTO monk_recurring_tasks (key, cron, last_occurrence_at)
+            SELECT $1, $2, $3 FROM gate WHERE due
+            ON CONFLICT (key) DO NOTHING
+            RETURNING key
+          ), reinit AS (
+            UPDATE monk_recurring_tasks t
+            SET cron = $2, last_occurrence_at = $3, last_job_id = NULL, updated_at = now()
+            FROM gate
+            WHERE gate.due AND t.key = $1 AND t.cron <> $2
+            RETURNING t.key
+          ), advance AS (
+            UPDATE monk_recurring_tasks t
+            SET last_occurrence_at = $3, updated_at = now(),
+              last_job_id = CASE
+                WHEN $4::boolean AND EXISTS (
+                  SELECT 1 FROM monk_jobs j WHERE j.id = t.last_job_id AND j.state <> 'failed'
+                ) THEN t.last_job_id
+                ELSE seq.id
+              END
+            FROM gate, seq
+            WHERE gate.due AND t.key = $1 AND t.cron = $2 AND t.last_occurrence_at < $3
+            RETURNING t.last_job_id IS DISTINCT FROM seq.id AS skipped, seq.id AS job_id
+          ), job AS (
+            INSERT INTO monk_jobs (id, queue, priority, max_attempts, run_at, state) OVERRIDING SYSTEM VALUE
+            SELECT job_id, $5::text, $6::smallint, $7::smallint, now(), 'available' FROM advance WHERE NOT skipped
+            RETURNING id
+          ), payload AS (
+            INSERT INTO monk_job_payloads (job_id, job_class, args)
+            SELECT id, $8::text, $9::jsonb FROM job
+          )
+          SELECT CASE
+              WHEN NOT (SELECT due FROM gate) THEN 'not_due'
+              WHEN EXISTS (SELECT 1 FROM ins) THEN 'initialized'
+              WHEN EXISTS (SELECT 1 FROM reinit) THEN 'reinitialized'
+              WHEN EXISTS (SELECT 1 FROM advance WHERE skipped) THEN 'skipped_pending'
+              WHEN EXISTS (SELECT 1 FROM advance) THEN 'enqueued'
+              ELSE 'already_handled'
+            END AS result,
+            (SELECT id FROM job) AS job_id,
+            (SELECT extract(epoch FROM last_occurrence_at)::float8 FROM prev) AS previous_checkpoint
+        SQL
+
         CLEAR_SQL = <<~SQL.freeze
           DELETE FROM monk_jobs;
           DELETE FROM monk_processes;
+          DELETE FROM monk_recurring_tasks;
         SQL
 
         attr_reader :db_name
@@ -195,6 +258,24 @@ module Monk
         def fail(id, process_id, error:, retry_in:)
           row = with_connection { |c| c.exec_params(FAIL_SQL, [id, process_id, retry_in&.to_f, error]).first }
           row && row["state"].to_sym
+        end
+
+        # Handles one occurrence of a recurring task: initializes its
+        # checkpoint, enqueues its job, or finds the occurrence handled or
+        # not yet due (Firing). occurrence and clock are Times; clock, set
+        # only by Monk::Jobs.run_scheduler!, replaces the database clock.
+        def fire_recurring(key:, cron:, occurrence:, skip_if_pending:, job_class:, queue:, priority:, max_attempts:,
+                           args:, clock: nil)
+          params = [
+            key, cron, occurrence.utc.iso8601(6), skip_if_pending, queue, priority, max_attempts, job_class, args,
+            clock&.utc&.iso8601(6),
+          ]
+          row = with_connection { |c| c.exec_params(FIRE_RECURRING_SQL, params).first }
+          checkpoint = row["previous_checkpoint"]
+          Firing.new(
+            result: row["result"].to_sym, job_id: row["job_id"] && Integer(row["job_id"]),
+            previous_checkpoint: checkpoint && Time.at(Float(checkpoint).to_r, in: "UTC"),
+          )
         end
 
         # Moves up to `limit` due scheduled jobs to available; returns how many.
@@ -256,7 +337,8 @@ module Monk
           nil
         end
 
-        # Every job (payloads by cascade) and every process row. Behind
+        # Every job (payloads by cascade), every process row and every
+        # recurring task's checkpoint. Behind
         # Monk::Jobs.clear!, which only runs in tests.
         def clear!
           with_connection { |c| c.exec(CLEAR_SQL) }

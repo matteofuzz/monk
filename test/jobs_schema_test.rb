@@ -10,7 +10,7 @@ class JobsSchemaTest < Minitest::Test
 
   DB_NAME = :jobs_schema_test_db
   MIGRATIONS_DIR = File.expand_path("../lib/monk/templates/jobs/db/migrate", __dir__)
-  TABLES = %w[monk_job_payloads monk_jobs monk_processes].freeze
+  TABLES = %w[monk_job_payloads monk_jobs monk_processes monk_recurring_tasks].freeze
 
   def setup
     Monk::Persistence::Pg.reset!
@@ -25,7 +25,7 @@ class JobsSchemaTest < Minitest::Test
     Monk::Persistence::Pg.reset!
   end
 
-  def test_migrate_creates_the_three_jobs_tables
+  def test_migrate_creates_every_jobs_table
     skip_unless_postgres_available
 
     migrator.migrate!
@@ -114,11 +114,57 @@ class JobsSchemaTest < Minitest::Test
     end
   end
 
-  def test_rollback_drops_every_jobs_table
+  # One checkpoint row per recurring task, keyed by the declared key
+  # (docs/plan-scheduled-jobs.md decision 4).
+  def test_a_recurring_task_row_is_keyed_and_starts_with_no_job
+    skip_unless_postgres_available
+    migrator.migrate!
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      insert = "INSERT INTO monk_recurring_tasks (key, cron, last_occurrence_at) VALUES ('purge', '@daily', now())"
+      row = conn.exec("#{insert} RETURNING *").first
+
+      assert_nil row["last_job_id"]
+      refute_nil row["updated_at"]
+      assert_raises(PG::UniqueViolation) { conn.exec(insert) }
+    end
+  end
+
+  # Decision 4: no foreign key to monk_jobs. A job finishing (and being
+  # deleted) must not touch the task's row.
+  def test_a_recurring_tasks_last_job_id_may_point_at_a_finished_job
+    skip_unless_postgres_available
+    migrator.migrate!
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      conn.exec(<<~SQL)
+        INSERT INTO monk_recurring_tasks (key, cron, last_occurrence_at, last_job_id) VALUES ('purge', '@daily', now(), 999)
+      SQL
+
+      assert_equal 0, conn.exec(<<~SQL).getvalue(0, 0)
+        SELECT count(*) FROM pg_constraint WHERE conrelid = 'monk_recurring_tasks'::regclass AND contype = 'f'
+      SQL
+    end
+  end
+
+  # Rolling back the recurring migration alone leaves the queue in place.
+  def test_one_rollback_drops_only_the_recurring_table
     skip_unless_postgres_available
     migrator.migrate!
 
     migrator.rollback!
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      refute table_exists?(conn, "monk_recurring_tasks")
+      assert table_exists?(conn, "monk_jobs")
+    end
+  end
+
+  def test_rollback_drops_every_jobs_table
+    skip_unless_postgres_available
+    migrator.migrate!
+
+    migrator.rollback!(steps: 2)
 
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       TABLES.each { |table| refute table_exists?(conn, table), "expected #{table} to be dropped" }

@@ -9,6 +9,7 @@ Monk::Generator.define(:jobs) do
   copy "app/jobs/hello_job.rb", "app/routes/jobs.rb", role: :example
   copy "test/jobs_test.rb", role: :test
   migration "create_jobs_tables"
+  migration "create_recurring_tables"
 
   queues = { "JOBS_WORKERS" => "2", "JOBS_QUEUES" => "mailers,default" }
   env :development, queues

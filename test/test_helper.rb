@@ -450,7 +450,7 @@ module JobsTestHelpers
   end
 
   def drop_jobs_tables(conn)
-    %w[monk_job_payloads monk_jobs monk_processes schema_migrations].each do |table|
+    %w[monk_job_payloads monk_jobs monk_processes monk_recurring_tasks schema_migrations].each do |table|
       drop_table_if_exists(conn, table, cascade: true)
     end
   end

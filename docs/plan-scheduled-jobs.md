@@ -2,7 +2,7 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phases 0 and 1 done.
+(`monk add jobs`, ADR 0017). Phases 0–3 done.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -108,7 +108,10 @@ New terms for `CONTEXT.md` (Phase 7):
    follows the 0.22 upgrade guide (Phase 7).
 
    Declarations are stored in a list, and `freeze_registry!` makes that
-   list shareable. Queue, priority and `max_attempts` come from the job
+   list shareable. Declaring after the registry is frozen raises
+   `RegistryFrozenError`, since the scheduler would never see the task.
+   `args:` are deep-copied, so changing the caller's Array afterwards
+   doesn't change the task. Queue, priority and `max_attempts` come from the job
    class, as with any `enqueue`.
 
 3. **Cron syntax, UTC only.** Our own small parser, `Monk::Jobs::Cron`,
@@ -381,6 +384,18 @@ New terms for `CONTEXT.md` (Phase 7):
    - The checkpoint comes back from the statement so decision 6 can log
      it.
    - `clear!` empties the new table.
+   **Done (2026-10-12).** `Adapters::Pg#fire_recurring` runs the Phase 0
+   statement and returns a `Monk::Jobs::Firing` (`result`, `job_id`,
+   `previous_checkpoint` as a UTC `Time` or `nil`); the occurrence and
+   clock go in as ISO 8601, and the checkpoint comes back as epoch
+   seconds, so neither depends on the connection's type map. Tests:
+   `test/jobs_pg_recurring_test.rb` (18), plus the table's shape in
+   `test/jobs_schema_test.rb`.
+   Pulled forward from Phase 6: the jobs generator's
+   `migration "create_recurring_tables"` line (and its test). `clear!`
+   now deletes from `monk_recurring_tasks`, so a scaffolded app's own
+   tests fail without the table. The same goes for an existing app
+   until it adds the migration; the upgrade guide (Phase 7) says so.
 4. **Runtime integration.**
    - The scheduler step in `Runtime#tick`, with the per-process "last
      handled" Hash.
@@ -405,9 +420,9 @@ New terms for `CONTEXT.md` (Phase 7):
        Commented, because a demo task firing in every developer's
        `bin/jobs` is noise. Plus
        `example "jobs-recurring", todo: "uncomment to run the demo job every hour"`.
-     - `migration "create_recurring_tables"` after `create_jobs_tables`.
-       A new app gets both, stamped one second apart in that order
-       (`Run#migration_entries`).
+     - ~~`migration "create_recurring_tables"` after `create_jobs_tables`~~:
+       done in Phase 3. A new app gets both, stamped one second apart in
+       that order (`Run#migration_entries`).
    - `jobs/setup.md`: a "Recurring jobs" step (declare in
      `config/recurring.rb`, UTC, runs only while a `bin/jobs` is up), and
      a "Check it works" item using `Monk::Jobs.run_scheduler!` in a test.
@@ -415,8 +430,8 @@ New terms for `CONTEXT.md` (Phase 7):
      main calls; under pitfalls, cron is UTC and a new task first fires at
      its *next* occurrence, not on deploy.
    - `test/generators/jobs_test.rb`:
-     - a new app gets `config/recurring.rb` and both migrations, with
-       `create_recurring_tables` sorting after `create_jobs_tables`;
+     - a new app gets `config/recurring.rb` (both migrations, in order:
+       done in Phase 3);
      - the example tag `jobs-recurring` is reported;
      - with the example uncommented, the app's own tests pass and
        `Monk::Jobs.recurring_tasks` lists `hello_hourly` (proves the
@@ -446,7 +461,9 @@ New terms for `CONTEXT.md` (Phase 7):
      2. copy `config/recurring.rb` (`monk help jobs --file config/recurring.rb`);
      3. copy both halves of the migration under a new timestamp
         (`monk help jobs --file db/migrate/x_create_recurring_tables.up.sql`,
-        and `.down.sql`), then `bin/migrate`;
+        and `.down.sql`), then `bin/migrate`. Until then, `bin/jobs`
+        refuses to start with tasks declared, and the app's tests that
+        call `Monk::Jobs.clear!` fail on the missing table;
      4. optionally, the new `SETUP.md` and `AGENTS.md` jobs sections.
      An app made with 0.22 needs none of this. The CHANGELOG entry links
      here.
@@ -471,8 +488,9 @@ New terms for `CONTEXT.md` (Phase 7):
 
 - **Passing the occurrence to the job.** A daily report usually wants
   "which day", not "when did it run". An option like `occurrence_arg:
-  true`, appending the ISO 8601 occurrence to the args, is cheap. Decide
-  before Phase 2, or leave it for later.
+  true`, appending the ISO 8601 occurrence to the args, is cheap. Left
+  out of Phase 2 (2026-10-12): nothing needs it yet, and adding it later
+  changes no stored data.
 - **Pruning rows of removed tasks** (decision 10): a startup pass that
   deletes keys no longer declared would break a rolling deploy, where
   old processes still declare them. Leave it to a manual step unless it

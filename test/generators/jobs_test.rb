@@ -16,6 +16,18 @@ class GeneratorsJobsTest < Minitest::Test
     end
   end
 
+  # The recurring tasks' table comes second, stamped after the queue's.
+  def test_writes_the_recurring_migration_after_the_queues
+    with_new_app(:jobs) do |dest|
+      names = Dir.children(File.join(dest, "db/migrate")).grep(/\.up\.sql\z/).sort
+
+      assert_equal 2, names.size
+      assert_match(/_create_jobs_tables\.up\.sql\z/, names[0])
+      assert_match(/_create_recurring_tables\.up\.sql\z/, names[1])
+      assert_equal 2, Dir.children(File.join(dest, "db/migrate")).grep(/_create_recurring_tables\./).size
+    end
+  end
+
   def test_says_to_run_bin_jobs
     with_new_app do |dest|
       result = add_modules(dest, :jobs)
