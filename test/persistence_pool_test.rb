@@ -174,10 +174,12 @@ class PersistencePoolTest < Minitest::Test
   # -- Phase 10: the boot line --
 
   def test_the_boot_line_lists_the_pools_running_in_this_process
+    # Taken before start_pool, which skips without Postgres: the ensure
+    # still runs then, and mustn't set $stdout to nil.
+    original = $stdout
     start_pool(:p, size: 2)
     app = Class.new(Monk::Base) { get("/") { "hi" } }
 
-    original = $stdout
     $stdout = StringIO.new
     Monk.boot(app)
     output = $stdout.string
