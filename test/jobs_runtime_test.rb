@@ -306,7 +306,7 @@ class JobsRuntimeTest < Minitest::Test
     assert_equal "available", job_row(DB_NAME, id)["state"], "the late finish mustn't delete a released job"
   end
 
-  # --- recurring tasks (docs/plan-scheduled-jobs.md Phase 4) ---
+  # --- recurring tasks (docs/history/plan-scheduled-jobs.md Phase 4) ---
 
   # The checkpoint is set a few minutes back, as if the process had been
   # down: the first tick fires the latest occurrence.

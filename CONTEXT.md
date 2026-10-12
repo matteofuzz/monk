@@ -82,7 +82,23 @@ _Avoid_: Worker (one worker Ractor inside it), daemon, consumer
 
 **Stager**:
 The job process supervisor's once-a-tick step that turns due `scheduled` jobs into `available` ones, in batches. Every job process runs it; `SKIP LOCKED` keeps two from moving the same job. It's why a scheduled job or a retry can start up to one tick late.
-_Avoid_: Scheduler (that's recurring jobs, which Monk doesn't have), dispatcher, promoter
+_Avoid_: Scheduler (that's recurring jobs), dispatcher, promoter
+
+**Recurring task**:
+One declared schedule: `Monk::Jobs.recurring "purge_sessions", PurgeSessions, cron: "0 3 * * *"`, in `config/recurring.rb`. It has a key (its identity in the database, kept when the job class is renamed), a job class, a cron expression in UTC, and the args to enqueue with. One job class can have several, with different args.
+_Avoid_: Cron job, schedule (the cron expression is its schedule), periodic job
+
+**Occurrence**:
+A minute a recurring task's cron expression matches, in UTC: the moment a run of it is due.
+_Avoid_: Tick (the supervisor's), run (a run is the job enqueued for an occurrence)
+
+**Checkpoint**:
+The latest occurrence a recurring task has been handled for (enqueued, skipped while pending, or set when the task was first seen or its cron expression changed). One row per task in `monk_recurring_tasks`; it only moves forward, which is what stops two job processes from enqueueing the same occurrence (ADR 0016).
+_Avoid_: Last run (nothing may have run), cursor
+
+**Scheduler**:
+The job process supervisor's once-a-tick step that handles each recurring task's most recent occurrence. Every job process runs it; the checkpoint makes sure one of them enqueues each occurrence. Separate from the stager, which it sits next to.
+_Avoid_: Cron, dispatcher, stager (that moves due scheduled jobs)
 
 
 **Monk module**:

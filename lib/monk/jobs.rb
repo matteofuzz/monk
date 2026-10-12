@@ -77,7 +77,7 @@ module Monk
       # the job class keeps its place in the schedule. cron: is UTC (Cron).
       # skip_if_pending: true skips an occurrence while the job enqueued for
       # the previous one hasn't finished. Everything is checked here, so a
-      # mistake fails at boot (docs/plan-scheduled-jobs.md decision 2).
+      # mistake fails at boot (docs/history/plan-scheduled-jobs.md decision 2).
       def recurring(key, job_class, cron:, args: [], skip_if_pending: false)
         if @recurring_registry
           raise RegistryFrozenError,

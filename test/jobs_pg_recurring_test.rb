@@ -3,7 +3,7 @@ require "json"
 require "monk/jobs"
 require "monk/persistence/pg"
 
-# The Postgres adapter's fire_recurring (docs/plan-scheduled-jobs.md
+# The Postgres adapter's fire_recurring (docs/history/plan-scheduled-jobs.md
 # decisions 5-8, Phase 3): one statement that moves a recurring task's
 # checkpoint and enqueues its job, against the real schema.
 module JobsPgRecurringJobs

@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Added
+
+- **Recurring jobs.** `Monk::Jobs.recurring "purge_sessions",
+  PurgeSessions, cron: "0 3 * * *"`, declared in `config/recurring.rb`,
+  is enqueued by `bin/jobs` at each occurrence, once however many job
+  processes run. Five-field cron in UTC, plus `@hourly` to `@yearly`. A
+  new task first runs at its next occurrence, missed occurrences run
+  once, and `skip_if_pending: true` skips a run while the previous one
+  hasn't finished. `Monk::Jobs.run_scheduler!(at:)` runs the schedule in
+  tests. One checkpoint row per task in the new `monk_recurring_tasks`
+  table (ADR 0016, `docs/guides/jobs.md`, "Recurring jobs").
+  `monk add jobs` writes `config/recurring.rb` with a commented example
+  and the table's migration, and the base `config/load.rb` loads
+  `config/recurring.rb` after `app/`. An app that already has jobs:
+  `docs/guides/upgrading.md`, 0.22; until then its tests that call
+  `Monk::Jobs.clear!` fail on the missing table.
+
 ## 0.21.1 - 2026-10-09
 
 ### Fixed

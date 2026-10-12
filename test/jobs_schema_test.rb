@@ -115,7 +115,7 @@ class JobsSchemaTest < Minitest::Test
   end
 
   # One checkpoint row per recurring task, keyed by the declared key
-  # (docs/plan-scheduled-jobs.md decision 4).
+  # (docs/history/plan-scheduled-jobs.md decision 4).
   def test_a_recurring_task_row_is_keyed_and_starts_with_no_job
     skip_unless_postgres_available
     migrator.migrate!

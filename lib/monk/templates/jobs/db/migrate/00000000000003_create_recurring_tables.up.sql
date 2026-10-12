@@ -1,6 +1,6 @@
 -- Monk::Jobs.recurring: one checkpoint row per declared task, the latest
 -- occurrence it has been handled for. Why this shape:
--- docs/plan-scheduled-jobs.md decisions 4-8.
+-- docs/adr/0016-recurring-jobs-on-the-job-process-tick-with-a-checkpoint-row.md.
 CREATE TABLE monk_recurring_tasks (
   key TEXT PRIMARY KEY, -- the key given to Monk::Jobs.recurring
   cron TEXT NOT NULL, -- the expression the checkpoint was set under

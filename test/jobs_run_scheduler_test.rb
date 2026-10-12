@@ -4,7 +4,7 @@ require "monk/persistence/pg"
 
 # Monk::Jobs.run_scheduler!(at:), for an app's own tests of its recurring
 # tasks: one scheduler pass as if the clock read `at`, then drain!
-# (docs/plan-scheduled-jobs.md decision 11, Phase 5).
+# (docs/history/plan-scheduled-jobs.md decision 11, Phase 5).
 module JobsRunSchedulerJobs
   SEEN = [] # rubocop:disable Style/MutableConstant
 

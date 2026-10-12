@@ -2,8 +2,9 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phases 0–6 done.
-Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
+(`monk add jobs`, ADR 0017). All phases done (2026-10-12); moved to
+`history/` when Phase 7 finished.
+Builds on [`plan-jobs.md`](plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
 path, the stager and the worker loop don't change.
@@ -511,6 +512,18 @@ New terms for `CONTEXT.md` (Phase 7):
      An app made with 0.22 needs none of this. The CHANGELOG entry links
      here.
    - README feature table and CHANGELOG.
+   **Done (2026-10-12).** ADR 0016 (the migration's header now points at
+   it); `CONTEXT.md` (Recurring task, Occurrence, Checkpoint, Scheduler;
+   the Stager entry no longer says Monk has no recurring jobs);
+   `docs/guides/jobs.md`, "Recurring jobs" and "Testing recurring jobs";
+   README; CHANGELOG under "Unreleased". `docs/guides/upgrading.md` didn't
+   exist on the release branch yet, so it starts here with the 0.22
+   section holding only the jobs steps, for the release branch to add
+   auth's. Changes from the steps above: existing databases are migrated
+   with `bin/migrate`, not `bin/setup_db`; the Gemfile's `~> 0.21`
+   already allows 0.22; and `monk help` can't print a `SETUP.md` or
+   `AGENTS.md` section, so step 4 points at the gem's
+   `lib/monk/templates/jobs/{setup,agents}.md`.
 
 ## Explicitly out of scope
 

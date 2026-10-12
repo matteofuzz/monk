@@ -153,7 +153,7 @@ module Monk
           WHERE id = $1 AND state = 'running' AND locked_by = $2
         SQL
 
-        # The scheduler's one statement per occurrence (docs/plan-scheduled-jobs.md
+        # The scheduler's one statement per occurrence (docs/history/plan-scheduled-jobs.md
         # decisions 5-8). ins, reinit and advance touch the task's row in
         # mutually exclusive cases; advance is a compare-and-set on the
         # checkpoint, so of several processes firing the same occurrence
@@ -279,7 +279,7 @@ module Monk
         end
 
         # Whether monk_recurring_tasks exists, checked once when bin/jobs
-        # starts (docs/plan-scheduled-jobs.md decision 9).
+        # starts (docs/history/plan-scheduled-jobs.md decision 9).
         def recurring_table?
           with_connection { |c| !c.exec("SELECT to_regclass('monk_recurring_tasks')").getvalue(0, 0).nil? }
         end

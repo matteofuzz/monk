@@ -4,7 +4,7 @@ require_relative "../log"
 module Monk
   module Jobs
     # The supervisor's per-tick step for recurring tasks
-    # (docs/plan-scheduled-jobs.md decisions 5-7): asks the database about
+    # (docs/history/plan-scheduled-jobs.md decisions 5-7): asks the database about
     # each task's most recent occurrence, which enqueues it at most once
     # across every job process. Lives in the supervisor and isn't shared:
     # the occurrence each task last handled is this process's own memory,

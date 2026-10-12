@@ -134,7 +134,7 @@ module Monk
         last_heartbeat
       end
 
-      # Recurring tasks (docs/plan-scheduled-jobs.md decision 1). An
+      # Recurring tasks (docs/history/plan-scheduled-jobs.md decision 1). An
       # occurrence that errors isn't marked handled, so the next tick asks
       # again.
       def schedule

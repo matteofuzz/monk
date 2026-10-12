@@ -3,7 +3,7 @@ require "monk/jobs"
 require "monk/jobs/cron"
 
 # A recurring task's schedule: five cron fields, UTC only, and two pure
-# lookups the scheduler builds on (docs/plan-scheduled-jobs.md decision 3,
+# lookups the scheduler builds on (docs/history/plan-scheduled-jobs.md decision 3,
 # Phase 1). No database.
 class JobsCronTest < Minitest::Test
   Cron = Monk::Jobs::Cron

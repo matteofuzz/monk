@@ -4,7 +4,7 @@ require "monk/jobs"
 require "monk/jobs/scheduler"
 require "monk/persistence/pg"
 
-# The scheduler (docs/plan-scheduled-jobs.md decisions 5-7, Phase 4): one
+# The scheduler (docs/history/plan-scheduled-jobs.md decisions 5-7, Phase 4): one
 # pass per supervisor tick over the declared tasks, against the real
 # schema. Each Scheduler stands for one job process; `now` is passed in,
 # so the occurrences are fixed hours in the past, already reached by the

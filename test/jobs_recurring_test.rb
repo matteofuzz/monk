@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "monk/jobs"
 
-# Declaring recurring tasks (docs/plan-scheduled-jobs.md decision 2,
+# Declaring recurring tasks (docs/history/plan-scheduled-jobs.md decision 2,
 # Phase 2): checked when declared, so a mistake fails at boot; frozen with
 # the rest of Monk::Jobs' registry. No database.
 module JobsRecurringTest

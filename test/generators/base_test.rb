@@ -132,7 +132,7 @@ class GeneratorsBaseTest < Minitest::Test
 
   # config/recurring.rb (monk add jobs) declares schedules for job
   # classes, so it loads after app/, when they exist
-  # (docs/plan-scheduled-jobs.md decision 2).
+  # (docs/history/plan-scheduled-jobs.md decision 2).
   def test_config_load_requires_config_recurring_last
     Dir.mktmpdir do |dir|
       write_file(dir, "config/load.rb", template("base/config/load.rb"))

@@ -11,10 +11,9 @@ gets its own design doc and plan when work on it starts.
    - **Scheduled jobs.** Recurring jobs on a cron-like schedule in
      `Monk::Jobs`. One-off delayed jobs already exist (`enqueue(..., wait:)` /
      `at:`); recurring ones were left out of the first version
-     (`docs/guides/jobs.md`, "What's not here"). The plan,
-     `docs/plan-scheduled-jobs.md`, is on the `main_dev/scheduled_job` branch.
-     Its scaffold phase is a change to the jobs generator (`monk add jobs`,
-     ADR 0017).
+     (`docs/guides/jobs.md`, "What's not here"). Done on the
+     `main_dev/scheduled_job` branch (ADR 0016,
+     `docs/history/plan-scheduled-jobs.md`).
    - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and `login_tokens`
      belong to `Monk::Auth`, and expired rows pile up in every app, roughly
      one session a month per active person. `Monk::Auth` ships the cleanup as
