@@ -281,7 +281,7 @@ module Monk
         # Whether monk_recurring_tasks exists, checked once when bin/jobs
         # starts (docs/history/plan-scheduled-jobs.md decision 9).
         def recurring_table?
-          with_connection { |c| !c.exec("SELECT to_regclass('monk_recurring_tasks')").getvalue(0, 0).nil? }
+          with_connection { |c| !c.exec("SELECT to_regclass('monk_recurring_tasks')::text").getvalue(0, 0).nil? }
         end
 
         # Moves up to `limit` due scheduled jobs to available; returns how many.
