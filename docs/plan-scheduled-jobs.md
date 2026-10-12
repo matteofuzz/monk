@@ -2,7 +2,7 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phases 0–3 done.
+(`monk add jobs`, ADR 0017). Phases 0–4 done.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -404,6 +404,32 @@ New terms for `CONTEXT.md` (Phase 7):
      enqueue each occurrence once.
    - A test that a database error during the scheduler step is logged and
      retried on the next tick.
+   **Done (2026-10-12).** The per-tick step is its own class,
+   `Monk::Jobs::Scheduler` (`lib/monk/jobs/scheduler.rb`): the adapter,
+   the tasks and the "last handled" Hash, with `run(now, clock: nil)`,
+   which Phase 5's `run_scheduler!(at:)` reuses. Differences from the
+   plan above:
+   - **Its own `rescue`, after the heartbeat.** Under the stager's
+     `rescue`, an error only the scheduler hits would skip the heartbeat
+     on every tick, and other processes would prune this one as dead.
+     `Runtime#tick` now runs `housekeeping` (release, stage, beat) and then
+     `schedule`, each logging and reconnecting on its own.
+   - **The "two processes" test is on `Scheduler`**
+     (`test/jobs_scheduler_test.rb`): two instances against one database,
+     with fixed times, instead of two `Runtime`s on real time, which would
+     wait for minute boundaries and share one connection in a test
+     process. Phase 0 already raced 8 real connections.
+     `test/jobs_runtime_test.rb` covers the wiring: an overdue task is
+     enqueued and run, the startup check, no tasks needing no table, and a
+     scheduler error (a view it can't write to) logged and retried while
+     heartbeats go on.
+   - **Log lines**, prefixed `Monk::Jobs recurring <key>:`: info for a new
+     task (with its first run), a changed cron, each enqueue and each
+     `:skipped_pending`; warn for a catch-up ("caught up from …, skipped N
+     occurrences", counting stops at 10,000).
+   - Decision 9's error is `Monk::Jobs::MissingRecurringTableError`,
+     checked through `Adapters::Pg#recurring_table?` before the process
+     registers. The startup line reads "…, N recurring tasks (pid …)".
 5. **Testing helper.** `run_scheduler!(at:)` with its `MONK_ENV=test`
    guard, plus an end-to-end test: declare, initialize, advance, `drain!`.
 6. **Scaffolding (`monk add jobs`, `lib/monk/generators/jobs.rb`).**
@@ -444,7 +470,8 @@ New terms for `CONTEXT.md` (Phase 7):
 7. **Docs.**
    - ADR 0016: why the scheduler runs on the job-process tick with one
      checkpoint row per task. Records the option tables above and
-     decisions 5–8.
+     decisions 5–8. Point the migration's header comment at it (it names
+     this plan for now, which an app doesn't have).
    - `CONTEXT.md`: the Language terms above. Update the "Stager" entry,
      which currently says Monk has no recurring jobs.
    - `docs/guides/jobs.md`: a "Recurring jobs" section covering

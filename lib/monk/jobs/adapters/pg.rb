@@ -278,6 +278,12 @@ module Monk
           )
         end
 
+        # Whether monk_recurring_tasks exists, checked once when bin/jobs
+        # starts (docs/plan-scheduled-jobs.md decision 9).
+        def recurring_table?
+          with_connection { |c| !c.exec("SELECT to_regclass('monk_recurring_tasks')").getvalue(0, 0).nil? }
+        end
+
         # Moves up to `limit` due scheduled jobs to available; returns how many.
         def stage_due(limit = 500)
           with_connection { |c| c.exec_params(STAGE_SQL, [limit]).cmd_tuples }

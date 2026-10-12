@@ -11,6 +11,12 @@ module Monk
     class RegistryFrozenError < StandardError
     end
 
+    # bin/jobs starting with recurring tasks declared but no
+    # monk_recurring_tasks table: an app that has jobs from before 0.22
+    # and hasn't added the migration yet.
+    class MissingRecurringTableError < StandardError
+    end
+
     # A job_class name that isn't a Monk::Job subclass this process knows
     # about: a job enqueued by a newer deploy, a renamed class, or a name
     # that was never a job at all.
