@@ -1,6 +1,8 @@
 # Recurring jobs (`Monk::Jobs.recurring`) — implementation plan
 
-Branch: `main_dev/scheduled_job`. Designed 2026-10-06. Nothing built yet.
+Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
+own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
+(`monk add jobs`, ADR 0017). Phase 0 done; nothing else built yet.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -81,7 +83,7 @@ New terms for `CONTEXT.md` (Phase 7):
    process runs it for every task, whatever queues that process serves.
    `enqueue` doesn't care which process calls it.
 
-2. **Declared in `config/jobs.rb`, keyed explicitly.** For example:
+2. **Declared in `config/recurring.rb`, keyed explicitly.** For example:
 
    ```ruby
    Monk::Jobs.recurring "purge_sessions", PurgeExpiredSessions, cron: "0 3 * * *"
@@ -96,6 +98,14 @@ New terms for `CONTEXT.md` (Phase 7):
    - the cron expression parses and matches at least one minute (an
      expression like `0 0 30 2 *` never does);
    - no other task has the same key.
+
+   **Load order.** The declarations need the job classes, but
+   `config/load.rb` requires the module configs (`config/jobs.rb`
+   included) *before* `app/jobs/`. So they go in their own file,
+   `config/recurring.rb`, which the base template's `config/load.rb`
+   requires *after* the app's code, if it exists. The jobs generator
+   writes it. Only new apps get the new `load.rb`; an existing app
+   follows the 0.22 upgrade guide (Phase 7).
 
    Declarations are stored in a list, and `freeze_registry!` makes that
    list shareable. Queue, priority and `max_attempts` come from the job
@@ -168,12 +178,10 @@ New terms for `CONTEXT.md` (Phase 7):
    process whose clock runs fast can't fire early; the most it can do is
    ask a little sooner.
 
-   The open detail is how the statement records `last_job_id` without
-   updating the same row twice. The plan is to take the id from the
-   identity sequence first and insert with `OVERRIDING SYSTEM VALUE`, as
-   `HEARTBEAT_SQL` already does. Phase 0 confirms this, and falls back to
-   a short transaction (update, enqueue on the same connection, set
-   `last_job_id`) if the single statement turns out unclear.
+   The statement records `last_job_id` without updating the same row
+   twice: it draws the job's id from the identity sequence first and
+   inserts with `OVERRIDING SYSTEM VALUE`, as `HEARTBEAT_SQL` already
+   does. Phase 0 confirmed it; the statement is in "Phase 0 results".
 
 6. **Missed runs fire once, and new tasks don't fire on deploy.** The
    scheduler only ever asks about the most recent occurrence, so after
@@ -213,8 +221,14 @@ New terms for `CONTEXT.md` (Phase 7):
 9. **The table is checked when `bin/jobs` starts.** If any tasks are
    declared and `monk_recurring_tasks` doesn't exist (an existing app
    that didn't add the migration), `Runtime#run` raises before starting
-   workers. The error names the migration file to copy, so the supervisor
-   doesn't log a failure every second instead. The startup log line also
+   workers. The supervisor doesn't log a failure every second instead.
+
+   An app that already has jobs gets nothing from `monk add jobs` (the
+   module counts as installed, ADR 0017). The error names the migration
+   and `monk help jobs --file db/migrate/x_create_recurring_tables.up.sql`,
+   which prints Monk's version (it matches a migration by name, whatever
+   its timestamp), and points at the 0.22 upgrade guide (Phase 7), which
+   has the full steps. No upgrade command. The startup log line also
    lists how many recurring tasks there are.
 
 10. **Rows for removed tasks are left alone.** They're tiny and nothing
@@ -245,6 +259,98 @@ New terms for `CONTEXT.md` (Phase 7):
      occurrence costs with P processes.
    - **Ractors.** Confirm a parsed `Cron` `Data` is `Ractor.shareable?`
      once frozen.
+   **Results (2026-10-12, Postgres 16.15, Ruby 4.0.6). All passed.**
+   - **One statement covers all six outcomes** (below). Checked: each
+     outcome; catch-up fires once and returns the old checkpoint;
+     `:reinitialized` clears `last_job_id` and enqueues nothing;
+     `skip_if_pending` skips while the previous job is available,
+     running or scheduled for a retry, and enqueues when it failed or
+     finished; `skip_if_pending: false` ignores a pending job; the
+     optional clock (`$10`, for `run_scheduler!(at:)`) makes a future
+     occurrence due, and without it the database clock decides.
+   - **Racing processes.** 8 connections, each on its own thread (the
+     database race is the same as with Ractors; the per-Ractor
+     connection path is exercised again in Phase 4), firing each of 1,000
+     occurrences together: exactly 1,000 `:enqueued`, 7,000
+     `:already_handled`, 1,000 jobs and 1,000 payloads. About 4.3 ms per
+     occurrence for all 8 (0.5 ms a call), against a local database.
+     Two more races: with `skip_if_pending` and the previous job
+     finished between occurrences, every occurrence enqueued once and
+     none was skipped; with half the processes a minute behind, no
+     occurrence was enqueued twice and the checkpoint ended at the
+     latest one.
+   - **Ractors.** A frozen `Data` of frozen `Set`s (and of frozen
+     `Array`s) is `Ractor.shareable?` and readable inside a Ractor.
+   - **How it works.** `seq` draws the job id up front, so the one
+     `UPDATE` both moves the checkpoint and records the job. That burns
+     an id on every call that doesn't enqueue: once per occurrence per
+     process, harmless on a `BIGINT`. `ins`, `reinit` and `advance`
+     touch the row in mutually exclusive cases. The pending check is a
+     correlated subquery on `t.last_job_id` inside `advance`, so when an
+     `UPDATE` waits on a racing one, READ COMMITTED's recheck evaluates
+     it again on the row's latest version. The payload's foreign key is
+     checked at the end of the statement, as in `ENQUEUE_SQL`.
+   - **Known imprecision.** `previous_checkpoint` comes from the
+     statement's snapshot, so in a race it can be older than the row the
+     winner actually advanced. It only feeds decision 6's "skipped N
+     occurrences" log line, so that line can over-count during a race.
+     Accepted.
+
+   Parameters: `$1` key, `$2` cron, `$3` occurrence, `$4`
+   skip_if_pending, `$5` queue, `$6` priority, `$7` max_attempts, `$8`
+   job class, `$9` args (JSON), `$10` clock (`NULL` means `now()`; set
+   only by `run_scheduler!`).
+
+   ```sql
+       WITH gate AS (
+         SELECT $3::timestamptz <= COALESCE($10::timestamptz, now()) AS due
+       ), prev AS (
+         SELECT last_occurrence_at FROM monk_recurring_tasks WHERE key = $1
+       ), seq AS (
+         SELECT nextval(pg_get_serial_sequence('monk_jobs', 'id')) AS id
+       ), ins AS (
+         INSERT INTO monk_recurring_tasks (key, cron, last_occurrence_at)
+         SELECT $1, $2, $3 FROM gate WHERE due
+         ON CONFLICT (key) DO NOTHING
+         RETURNING key
+       ), reinit AS (
+         UPDATE monk_recurring_tasks t
+         SET cron = $2, last_occurrence_at = $3, last_job_id = NULL, updated_at = now()
+         FROM gate
+         WHERE gate.due AND t.key = $1 AND t.cron <> $2
+         RETURNING t.key
+       ), advance AS (
+         UPDATE monk_recurring_tasks t
+         SET last_occurrence_at = $3, updated_at = now(),
+           last_job_id = CASE
+             WHEN $4::boolean AND EXISTS (
+               SELECT 1 FROM monk_jobs j WHERE j.id = t.last_job_id AND j.state <> 'failed'
+             ) THEN t.last_job_id
+             ELSE seq.id
+           END
+         FROM gate, seq
+         WHERE gate.due AND t.key = $1 AND t.cron = $2 AND t.last_occurrence_at < $3
+         RETURNING t.last_job_id IS DISTINCT FROM seq.id AS skipped, seq.id AS job_id
+       ), job AS (
+         INSERT INTO monk_jobs (id, queue, priority, max_attempts, run_at, state) OVERRIDING SYSTEM VALUE
+         SELECT job_id, $5::text, $6::smallint, $7::smallint, now(), 'available' FROM advance WHERE NOT skipped
+         RETURNING id
+       ), payload AS (
+         INSERT INTO monk_job_payloads (job_id, job_class, args)
+         SELECT id, $8::text, $9::jsonb FROM job
+       )
+       SELECT CASE
+           WHEN NOT (SELECT due FROM gate) THEN 'not_due'
+           WHEN EXISTS (SELECT 1 FROM ins) THEN 'initialized'
+           WHEN EXISTS (SELECT 1 FROM reinit) THEN 'reinitialized'
+           WHEN EXISTS (SELECT 1 FROM advance WHERE skipped) THEN 'skipped_pending'
+           WHEN EXISTS (SELECT 1 FROM advance) THEN 'enqueued'
+           ELSE 'already_handled'
+         END AS result,
+         (SELECT id FROM job) AS job_id,
+         (SELECT last_occurrence_at FROM prev) AS previous_checkpoint
+   ```
+
 1. **`Monk::Jobs::Cron` (pure, no database).**
    - Parsing every supported form; clear errors for out-of-range values,
      wrong field counts and unknown shortcuts.
@@ -262,8 +368,9 @@ New terms for `CONTEXT.md` (Phase 7):
    - `reset!` clears declarations.
    - A `Monk::Jobs.recurring_tasks` reader, for the runtime and for tests.
 3. **Schema and adapter.**
-   - Migration `00000000000003_create_recurring_tables.up/down.sql` in
-     the `jobs` template, and the matching table in the test schema.
+   - Migration `lib/monk/templates/jobs/db/migrate/00000000000003_create_recurring_tables.{up,down}.sql`,
+     and the matching table in the test schema. The `00000000000003`
+     prefix only orders the templates; the generator stamps the copy.
    - `Adapters::Pg#fire_recurring` with one test per outcome of decision
      5, including `skip_if_pending` with a pending, a running, a failed
      and a finished previous job.
@@ -280,10 +387,41 @@ New terms for `CONTEXT.md` (Phase 7):
      retried on the next tick.
 5. **Testing helper.** `run_scheduler!(at:)` with its `MONK_ENV=test`
    guard, plus an end-to-end test: declare, initialize, advance, `drain!`.
-6. **Scaffolding.**
-   - `monk new --jobs` ships the new migration.
-   - `config/jobs.rb` gets a commented `recurring` example.
-   - `scaffold_jobs_test.rb` covers both.
+6. **Scaffolding (`monk add jobs`, `lib/monk/generators/jobs.rb`).**
+   Generators only create files and append lines (ADR 0017), so this is
+   template content and DSL lines; no generator code changes.
+   - **Base template, `config/load.rb`:** after the `app/` roles are
+     loaded, `require` `config/recurring.rb` if it exists, with a comment
+     saying why it comes last (decision 2). `test/generators/base_test.rb`
+     covers that it's loaded after `app/jobs/`.
+   - **Jobs generator:**
+     - `copy "config/recurring.rb", role: :wiring`: a commented example
+       tagged `monk:example jobs-recurring`,
+       `Monk::Jobs.recurring "hello_hourly", HelloJob, cron: "@hourly", args: ["cron"]`.
+       Commented, because a demo task firing in every developer's
+       `bin/jobs` is noise. Plus
+       `example "jobs-recurring", todo: "uncomment to run the demo job every hour"`.
+     - `migration "create_recurring_tables"` after `create_jobs_tables`.
+       A new app gets both, stamped one second apart in that order
+       (`Run#migration_entries`).
+   - `jobs/setup.md`: a "Recurring jobs" step (declare in
+     `config/recurring.rb`, UTC, runs only while a `bin/jobs` is up), and
+     a "Check it works" item using `Monk::Jobs.run_scheduler!` in a test.
+   - `jobs/agents.md`: `Monk::Jobs.recurring` and where it goes under
+     main calls; under pitfalls, cron is UTC and a new task first fires at
+     its *next* occurrence, not on deploy.
+   - `test/generators/jobs_test.rb`:
+     - a new app gets `config/recurring.rb` and both migrations, with
+       `create_recurring_tables` sorting after `create_jobs_tables`;
+     - the example tag `jobs-recurring` is reported;
+     - with the example uncommented, the app's own tests pass and
+       `Monk::Jobs.recurring_tasks` lists `hello_hourly` (proves the
+       load order with a real class);
+     - `test_the_apps_own_tests_pass_with_mail_and_auth_too` keeps
+       passing with the new migration, which checks it applies.
+   - `docs/guides/scaffolding.md`: the jobs entry lists
+     `config/recurring.rb`, the second migration and the example.
+
 7. **Docs.**
    - ADR 0016: why the scheduler runs on the job-process tick with one
      checkpoint row per task. Records the option tables above and
@@ -295,6 +433,19 @@ New terms for `CONTEXT.md` (Phase 7):
      `skip_if_pending`, changing a schedule, adding the migration to an
      existing app, and testing. Remove "recurring (cron) jobs" from
      "What's not here".
+   - **The jobs part of the 0.22 upgrade guide** (`docs/guides/upgrading.md`,
+     one section per release; the guide itself belongs to the release
+     branch, which adds the auth steps). For an app that already has
+     jobs:
+     1. add the `config/recurring.rb` line at the end of `config/load.rb`
+        (`monk help base --file config/load.rb`);
+     2. copy `config/recurring.rb` (`monk help jobs --file config/recurring.rb`);
+     3. copy both halves of the migration under a new timestamp
+        (`monk help jobs --file db/migrate/x_create_recurring_tables.up.sql`,
+        and `.down.sql`), then `bin/migrate`;
+     4. optionally, the new `SETUP.md` and `AGENTS.md` jobs sections.
+     An app made with 0.22 needs none of this. The CHANGELOG entry links
+     here.
    - README feature table and CHANGELOG.
 
 ## Explicitly out of scope

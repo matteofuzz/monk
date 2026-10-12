@@ -13,9 +13,8 @@ gets its own design doc and plan when work on it starts.
      `at:`); recurring ones were left out of the first version
      (`docs/guides/jobs.md`, "What's not here"). The plan,
      `docs/plan-scheduled-jobs.md`, is on the `main_dev/scheduled_job` branch.
-     It predates scaffolding by module: its scaffold phase still says
-     `monk new --jobs` and must become a change to the jobs generator
-     (`monk add jobs`, ADR 0017).
+     Its scaffold phase is a change to the jobs generator (`monk add jobs`,
+     ADR 0017).
    - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and `login_tokens`
      belong to `Monk::Auth`, and expired rows pile up in every app, roughly
      one session a month per active person. `Monk::Auth` ships the cleanup as
@@ -30,6 +29,12 @@ gets its own design doc and plan when work on it starts.
      `Monk::Auth`.
      `Monk::Auth::RateLimiter` stays as it is: per process, in memory,
      approximate.
+   - **An upgrade guide for 0.21 apps.** `docs/guides/upgrading.md`, one
+     section per release from now on: the files to copy and the lines to
+     add (`monk help MODULE --file PATH` prints Monk's version), and the
+     migrations to add. `monk add` does nothing for a module already
+     installed, so this is how an existing app picks up recurring jobs and
+     the new auth tables.
 
 2. **0.23: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.
