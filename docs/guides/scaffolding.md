@@ -79,8 +79,8 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   `DB_*`, with database names taken from the app's directory),
   `bin/setup_db`, `bin/migrate`, `bin/console`, `db/migrate/`; the
   `postgres-model` example (a table, a model, its routes); a test that
-  connects. `pg` 1.6+ installs precompiled with its own libpq, so the one
-  `Dockerfile` needs no system packages.
+  connects. `pg` 1.6+ installs precompiled with its own libpq, so the
+  `Dockerfile` needs no Postgres packages.
 - **redis:** `config/redis.rb` (the `redis_url` setting: a local default in
   development and test, required elsewhere); the `redis-cache` example; a
   test that pings.

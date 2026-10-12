@@ -123,7 +123,6 @@ module GeneratorTestHelpers
   NOW = Time.utc(2026, 10, 8, 14, 30, 0)
 
   def with_new_app(*modules, options: {})
-    require "monk/generators"
     Dir.mktmpdir("monk-generated") do |tmp|
       dest = File.join(tmp, "shop")
       FileUtils.mkdir_p(dest)
@@ -134,6 +133,7 @@ module GeneratorTestHelpers
   end
 
   def add_modules(dest, *modules, options: {}, now: NOW, dry_run: false)
+    require "monk/generators"
     Monk::Generator.registry.add(dest, modules, options: options, now: now, dry_run: dry_run)
   end
 

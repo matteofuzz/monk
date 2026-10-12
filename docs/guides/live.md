@@ -231,27 +231,32 @@ so there's no Redis to run at all:
 
 ```ruby
 # config/websocket.rb
-AppWebSocket::REGISTRY = Monk::WebSocket::PgFanout.new(
-  Monk::WebSocket::Registry.new, pg_opts: Monk::Persistence::Pg.connection_options(:primary),
-)
-```
-
-It reuses the `:primary` connection's settings (`DB_*`) — no new
-configuration, no `REDIS_URL`.
-
-Each Ractor that publishes holds a publishing connection of its own (8 for
-8 web workers). `db_pool:` publishes through a [pool](persistence.md#pools)
-of size 1 instead, one connection per process, and LISTENs on that pool's
-database:
-
-```ruby
-# config/persistence.rb
 Monk::Persistence::Pg.pool(:notify, size: 1)
-# config/websocket.rb
-AppWebSocket::REGISTRY = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
-# at boot, in every process that publishes (the LISTEN has its own connection)
-Monk::Persistence::Pg.start_pools!(:notify)
+
+module AppWebSocket
+  def self.build_registry
+    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
+  end
+
+  def self.start!
+    Monk::Persistence::Pg.start_pools!(:notify)
+  end
+
+  REGISTRY = build_registry
+end
 ```
+
+It publishes through a [pool](persistence.md#pools) of size 1 on the
+`:primary` database (`DB_*`), so a process holds one publishing connection
+however many Ractors publish, with no new configuration and no
+`REDIS_URL`. The LISTEN, in `bin/websocket_server` only, has a connection
+of its own. The pool has to be started in every process that publishes:
+`config/load.rb` calls `AppWebSocket.start!` at the end (`bin/server`,
+`bin/jobs`, `bin/console`, the tests), and so does `bin/websocket_server`.
+
+Without the pool, `pg_opts: Monk::Persistence::Pg.connection_options(:primary)`
+instead of `db_pool:` gives each Ractor that publishes a connection of its
+own (8 for 8 web workers), and there is nothing to start.
 
 Through the pool, `Monk::Live.patch` doesn't wait for Postgres: a publish
 that fails is logged instead of raised, and the page catches up at its

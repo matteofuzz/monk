@@ -37,9 +37,10 @@ class GeneratorsWebSocketServerTest < Minitest::Test
     assert_connections_stay_fixed(:auth, :websocket, transport: "redis", extra: 0)
   end
 
-  # Live over Postgres: PgFanout's LISTEN is one more connection.
+  # Live over Postgres: PgFanout's LISTEN and the :notify pool's publishing
+  # connection are two more.
   def test_the_live_server_checks_sessions_through_the_pool
-    assert_connections_stay_fixed(:auth, :live, transport: "postgres", extra: 1)
+    assert_connections_stay_fixed(:auth, :live, transport: "postgres", extra: 2)
   end
 
   # Without auth, no pool and no Postgres: a socket is let in anonymously.

@@ -9,9 +9,10 @@ Neither case changes anything in this repo (`monk` itself) — they describe
 how a generated app deploys.
 
 Every scaffold also ships a `Dockerfile` and `.dockerignore` — `monk new`
-writes them unconditionally, the same for every app: no system packages,
-since kino and `pg` (1.6+, which brings its own `libpq`) are precompiled
-gems. Neither the Fly.io
+writes them unconditionally, the same for every app. The only system
+package is a compiler in the build stage, for the few gems that build a
+native extension (`irb`'s dependencies); kino and `pg` (1.6+, which brings
+its own `libpq`) are precompiled gems. Neither the Fly.io
 Dockerfile in section 2 nor the Compose setup in section 4 needs copying by
 hand any more; they're shown there because those sections still have to
 explain what the file does and how it's used, not because you write it
@@ -130,6 +131,10 @@ rubygems.org, `require: "monk"`), not via the local gemspec:
 FROM ruby:4.0-slim AS builder
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends build-essential \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY Gemfile Gemfile.lock* ./
 RUN bundle install
 
@@ -143,8 +148,11 @@ EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]
 ```
 
-No `apt-get`: the `pg` gem (1.6+) installs precompiled for Linux with its
-own `libpq`, so neither stage needs `libpq-dev`, `libpq5` or a compiler.
+`build-essential` is only in the build stage: `monk add postgres` adds
+`irb` (for `bin/console`), and its dependencies (`erb`, `io-console`,
+`prism`) compile native extensions. The image that runs has no compiler.
+The `pg` gem (1.6+) installs precompiled for Linux with its own `libpq`, so
+neither stage needs `libpq-dev` or `libpq5`.
 Port 9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
 default for the separate WebSocket process (section 3, below); running
 both on 9293 would collide them.

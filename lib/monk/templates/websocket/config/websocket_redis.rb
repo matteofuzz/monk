@@ -17,5 +17,10 @@ module AppWebSocket
     Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Registry.new, redis_url: Monk::Settings[:redis_url])
   end
 
+  # Nothing to open here: each publishing Ractor connects to Redis on its
+  # first broadcast. config/load.rb and bin/websocket_server call it all
+  # the same, as they would with Postgres.
+  def self.start!; end
+
   REGISTRY = build_registry
 end
