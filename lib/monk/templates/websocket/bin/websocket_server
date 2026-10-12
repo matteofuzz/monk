@@ -25,6 +25,10 @@ Monk::Bin.run(__FILE__) do
     exit 1
   end
 
+  # A socket's handler can broadcast too (the websocket-chat example does),
+  # so this process publishes like the others.
+  AppWebSocket.start!
+
   # This process holds the sockets, so it's the only one that listens for
   # what the others publish: the transport's subscriber connection opens
   # here, and an unreachable Postgres or Redis fails right here.

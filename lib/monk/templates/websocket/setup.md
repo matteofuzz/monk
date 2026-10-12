@@ -24,11 +24,14 @@ connect with `wss://`.
 
 1. If the other one isn't installed, add it: `monk add redis` or
    `monk add postgres`.
-2. In `config/websocket.rb`, swap the fanout: `Monk::WebSocket::RedisFanout`
-   with `redis_url: Monk::Settings[:redis_url]` (and `require_relative
-   "redis"`), or `Monk::WebSocket::PgFanout` with
-   `pg_opts: Monk::Persistence::Pg.connection_options(:primary)` (and
-   `require_relative "persistence"`).
+2. Replace `config/websocket.rb` with Monk's version for the other
+   transport (`redis` or `postgres`), then carry over anything you changed
+   in it:
+
+   ```bash
+   monk help websocket --file config/websocket.rb --transport=redis > config/websocket.rb
+   ```
+
 3. Restart `bin/server`, `bin/websocket_server` and `bin/jobs`.
 
 ### Check it works

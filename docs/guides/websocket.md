@@ -102,10 +102,14 @@ should keep `true`, which refuses them at the door.
 ([`scaffolding.md`](scaffolding.md)):
 
 - **`config/websocket.rb`** builds the app's one registry,
-  `AppWebSocket::REGISTRY`, over the transport: a `PgFanout` on the
-  `:primary` connection's settings, or a `RedisFanout` at
-  `Monk::Settings[:redis_url]`. Every process loads it; `bin/server` and
-  `bin/jobs` only publish through it. `AppWebSocket::TRANSPORT` says which.
+  `AppWebSocket::REGISTRY`, over the transport: a `PgFanout` publishing
+  through the `:notify` pool (size 1, one connection per process, on the
+  `:primary` database), or a `RedisFanout` at `Monk::Settings[:redis_url]`.
+  Every process loads it; `bin/server` and `bin/jobs` only publish through
+  it. `AppWebSocket::TRANSPORT` says which. `AppWebSocket.start!` opens
+  the transport (starts the `:notify` pool; nothing with Redis):
+  `config/load.rb` calls it at the end, so every process that loads the
+  app can publish, and `bin/websocket_server` calls it too.
 - **`bin/websocket_server`** loads it, plus `config/auth.rb` and
   `config/live.rb` if the app has them, and runs Live's handler with live,
   or else the app's `AppSockets::HANDLER` from `app/sockets/` (the
@@ -120,11 +124,10 @@ should keep `true`, which refuses them at the door.
 
 1. If the other one isn't installed, add it: `monk add redis` or
    `monk add postgres`.
-2. In `config/websocket.rb`, swap the fanout: `Monk::WebSocket::RedisFanout`
-   with `redis_url: Monk::Settings[:redis_url]` (and `require_relative
-   "redis"`), or `Monk::WebSocket::PgFanout` with
-   `pg_opts: Monk::Persistence::Pg.connection_options(:primary)` (and
-   `require_relative "persistence"`).
+2. Replace `config/websocket.rb` with Monk's version for the other
+   transport, then carry over anything you changed in it:
+   `monk help websocket --file config/websocket.rb --transport=redis > config/websocket.rb`
+   (or `--transport=postgres`).
 3. Restart `bin/server`, `bin/websocket_server` and `bin/jobs`.
 
 ## Stopping and restarting

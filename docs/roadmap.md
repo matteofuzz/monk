@@ -6,20 +6,7 @@ gets its own design doc and plan when work on it starts.
 
 ## Releases
 
-1. **0.21.1: Fixes to the 0.21 scaffold.** Both affect every app
-   `monk new` writes today.
-   - **The `:notify` pool.** `monk add websocket --transport=postgres`
-     should scaffold the publisher pool 0.20.0 introduced
-     (`Pg.pool(:notify, size: 1)`, `PgFanout.new(..., db_pool: :notify)`,
-     started in `config.ru` and the test helper). Without it every
-     `bin/server` worker opens its own publishing connection.
-   - **The scaffolded `Dockerfile` doesn't build.** Its builder stage has no
-     compiler, but `monk add postgres` adds `gem "irb"`, whose dependencies
-     (`erb`, `io-console`, `prism`) compile native extensions. Either
-     `build-essential` in the builder, or `irb` in the development group and
-     `BUNDLE_WITHOUT` in the image.
-
-2. **0.22: Recurring jobs and auth housekeeping.** Until then, an app that
+1. **0.22: Recurring jobs and auth housekeeping.** Until then, an app that
    prunes old rows on a schedule needs a job that re-enqueues itself.
    - **Scheduled jobs.** Recurring jobs on a cron-like schedule in
      `Monk::Jobs`. One-off delayed jobs already exist (`enqueue(..., wait:)` /
@@ -44,7 +31,7 @@ gets its own design doc and plan when work on it starts.
      `Monk::Auth::RateLimiter` stays as it is: per process, in memory,
      approximate.
 
-3. **0.23: Live on real networks, and presence.** For apps that show
+2. **0.23: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.
    - **Mobile.** The Live client already reconnects with a jittered backoff
      (500 ms to 30 s), and the WebSocket server can ping (`ping_interval:`).
@@ -63,7 +50,7 @@ gets its own design doc and plan when work on it starts.
      without disconnecting its sockets gets cleaned up, and whether it's a
      Live feature or a WebSocket one.
 
-4. **0.24: PWA and web push.** Together because on iOS web push needs the
+3. **0.24: PWA and web push.** Together because on iOS web push needs the
    app installed on the Home Screen.
    - **PWA scaffolding.** A web app manifest and a `sw.js` served at the
      root scope, without getting in the way of the Live client.
@@ -72,7 +59,7 @@ gets its own design doc and plan when work on it starts.
      (404/410). Nothing in it is specific to one kind of app, and it makes a
      PWA useful to any Monk app.
 
-5. **0.25: `monk check`: verifying an environment's wiring.** `bin/check`
+4. **0.25: `monk check`: verifying an environment's wiring.** `bin/check`
    (written by the base app) loads `config/load` and runs a read-only check
    for each loaded module. The checks belong to the framework modules
    (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
@@ -105,7 +92,7 @@ gets its own design doc and plan when work on it starts.
    storage's release adds its own check (bucket access, CORS for
    `PUBLIC_URL`).
 
-6. **0.26: File storage, `Monk::Storage`.** An opt-in storage layer
+5. **0.26: File storage, `Monk::Storage`.** An opt-in storage layer
    configured by one `STORAGE_URL`. It has one S3-compatible backend
    (Hetzner, R2, B2, AWS, MinIO) that signs its own SigV4 requests, and
    local files in development and test. Browsers upload straight to the
@@ -118,7 +105,7 @@ gets its own design doc and plan when work on it starts.
    the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle rule,
    and same-bucket copy. The plan's earlier phases don't depend on them.
 
-7. **0.27: Richer HTML support, forms first.** Views offer only `render`, `h`,
+6. **0.27: Richer HTML support, forms first.** Views offer only `render`, `h`,
    `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
    deliberately left them out). Templates write every form by hand, including
    its CSRF field and the values to fill back in after a failed submit. Before

@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.21.1 - 2026-10-09
+
+### Fixed
+
+- **`monk add websocket --transport=postgres` publishes through the
+  `:notify` pool.** `config/websocket.rb` declares
+  `Monk::Persistence::Pg.pool(:notify, size: 1)` and builds
+  `PgFanout.new(..., db_pool: :notify)`, so a process holds one publishing
+  connection however many Ractors publish. Before, every `bin/server`
+  worker opened its own. `AppWebSocket.start!` starts the pool (with
+  Redis it does nothing): `config/load.rb` calls it at the end, which
+  covers `bin/server`, `bin/jobs`, `bin/console` and the tests, and
+  `bin/websocket_server` calls it too. An existing app: replace
+  `config/websocket.rb` with
+  `monk help websocket --file config/websocket.rb --transport=postgres`
+  and add the last lines of `monk help base --file config/load.rb`.
+- **The scaffolded `Dockerfile` builds with `monk add postgres`.** Its
+  builder stage installs `build-essential`: `irb`'s dependencies (`erb`,
+  `io-console`, `prism`) compile native extensions. The image that runs
+  still has no compiler. An existing app: add the `apt-get` line from
+  `monk help base --file Dockerfile`.
+
 ## 0.21.0 - 2026-10-09
 
 ### Changed (breaking)
