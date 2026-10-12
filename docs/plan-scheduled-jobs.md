@@ -2,7 +2,7 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phase 0 done; nothing else built yet.
+(`monk add jobs`, ADR 0017). Phases 0 and 1 done.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -118,7 +118,11 @@ New terms for `CONTEXT.md` (Phase 7):
      (`/`). Day of week runs 0–7, with both 0 and 7 meaning Sunday.
    - Shortcuts: `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`.
    - When both day of month and day of week are restricted, a day
-     matching either one counts, as in Vixie cron.
+     matching either one counts, as in Vixie cron. Also as in Vixie, a
+     field starting with `*` doesn't count as restricted, steps included:
+     `0 0 */2 * 1` is Mondays that fall on an odd day.
+   - A step goes on `*` or a range: `5/10` is rejected rather than read
+     as `5-59/10`.
    - No seconds, no names (`jan`, `mon`), no time zones. Every time is
      UTC, and the guide says so plainly.
    - A parsed expression is a frozen `Data` of frozen integer sets, so it

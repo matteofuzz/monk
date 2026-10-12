@@ -25,5 +25,10 @@ module Monk
     # the caller's input that's wrong.
     class InvalidArgumentsError < ArgumentError
     end
+
+    # A recurring task's cron expression that doesn't parse, or never
+    # matches a minute. Raised when the task is declared, at boot.
+    class InvalidCronError < ArgumentError
+    end
   end
 end
