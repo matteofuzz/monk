@@ -1,5 +1,5 @@
 require "json"
-require_relative "../jobs"
+require_relative "../log"
 
 module Monk
   module Jobs
@@ -21,15 +21,17 @@ module Monk
 
       # One pass as if the clock read `now`. clock: replaces the database
       # clock too (Monk::Jobs.run_scheduler!); without it, the database
-      # decides whether an occurrence has arrived.
+      # decides whether an occurrence has arrived. Returns each task asked
+      # about this pass, key => Firing#result.
       def run(now = Time.now, clock: nil)
-        @tasks.each do |task|
+        @tasks.each_with_object({}) do |task, results|
           occurrence = task.cron.previous(now)
           next if @handled[task.key] == occurrence
 
           firing = fire(task, occurrence, clock)
           @handled[task.key] = occurrence unless firing.result == :not_due
           report(task, occurrence, firing)
+          results[task.key] = firing.result
         end
       end
 

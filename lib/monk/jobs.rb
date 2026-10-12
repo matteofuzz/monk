@@ -5,6 +5,7 @@ require_relative "jobs/errors"
 require_relative "jobs/args"
 require_relative "jobs/cron"
 require_relative "jobs/recurring_task"
+require_relative "jobs/scheduler"
 require "json"
 
 module Monk
@@ -198,9 +199,32 @@ module Monk
         ran
       end
 
+      # Runs one scheduler pass as if the clock read `at`, for an app's
+      # tests of its recurring tasks; returns key => result (:initialized,
+      # :enqueued, ...). `at` stands in for the database clock as well, so
+      # it only runs with MONK_ENV=test. The first pass sets a task's
+      # checkpoint without enqueueing, as a deploy would:
+      #
+      #   Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 8, 59))
+      #   Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9)) # => {"weekly_digest" => :enqueued}
+      #   Monk::Jobs.drain!
+      #
+      # Calls Monk.freeze! first, as bin/jobs does.
+      def run_scheduler!(at: Time.now)
+        unless Monk.env.test?
+          raise RunSchedulerOutsideTestsError,
+            "Monk::Jobs.run_scheduler! fires schedules at a made-up time, so it only runs with MONK_ENV=test " \
+            "(this is #{Monk.env})"
+        end
+
+        Monk.freeze!
+        Scheduler.new(adapter, recurring_tasks).run(at, clock: at)
+      end
+
       # Empties the queue: every job, failed ones included, and every job
-      # process row. For an app's tests, between one test and the next --
-      # and so it refuses to run unless MONK_ENV is test.
+      # process row, and every recurring task's checkpoint. For an app's
+      # tests, between one test and the next -- and so it refuses to run
+      # unless MONK_ENV is test.
       def clear!
         unless Monk.env.test?
           raise ClearOutsideTestsError,

@@ -32,6 +32,11 @@ module Monk
     class ClearOutsideTestsError < StandardError
     end
 
+    # Monk::Jobs.run_scheduler! outside MONK_ENV=test: it would fire a real
+    # app's schedules at a made-up time.
+    class RunSchedulerOutsideTestsError < StandardError
+    end
+
     # An ArgumentError, like Monk::Mail::InvalidMessageError: it's always
     # the caller's input that's wrong.
     class InvalidArgumentsError < ArgumentError

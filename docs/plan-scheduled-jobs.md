@@ -2,7 +2,7 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). Phases 0–4 done.
+(`monk add jobs`, ADR 0017). Phases 0–5 done.
 Builds on [`history/plan-jobs.md`](history/plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,
 without changing the claim query". This plan does exactly that: the claim
@@ -432,6 +432,13 @@ New terms for `CONTEXT.md` (Phase 7):
      registers. The startup line reads "…, N recurring tasks (pid …)".
 5. **Testing helper.** `run_scheduler!(at:)` with its `MONK_ENV=test`
    guard, plus an end-to-end test: declare, initialize, advance, `drain!`.
+   **Done (2026-10-12).** `Monk::Jobs.run_scheduler!(at: Time.now)`
+   calls `Monk.freeze!`, then runs a fresh `Scheduler` with `clock: at`,
+   so nothing is remembered between calls. It returns key => result
+   (`{"weekly_digest" => :enqueued}`) for a test to assert on. Outside
+   `MONK_ENV=test` it raises `RunSchedulerOutsideTestsError`. Tests in
+   `test/jobs_run_scheduler_test.rb` (8), including `drain!` not firing
+   an overdue task and `clear!` forgetting checkpoints.
 6. **Scaffolding (`monk add jobs`, `lib/monk/generators/jobs.rb`).**
    Generators only create files and append lines (ADR 0017), so this is
    template content and DSL lines; no generator code changes.
