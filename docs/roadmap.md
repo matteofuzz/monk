@@ -11,7 +11,7 @@ gets its own design doc and plan when work on it starts.
    - **Scheduled jobs.** Done: `Monk::Jobs.recurring`, declared in
      `config/recurring.rb` and enqueued by `bin/jobs` (ADR 0016,
      `docs/history/plan-scheduled-jobs.md`).
-   - **Auth housekeeping**, planned in `docs/plan-auth-housekeeping.md`:
+   - **Auth housekeeping.** Done (`docs/plan-auth-housekeeping.md`):
      - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and
        `login_tokens` belong to `Monk::Auth`, and expired rows pile up in
        every app, roughly one session a month per active person.
@@ -34,8 +34,7 @@ gets its own design doc and plan when work on it starts.
      add (`monk help MODULE --file PATH` prints Monk's version), and the
      migrations to add. `monk add` does nothing for a module already
      installed, so this is how an existing app picks up recurring jobs and
-     the new auth table and index. The jobs steps are written; the auth
-     ones come with the plan above.
+     the new auth table and index. Done: the 0.22 section covers both.
 
 2. **0.23: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.

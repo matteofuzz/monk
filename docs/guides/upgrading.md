@@ -54,3 +54,47 @@ missing table, with or without recurring tasks.
    Monk's versions are in the gem, under
    `$(bundle info monkrb --path)/lib/monk/templates/jobs/`: `setup.md` and
    `agents.md`.
+
+### Auth housekeeping (apps with auth)
+
+0.22 adds a login-email rate limit in the database
+(`Monk::Auth.allow_login_request?`, [`auth.md`](auth.md#rate-limiting-login-emails)),
+an index on `sessions (subject)`, and a nightly cleanup job
+([`auth.md`](auth.md#cleaning-up-expired-rows)).
+
+1. **Add the migration**, both halves, under a new timestamp, and apply
+   it to every database, the test one included:
+   ```bash
+   ts=$(date -u +%Y%m%d%H%M%S)
+   monk help auth --file db/migrate/x_create_login_requests.up.sql > db/migrate/${ts}_create_login_requests.up.sql
+   monk help auth --file db/migrate/x_create_login_requests.down.sql > db/migrate/${ts}_create_login_requests.down.sql
+   bin/migrate && DB_NAME=my_app_test bin/migrate
+   ```
+   Before applying it:
+   - If the app already indexes `sessions (subject)` under another name,
+     delete the `CREATE INDEX` line (and the `DROP INDEX` line in
+     `.down.sql`), or drop your own index afterwards.
+   - If the app already has a table called `login_requests`, rename one
+     of them first. If yours is a per-address limit with the same columns
+     (`email` as primary key, `requested_at`), you can keep its rows: drop
+     the `CREATE TABLE` from the migration instead.
+2. **Use the rate limit in the login route**, before sending or
+   enqueueing the link, in place of the app's own per-email limit:
+   ```ruby
+   halt(429) unless Monk::Auth.allow_login_request?(email)
+   ```
+   `monk help auth --file app/routes/auth.rb` shows it in Monk's routes.
+3. **In the app's tests that ask for login links**, call
+   `Monk::Auth.clear_login_requests!` in `teardown`.
+4. **Schedule the cleanup.** With jobs: the `config/recurring.rb` copied
+   in "Recurring jobs" above already has this line; if the app had its
+   own file, add it:
+   ```ruby
+   Monk::Jobs.recurring "monk_auth_sweep", Monk::Auth::Sweep, cron: "17 3 * * *" if defined?(Monk::Auth::Sweep)
+   ```
+   Without jobs, call `Monk::Auth.sweep!` on a schedule of your own. Any
+   job the app already has for this can go.
+5. **Optionally**, `login_request_interval:` in `config/auth.rb`'s
+   `Monk::Auth.configure` (60 seconds when left out), and the new parts of
+   the auth sections of `SETUP.md` and `AGENTS.md` (in the gem, under
+   `$(bundle info monkrb --path)/lib/monk/templates/auth/`).

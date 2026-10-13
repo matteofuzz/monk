@@ -1,7 +1,7 @@
 # Auth housekeeping: cleanup job, `sessions (subject)` index, login-email rate limit — implementation plan
 
 Branch: `main_dev/dev_0_22_0` (the release branch). Drafted 2026-10-13.
-Decisions confirmed 2026-10-13 (the sweep at 03:17 UTC, a 60-second
+All phases done (2026-10-13). Decisions confirmed 2026-10-13 (the sweep at 03:17 UTC, a 60-second
 interval, a test-only `clear_login_requests!`, the key `monk_auth_sweep`).
 The three auth items of the 0.22 roadmap entry, plus the auth section of
 the 0.22 upgrade guide. They share one migration, one change to the
@@ -267,6 +267,16 @@ Every app with `monk add auth` needs three things Monk leaves to it today:
      5. in the app's tests that log in, `Monk::Auth.clear_login_requests!`
         in `teardown`.
    - CHANGELOG ("Unreleased"), README's auth row.
+   **Done (2026-10-13).** `docs/guides/auth.md`: "Rate-limiting login
+   emails" and "Cleaning up expired rows", the three tables, and the job
+   example's real `allow_login_request?` call. `docs/design/auth-sessions.md`:
+   two dated "Update (Monk 0.22)" notes. `docs/guides/upgrading.md`:
+   "Auth housekeeping (apps with auth)", five steps; the `monk help auth`
+   commands it uses were run. CHANGELOG ("Unreleased", three entries;
+   the test-order fix left out, since it's internal to Monk's suite);
+   README's auth row; the scaffolding guide's quoted example.
+   No `CONTEXT.md` term: it has no auth terms at all (no login token or
+   session), so "Login request" alone would stand out more than help.
 
 No ADR planned: each decision is small and recorded here. Open to one if
 decision 1 (who schedules Monk's own jobs) becomes a pattern.
