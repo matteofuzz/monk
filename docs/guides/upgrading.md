@@ -16,8 +16,9 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.22
 
-First update the gem: `bundle update monkrb` (the `Gemfile`'s
-`"~> 0.21"` already allows 0.22).
+First update the gem: in the `Gemfile`, `gem "monkrb", "~> 0.22", require: "monk"`
+(what a new app gets; `"~> 0.21"` would also install 0.22, but not
+require it), then `bundle update monkrb`.
 
 ### Recurring jobs (apps with jobs)
 

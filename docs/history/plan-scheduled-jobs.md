@@ -4,7 +4,8 @@
 
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
-(`monk add jobs`, ADR 0017). All phases done (2026-10-12); moved to
+(`monk add jobs`, ADR 0017). All phases done (2026-10-12); shipped in
+monkrb 0.22.0 on 2026-10-13; moved to
 `history/` when Phase 7 finished.
 Builds on [`plan-jobs.md`](plan-jobs.md), which left recurring (cron)
 jobs out of v1 and noted they could be added "as its own table or column,

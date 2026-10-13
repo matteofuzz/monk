@@ -1,7 +1,7 @@
 # Auth housekeeping: cleanup job, `sessions (subject)` index, login-email rate limit — implementation plan
 
 Branch: `main_dev/dev_0_22_0` (the release branch). Drafted 2026-10-13.
-All phases done (2026-10-13). Decisions confirmed 2026-10-13 (the sweep at 03:17 UTC, a 60-second
+All phases done (2026-10-13); shipped in monkrb 0.22.0 on 2026-10-13. Decisions confirmed 2026-10-13 (the sweep at 03:17 UTC, a 60-second
 interval, a test-only `clear_login_requests!`, the key `monk_auth_sweep`).
 The three auth items of the 0.22 roadmap entry, plus the auth section of
 the 0.22 upgrade guide. They share one migration, one change to the

@@ -27,7 +27,7 @@ class GeneratorsBaseTest < Minitest::Test
 
     refute_nil requirement, "monkrb is pinned"
     assert Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new(Monk::VERSION))
-    refute Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new("0.20.0"))
+    refute Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new("0.21.1"))
   end
 
   def test_has_no_websocket_server
