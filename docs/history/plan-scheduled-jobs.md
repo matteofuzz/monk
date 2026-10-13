@@ -1,5 +1,7 @@
 # Recurring jobs (`Monk::Jobs.recurring`) — implementation plan
 
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
 Branch: `main_dev/scheduled_job`, merged into `main_dev/dev_0_22_0` by its
 own PR. Designed 2026-10-06; updated 2026-10-12 for scaffolding by module
 (`monk add jobs`, ADR 0017). All phases done (2026-10-12); moved to
