@@ -235,6 +235,14 @@ Every app with `monk add auth` needs three things Monk leaves to it today:
      `monk_auth_sweep` in `Monk::Jobs.recurring_tasks`, and one with jobs
      only doesn't (`test/generators/jobs_test.rb`); `test/exe_monk_test.rb`
      where `monk add auth`'s output lists the new migration.
+   **Done (2026-10-13).** As listed, plus `docs/guides/scaffolding.md`'s
+   auth entry. `monk add auth`'s output isn't pinned in
+   `test/exe_monk_test.rb`, so nothing changed there. The jobs-recurring
+   probe in `test/generators/examples_test.rb` now checks the demo task
+   among others, since that suite's app has auth too and so declares
+   `monk_auth_sweep`. The new generator tests load the app as development,
+   which needs no `MAIL_URL`. The `auth-routes` probe checks a second
+   request is 429, also in upper case, while another address isn't.
 5. **Docs.**
    - `docs/guides/auth.md`: the rate limit (replacing "your per-email
      rate limit"), and cleanup (`sweep!`, `Monk::Auth::Sweep`, the line in

@@ -88,10 +88,13 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   `mail-welcome` example and its route; `MAIL_URL=log://` for tests; a test
   that delivers to `log/test.log`.
 - **auth:** `config/auth.rb`, `app/mailers/auth_mailer.rb` (sends the login
-  link), the tables' migration, a login page, and the `auth-routes`
-  example: request a link (with a rate limit), the callback, logout, a page
-  for logged-in users. The routes stay commented until you've decided on
-  their limits; `AGENTS.md` says why. A test sends a link and redeems it.
+  link), the tables' migrations (with `login_requests`, for the rate limit),
+  a login page, and the `auth-routes` example: request a link (one per
+  address a minute, `Monk::Auth.allow_login_request?`), the callback,
+  logout, a page for logged-in users. The routes stay commented until
+  you've looked at the rate limit and the redirects; `AGENTS.md` says why.
+  A test sends a link and redeems it. With jobs, `config/recurring.rb`
+  sweeps expired sessions and tokens nightly (`monk_auth_sweep`).
 - **jobs:** `config/jobs.rb`, `bin/jobs`, the queue's migration and the
   recurring tasks' one, the demo `HelloJob`, the `jobs-enqueue` example,
   and `config/recurring.rb` with the `jobs-recurring` example (the demo

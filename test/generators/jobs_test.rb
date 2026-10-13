@@ -39,6 +39,21 @@ class GeneratorsJobsTest < Minitest::Test
     end
   end
 
+  # With auth, config/recurring.rb schedules Monk::Auth::Sweep nightly,
+  # whichever module came first; without auth, nothing
+  # (docs/plan-auth-housekeeping.md decision 1).
+  def test_with_auth_the_sweep_is_scheduled_in_either_order
+    [%i[jobs auth], %i[auth jobs]].each do |modules|
+      with_new_app(*modules) do |dest|
+        assert_equal '[["monk_auth_sweep", "17 3 * * *"]]', recurring_tasks(dest), modules.inspect
+      end
+    end
+  end
+
+  def test_without_auth_nothing_is_scheduled
+    with_new_app(:jobs) { |dest| assert_equal "[]", recurring_tasks(dest) }
+  end
+
   def test_says_to_run_bin_jobs
     with_new_app do |dest|
       result = add_modules(dest, :jobs)
@@ -115,6 +130,19 @@ class GeneratorsJobsTest < Minitest::Test
         assert_equal 0, count(env, "monk_processes"), "it unregisters on the way out"
       end
     end
+  end
+
+  # The app's declared recurring tasks, [key, cron] each, as config/load
+  # leaves them. Loaded as development, which needs no MAIL_URL.
+  def recurring_tasks(dest)
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../../Gemfile", __dir__), "MONK_ENV" => "development",
+            "AUTH_SECRET" => "probe", }
+    out, status = Open3.capture2e(env,
+      RbConfig.ruby, "-W0", "-rbundler/setup", "-e",
+      %(require "./config/load"; print Monk::Jobs.recurring_tasks.map { |t| [t.key, t.cron.expression] }.inspect),
+      chdir: dest,)
+    assert status.success?, out
+    out
   end
 
   def count(env, table, where = "true")

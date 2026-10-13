@@ -12,6 +12,10 @@
 # skip_if_pending: true skips an occurrence while the previous run hasn't
 # finished. Monk's docs/guides/jobs.md, "Recurring jobs".
 
+# With auth (monk add auth): deletes expired sessions and login tokens, and
+# old login requests, every night at 03:17 UTC.
+Monk::Jobs.recurring "monk_auth_sweep", Monk::Auth::Sweep, cron: "17 3 * * *" if defined?(Monk::Auth::Sweep)
+
 # monk:example jobs-recurring -- the demo job (app/jobs/hello_job.rb) at the top of every hour.
 # Monk::Jobs.recurring "hello_hourly", HelloJob, cron: "@hourly", args: ["cron"]
 # monk:end

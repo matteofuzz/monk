@@ -12,7 +12,8 @@ or `conn: conn` to enqueue inside your own transaction. Class settings:
 `Monk::Auth::SendLoginLink.enqueue(email)`. Recurring, in
 `config/recurring.rb` only:
 `Monk::Jobs.recurring "key", JobClass, cron: "0 3 * * *", args: [...]`
-(`skip_if_pending: true` to skip while the last run is pending).
+(`skip_if_pending: true` to skip while the last run is pending). With
+auth, `config/recurring.rb` already schedules `monk_auth_sweep`.
 
 **Test:** `test/jobs_test.rb`. In tests, `Monk::Jobs.drain!` runs every
 enqueued job right away, each in a Ractor; `Monk::Jobs.clear!` in

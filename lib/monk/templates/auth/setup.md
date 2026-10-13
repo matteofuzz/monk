@@ -1,8 +1,9 @@
 ## auth
 
 Logging in by email link. `config/auth.rb` configures Monk::Auth,
-`app/mailers/auth_mailer.rb` sends the link through mail, and a migration
-creates the `login_tokens` and `sessions` tables: run `bin/setup_db` and
+`app/mailers/auth_mailer.rb` sends the link through mail, and two
+migrations create the `login_tokens`, `sessions` and `login_requests`
+tables: run `bin/setup_db` and
 `DB_NAME={{app}}_test bin/setup_db` (postgres, above).
 
 ### Before production
@@ -11,6 +12,17 @@ creates the `login_tokens` and `sessions` tables: run `bin/setup_db` and
 one in production's environment, e.g. from
 `ruby -rsecurerandom -e 'puts SecureRandom.hex(32)'`. `config/auth.rb`
 reads it with `ENV.fetch`: unset, the app doesn't boot.
+
+### Housekeeping
+
+- **Rate limit.** The login route allows one email per address per
+  minute (`login_request_interval:` in `config/auth.rb`), counted in
+  `login_requests`, so across every `bin/server` process. A limit across
+  addresses (per IP, say) is up to the app.
+- **Cleanup.** With jobs (`monk add jobs`), `bin/jobs` deletes expired
+  sessions and login tokens every night (`monk_auth_sweep` in
+  `config/recurring.rb`). Without jobs, run `Monk::Auth.sweep!` on a
+  schedule of your own.
 
 ### Check it works
 
@@ -33,5 +45,6 @@ reads it with `ENV.fetch`: unset, the app doesn't boot.
      ```
 
      and `/me` answers `401` again.
-3. Before going live: keep the rate limit, and list in `config/auth.rb`
+3. Before going live: keep the rate limit (the `allow_login_request?`
+   line in `app/routes/auth.rb`), and list in `config/auth.rb`
    (`redirect_allowlist`) the paths a login may send the user back to.

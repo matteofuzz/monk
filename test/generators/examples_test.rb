@@ -72,8 +72,11 @@ class GeneratorsExamplesTest < Minitest::Test
         assert_equal 200, request("POST", "/auth/logout", nil, csrf).first
         assert_equal 401, request("GET", "/me", nil, logged_in).first
 
-        statuses = Array.new(6) { request("POST", "/auth/request", email: email).first }
-        assert_includes statuses, 429, "the rate limit stops a flood of links"
+        assert_equal 429, request("POST", "/auth/request", email: email).first, "one link per address a minute"
+        assert_equal 429, request("POST", "/auth/request", email: email.upcase).first, "whatever its case"
+        assert_equal 200, request("POST", "/auth/request", email: "other-\#{email}").first
+      ensure
+        Monk::Auth.clear_login_requests!
       end
     RUBY
     "jobs-enqueue" => <<~RUBY,
@@ -90,10 +93,11 @@ class GeneratorsExamplesTest < Minitest::Test
     RUBY
     "jobs-recurring" => <<~RUBY,
       def test_jobs_recurring
-        assert_equal ["hello_hourly"], Monk::Jobs.recurring_tasks.map(&:key)
+        # With auth installed too, monk_auth_sweep is declared alongside.
+        assert_includes Monk::Jobs.recurring_tasks.map(&:key), "hello_hourly"
 
         Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 8, 30))
-        assert_equal({ "hello_hourly" => :enqueued }, Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9)))
+        assert_equal :enqueued, Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9))["hello_hourly"]
         assert_equal 1, Monk::Jobs.drain!
         assert_includes File.read(File.expand_path("../log/test.log", __dir__)), "Hello, cron, from a background job"
       ensure
