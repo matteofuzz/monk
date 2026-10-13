@@ -11,7 +11,7 @@ gets its own design doc and plan when work on it starts.
    - **Scheduled jobs.** Done: `Monk::Jobs.recurring`, declared in
      `config/recurring.rb` and enqueued by `bin/jobs` (ADR 0016,
      `docs/history/plan-scheduled-jobs.md`).
-   - **Auth housekeeping.** Done (`docs/plan-auth-housekeeping.md`):
+   - **Auth housekeeping.** Done (`docs/history/plan-auth-housekeeping.md`):
      - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and
        `login_tokens` belong to `Monk::Auth`, and expired rows pile up in
        every app, roughly one session a month per active person.

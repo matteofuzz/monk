@@ -16,7 +16,7 @@ module Monk
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
 
-    # The login-email rate limit (docs/plan-auth-housekeeping.md decision
+    # The login-email rate limit (docs/history/plan-auth-housekeeping.md decision
     # 5): records a request unless one was recorded for the address less
     # than $2 seconds ago. One statement, so racing requests for one
     # address let exactly one through; a refused request changes nothing.
@@ -279,7 +279,7 @@ module Monk
       # than login_request_interval; returns how many of each. At most
       # batch_size rows per statement, so a large backlog (the first sweep
       # of an app that never swept) holds no lock for long. Run nightly by
-      # Monk::Auth::Sweep (docs/plan-auth-housekeeping.md decision 3).
+      # Monk::Auth::Sweep (docs/history/plan-auth-housekeeping.md decision 3).
       # Deliberately not grown onto Model: a `<` comparison is real
       # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
       def sweep!(batch_size: SWEEP_BATCH_SIZE)

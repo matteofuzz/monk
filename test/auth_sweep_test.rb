@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "monk/auth"
 require "monk/jobs"
 
-# Auth's housekeeping (docs/plan-auth-housekeeping.md decisions 2 and 3,
+# Auth's housekeeping (docs/history/plan-auth-housekeeping.md decisions 2 and 3,
 # Phase 3): sweep! deletes in batches and covers login_requests, and
 # Monk::Auth::Sweep runs it as a job.
 class AuthSweepTest < Minitest::Test

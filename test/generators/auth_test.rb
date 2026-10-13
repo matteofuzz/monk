@@ -28,7 +28,7 @@ class GeneratorsAuthTest < Minitest::Test
   end
 
   # The login routes count login emails in the database
-  # (docs/plan-auth-housekeeping.md decision 7), not per process.
+  # (docs/history/plan-auth-housekeeping.md decision 7), not per process.
   def test_the_login_routes_use_the_database_rate_limit
     with_new_app(:auth) do |dest|
       routes = generated(dest, "app/routes/auth.rb")

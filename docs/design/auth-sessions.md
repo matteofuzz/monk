@@ -251,7 +251,7 @@ is shareable, not written inline in the route.
 > Postgres, `Monk::Auth.allow_login_request?` over a `login_requests`
 > table, so it holds across processes and restarts. `RateLimiter` stays
 > for other, approximate limits. See
-> [`docs/plan-auth-housekeeping.md`](../plan-auth-housekeeping.md).
+> [`docs/history/plan-auth-housekeeping.md`](../history/plan-auth-housekeeping.md).
 
 ## Where today's `Pg::Model` doesn't reach
 
@@ -289,7 +289,7 @@ equality + `AND` only, deliberately (`docs/history/plan-persistence.md` Phase 3,
    the sweep is hygiene, not correctness.
    **Update (Monk 0.22):** `sweep!` deletes in batches and runs nightly
    as the `Monk::Auth::Sweep` job, scheduled by `config/recurring.rb`
-   ([`docs/plan-auth-housekeeping.md`](../plan-auth-housekeeping.md)).
+   ([`docs/history/plan-auth-housekeeping.md`](../history/plan-auth-housekeeping.md)).
 
 ## Ractor-safety notes specific to this feature
 

@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "monk/auth"
 
-# The login-email rate limit (docs/plan-auth-housekeeping.md decisions 5
+# The login-email rate limit (docs/history/plan-auth-housekeeping.md decisions 5
 # and 8, Phase 2): at most one login request per address per
 # login_request_interval, recorded in login_requests by one upsert.
 class AuthLoginRequestsTest < Minitest::Test

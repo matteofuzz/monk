@@ -41,7 +41,7 @@ class GeneratorsJobsTest < Minitest::Test
 
   # With auth, config/recurring.rb schedules Monk::Auth::Sweep nightly,
   # whichever module came first; without auth, nothing
-  # (docs/plan-auth-housekeeping.md decision 1).
+  # (docs/history/plan-auth-housekeeping.md decision 1).
   def test_with_auth_the_sweep_is_scheduled_in_either_order
     [%i[jobs auth], %i[auth jobs]].each do |modules|
       with_new_app(*modules) do |dest|

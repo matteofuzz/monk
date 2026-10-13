@@ -3,7 +3,7 @@ require "monk/persistence/pg/migrator"
 
 # Monk::Auth's tables, applied from the canonical migrations monk add auth
 # copies, so what an app gets and what these tests check can't drift apart
-# (docs/plan-auth-housekeeping.md Phase 1).
+# (docs/history/plan-auth-housekeeping.md Phase 1).
 class AuthSchemaTest < Minitest::Test
   include PersistenceTestHelpers
 
