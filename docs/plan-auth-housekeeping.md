@@ -203,6 +203,18 @@ Every app with `monk add auth` needs three things Monk leaves to it today:
    deleting `login_requests` older than the interval while keeping recent
    ones. `Monk::Auth::Sweep` defined in either require order (like
    `SendLoginLink`'s test), `perform` sweeps and logs.
+   **Done (2026-10-13).** `sweep!(batch_size: 10_000)` deletes each
+   table in batches (`SWEEP_*_SQL` in `lib/monk/auth.rb`) and returns
+   `login_requests:` too. Tokens and sessions still expire by the app's
+   clock, as `redeem`/`verify` check them; login requests by the
+   database's, as `allow_login_request?` does. `batch_size:` is a public
+   keyword, checked to be a positive Integer, not test-only.
+   `lib/monk/auth/sweep.rb` logs "Monk::Auth::Sweep: deleted N sessions,
+   N login tokens, N login requests". Tests: `test/auth_sweep_test.rb`
+   (5, the job run through `drain!` in a Ractor);
+   `test/module_pairs_load_order_test.rb` checks `Sweep` next to
+   `SendLoginLink` in both require orders; `AuthTest`'s sweep test
+   expects the new count.
 4. **Scaffolding.**
    - `lib/monk/generators/auth.rb`: `migration "create_login_requests"`
      after `create_auth_tables`.

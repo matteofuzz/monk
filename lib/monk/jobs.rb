@@ -312,3 +312,4 @@ require_relative "jobs/job"
 # themselves (docs/adr/0017).
 require_relative "mail/deliver_later" if Monk.const_defined?(:Mail)
 require_relative "auth/send_login_link" if Monk.const_defined?(:Auth)
+require_relative "auth/sweep" if Monk.const_defined?(:Auth)

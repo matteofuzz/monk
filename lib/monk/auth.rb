@@ -27,6 +27,23 @@ module Monk
       RETURNING 1
     SQL
 
+    SWEEP_BATCH_SIZE = 10_000
+
+    # sweep!'s statements, one batch each. Tokens and sessions expire by
+    # the app's clock, as redeem and verify check them; login requests by
+    # the database's, as allow_login_request? does.
+    SWEEP_LOGIN_TOKENS_SQL = <<~SQL.freeze
+      DELETE FROM login_tokens WHERE id IN (SELECT id FROM login_tokens WHERE expires_at < $1 LIMIT $2)
+    SQL
+    SWEEP_SESSIONS_SQL = <<~SQL.freeze
+      DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < $1 LIMIT $2)
+    SQL
+    SWEEP_LOGIN_REQUESTS_SQL = <<~SQL.freeze
+      DELETE FROM login_requests WHERE email IN (
+        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second' LIMIT $2
+      )
+    SQL
+
     class << self
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module -- Monk::Auth is always Ractor.shareable?
@@ -258,15 +275,28 @@ module Monk
         rows.size
       end
 
+      # Deletes expired login tokens and sessions, and login requests older
+      # than login_request_interval; returns how many of each. At most
+      # batch_size rows per statement, so a large backlog (the first sweep
+      # of an app that never swept) holds no lock for long. Run nightly by
+      # Monk::Auth::Sweep (docs/plan-auth-housekeeping.md decision 3).
       # Deliberately not grown onto Model: a `<` comparison is real
       # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
-      def sweep!
+      def sweep!(batch_size: SWEEP_BATCH_SIZE)
         ensure_configured!
+        unless batch_size.is_a?(Integer) && batch_size.positive?
+          raise ArgumentError, "batch_size: must be a positive Integer, got #{batch_size.inspect}"
+        end
+
         Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
           now = Time.now
-          login_tokens_deleted = conn.exec_params("DELETE FROM login_tokens WHERE expires_at < $1", [now]).cmd_tuples
-          sessions_deleted = conn.exec_params("DELETE FROM sessions WHERE expires_at < $1", [now]).cmd_tuples
-          { login_tokens: login_tokens_deleted, sessions: sessions_deleted }
+          {
+            login_tokens: delete_in_batches(conn, SWEEP_LOGIN_TOKENS_SQL, [now], batch_size),
+            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now], batch_size),
+            login_requests: delete_in_batches(
+              conn, SWEEP_LOGIN_REQUESTS_SQL, [config[:login_request_interval]], batch_size,
+            ),
+          }
         end
       end
 
@@ -321,6 +351,17 @@ module Monk
         end
 
         path.chomp("/").freeze
+      end
+
+      # Runs a batched DELETE until one deletes less than a full batch; the
+      # batch size is its last parameter.
+      def delete_in_batches(conn, sql, params, batch_size)
+        total = 0
+        loop do
+          deleted = conn.exec_params(sql, params + [batch_size]).cmd_tuples
+          total += deleted
+          return total if deleted < batch_size
+        end
       end
 
       def checked_login_request_interval(seconds)
@@ -381,3 +422,4 @@ end
 # Monk::Auth::SendLoginLink, when jobs are loaded too -- either order works
 # (lib/monk/jobs.rb ends the same way, docs/adr/0017).
 require_relative "auth/send_login_link" if Monk.const_defined?(:Jobs)
+require_relative "auth/sweep" if Monk.const_defined?(:Jobs)
