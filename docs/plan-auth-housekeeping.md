@@ -190,6 +190,14 @@ Every app with `monk add auth` needs three things Monk leaves to it today:
    connections for one address: exactly one allowed.
    `clear_login_requests!` empties the table, and refuses outside
    `MONK_ENV=test`.
+   **Done (2026-10-13).** In `lib/monk/auth.rb`: `LOGIN_REQUEST_SQL`,
+   `allow_login_request?` (also raises `ArgumentError` for a blank or
+   non-String address) and `clear_login_requests!`; the new error in
+   `lib/monk/auth/errors.rb`. `login_request_interval:` must be a
+   positive Integer, else `InvalidAuthConfigError`. Tests:
+   `test/auth_login_requests_test.rb` (15), including that a refused
+   request leaves `requested_at` alone. The race runs as 8 Ractors, each
+   on its own connection, since threads in one Ractor would share one.
 3. **Sweeping.** `sweep!` batched (a test with a batch size lowered
    through a test-only argument, deleting more rows than one batch), and
    deleting `login_requests` older than the interval while keeping recent

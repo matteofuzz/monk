@@ -16,6 +16,17 @@ module Monk
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
 
+    # The login-email rate limit (docs/plan-auth-housekeeping.md decision
+    # 5): records a request unless one was recorded for the address less
+    # than $2 seconds ago. One statement, so racing requests for one
+    # address let exactly one through; a refused request changes nothing.
+    LOGIN_REQUEST_SQL = <<~SQL.freeze
+      INSERT INTO login_requests (email) VALUES ($1)
+      ON CONFLICT (email) DO UPDATE SET requested_at = now()
+        WHERE login_requests.requested_at < now() - $2::int * interval '1 second'
+      RETURNING 1
+    SQL
+
     class << self
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module -- Monk::Auth is always Ractor.shareable?
@@ -37,15 +48,17 @@ module Monk
       # callback_path: is where the app's own callback route redeems a
       # token (GET "#{callback_path}/:token"). Monk doesn't define that
       # route, but builds links to it: login_link below, and so
-      # Monk::Auth::SendLoginLink.
+      # Monk::Auth::SendLoginLink. login_request_interval: is the seconds
+      # allow_login_request? makes an address wait between login emails.
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil, callback_path: "/auth/callback"
+        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
       )
         config = {
           db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
+          login_request_interval: checked_login_request_interval(login_request_interval),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -84,6 +97,37 @@ module Monk
         )
 
         raw
+      end
+
+      # The login-email rate limit, for the login route to check before it
+      # sends or enqueues the link: true, and recorded, if no link was
+      # requested for this address in the last login_request_interval
+      # seconds; false otherwise. Per address, across every process. The
+      # address is stripped and downcased for the limit only.
+      #
+      #   halt(429) unless Monk::Auth.allow_login_request?(email)
+      def allow_login_request?(email)
+        ensure_configured!
+        unless email.is_a?(String) && !email.strip.empty?
+          raise ArgumentError, "Monk::Auth.allow_login_request? needs an email address, got #{email.inspect}"
+        end
+
+        params = [email.strip.downcase, config[:login_request_interval]]
+        Monk::Persistence::Pg.checkout(config[:db_name]) { |c| c.exec_params(LOGIN_REQUEST_SQL, params).ntuples == 1 }
+      end
+
+      # Test-only: forgets every login request, so the next test can log in
+      # again at once. Refuses unless MONK_ENV is test.
+      def clear_login_requests!
+        unless Monk.env.test?
+          raise Monk::ClearLoginRequestsOutsideTestsError,
+            "Monk::Auth.clear_login_requests! lifts the login-email rate limit for every address, so it only " \
+            "runs with MONK_ENV=test (this is #{Monk.env})"
+        end
+
+        ensure_configured!
+        Monk::Persistence::Pg.checkout(config[:db_name]) { |c| c.exec("DELETE FROM login_requests") }
+        nil
       end
 
       # The magic link for a raw token: the app's public_url
@@ -277,6 +321,15 @@ module Monk
         end
 
         path.chomp("/").freeze
+      end
+
+      def checked_login_request_interval(seconds)
+        unless seconds.is_a?(Integer) && seconds.positive?
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(login_request_interval:) must be a positive Integer of seconds, got #{seconds.inspect}"
+        end
+
+        seconds
       end
 
       def hash_token(raw)
