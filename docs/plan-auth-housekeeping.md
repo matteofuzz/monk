@@ -170,6 +170,17 @@ Every app with `monk add auth` needs three things Monk leaves to it today:
    (or the existing auth schema tests): the table, its primary key, the
    index, rollback. Add `login_requests` to the auth test helper's table
    setup and teardown.
+   **Done (2026-10-13).** `lib/monk/templates/auth/db/migrate/00000000000004_create_login_requests.{up,down}.sql`;
+   `test/auth_schema_test.rb` (5) applies auth's template migrations
+   the way `test/jobs_schema_test.rb` does, since `AuthTestHelpers`
+   writes its schema by hand. The helper now creates `login_requests`
+   and the index too.
+   Also fixed while running the suite: tests that froze Settings under a
+   development or production `MONK_ENV` and never reset it (12, in the
+   assets, logging and Ractor integration tests) left `Monk.env` reading
+   that value for the next test, which broke `run_scheduler!`'s
+   `MONK_ENV=test` check in some orders (4 seeds in 8). `test_helper.rb`
+   now resets `Monk::Settings` before every test (`FreshSettings`).
 2. **The rate limit.** `login_request_interval:` in `configure` (a
    positive Integer, default 60, checked at configure);
    `allow_login_request?`: first request allowed; a second within the
