@@ -296,12 +296,14 @@ module Monk
         end
 
         # A thread per worker turns its Ractor ending into a message here.
+        # Ruby 4.0's monitor sends :exited or :aborted, 4.1's
+        # [ractor, :exited] or [ractor, :aborted]: keep the Symbol.
         def watch(index, ractor)
           inbox = @inbox
           Thread.new do
             port = Ractor::Port.new
             ractor.monitor(port)
-            inbox.send([:died, index, ractor, port.receive])
+            inbox.send([:died, index, ractor, Array(port.receive).last])
           rescue Ractor::ClosedError
             nil
           end
