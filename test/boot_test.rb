@@ -63,7 +63,7 @@ class BootTest < Minitest::Test
       get("/x") { "hi" }
     end
 
-    booted = Monk.boot(app_class)
+    booted = boot_quietly(app_class)
 
     assert_same app_class, booted
     assert Ractor.shareable?(app_class.routes)
@@ -75,7 +75,7 @@ class BootTest < Minitest::Test
     end
     instance = app_class.new
 
-    booted = Monk.boot(instance)
+    booted = boot_quietly(instance)
 
     assert_same instance, booted
     assert Ractor.shareable?(app_class.routes)

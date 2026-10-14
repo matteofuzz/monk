@@ -14,7 +14,7 @@ class AuthDevLinkTest < Minitest::Test
   # without resetting it first, with_monk_env's ENV override below would
   # be silently ignored depending on run/test order.
   def test_logs_the_link_to_stdout_and_the_dev_log_in_development
-    contents = with_log do |dir|
+    with_log do |dir|
       out, = with_settings do
         with_monk_env("development") do
           Monk::Log.freeze_registry!

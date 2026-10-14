@@ -34,6 +34,23 @@ end
 
 Minitest::Test.include(FreshSettings)
 
+# Monk.boot prints its banner, and an app frozen in development echoes
+# each request line, to $stdout; tests swallow both so they don't land in
+# the suite's output. Each returns the block's (or boot's) value.
+module Quietly
+  def quietly
+    result = nil
+    capture_io { result = yield }
+    result
+  end
+
+  def boot_quietly(app)
+    quietly { Monk.boot(app) }
+  end
+end
+
+Minitest::Test.include(Quietly)
+
 # Shared by views_test.rb and assets_test.rb: a throwaway views/ or
 # public/ root on disk, torn down after the block, with the global
 # Monk::Views / Monk::Assets state reset either way.

@@ -120,7 +120,7 @@ class LivePoolTest < Minitest::Test
 
   def create_rooms_table(*topics)
     conn = PG.connect(**pg_test_opts)
-    conn.exec("DROP TABLE IF EXISTS live_pool_rooms")
+    drop_table_if_exists(conn, "live_pool_rooms")
     conn.exec("CREATE TABLE live_pool_rooms (topic text PRIMARY KEY)")
     topics.each { |topic| conn.exec_params("INSERT INTO live_pool_rooms VALUES ($1)", [topic]) }
   ensure

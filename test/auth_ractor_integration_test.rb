@@ -117,7 +117,9 @@ class AuthRactorIntegrationTest < Minitest::Test
           end
           app.freeze!
 
+          # A worker Ractor has its own $stdout, out of capture_io's reach.
           status, = Ractor.new(app) do |a|
+            $stdout = StringIO.new
             a.call("REQUEST_METHOD" => "POST", "PATH_INFO" => "/auth/request/a@b.com")
           end.value
 

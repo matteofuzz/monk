@@ -37,7 +37,7 @@ class AssetsMountTest < Minitest::Test
       app = with_monk_env("development") { boot_app }
       File.write(File.join(dir, "client.js"), "export const ok = false\n")
 
-      assert_equal "export const ok = false\n", app.call(env_for("GET", "/_monk/test/client.js"))[2].join
+      assert_equal "export const ok = false\n", quietly { app.call(env_for("GET", "/_monk/test/client.js")) }[2].join
     end
   end
 
@@ -47,8 +47,8 @@ class AssetsMountTest < Minitest::Test
         %w[development test].each do |env|
           app = with_monk_env(env) { boot_app }
 
-          assert_equal 404, app.call(env_for("GET", "/_monk/test/../secret.txt"))[0], env
-          assert_equal 404, app.call(env_for("GET", "/_monk/test/../../etc/passwd"))[0], env
+          assert_equal 404, quietly { app.call(env_for("GET", "/_monk/test/../secret.txt")) }[0], env
+          assert_equal 404, quietly { app.call(env_for("GET", "/_monk/test/../../etc/passwd")) }[0], env
         end
       end
     end
