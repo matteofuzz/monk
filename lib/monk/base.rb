@@ -98,7 +98,7 @@ module Monk
         routes.each do |route|
           begin
             Ractor.make_shareable(route[:block])
-          rescue ArgumentError => e
+          rescue ArgumentError, Ractor::IsolationError => e
             raise UnshareableRouteError, "#{route[:verb]} #{route[:path]} is not Ractor-shareable: #{e.message}"
           end
         end
@@ -106,7 +106,7 @@ module Monk
         error_handlers.each do |matcher, block|
           begin
             Ractor.make_shareable(block)
-          rescue ArgumentError => e
+          rescue ArgumentError, Ractor::IsolationError => e
             raise UnshareableRouteError, "error handler for #{matcher.inspect} is not Ractor-shareable: #{e.message}"
           end
         end
