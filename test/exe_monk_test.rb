@@ -110,11 +110,13 @@ class ExeMonkTest < Minitest::Test
       Adding jobs (postgres already installed).
 
         + config/jobs.rb
+        + config/recurring.rb            example: jobs-recurring (commented)
         + bin/jobs
         + app/jobs/hello_job.rb
         + app/routes/jobs.rb             example: jobs-enqueue (commented)
         + test/jobs_test.rb
         + db/migrate/20261008143000_create_jobs_tables.{up,down}.sql
+        + db/migrate/20261008143001_create_recurring_tables.{up,down}.sql
         ~ .env, .env.example             JOBS_*
         ~ SETUP.md, AGENTS.md            section: jobs
 

@@ -27,7 +27,7 @@ class GeneratorsBaseTest < Minitest::Test
 
     refute_nil requirement, "monkrb is pinned"
     assert Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new(Monk::VERSION))
-    refute Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new("0.20.0"))
+    refute Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new("0.21.1"))
   end
 
   def test_has_no_websocket_server
@@ -127,6 +127,24 @@ class GeneratorsBaseTest < Minitest::Test
 
       assert status.success?, out
       assert_equal "settings persistence mail jobs live ", out
+    end
+  end
+
+  # config/recurring.rb (monk add jobs) declares schedules for job
+  # classes, so it loads after app/, when they exist
+  # (docs/history/plan-scheduled-jobs.md decision 2).
+  def test_config_load_requires_config_recurring_last
+    Dir.mktmpdir do |dir|
+      write_file(dir, "config/load.rb", template("base/config/load.rb"))
+      write_file(dir, "config/settings.rb", "")
+      write_file(dir, "config/jobs.rb", %(print "config/jobs "\n))
+      write_file(dir, "app/jobs/hello_job.rb", %(print "app/jobs "\n))
+      write_file(dir, "config/recurring.rb", %(print "config/recurring "\n))
+
+      out, status = Open3.capture2e(RbConfig.ruby, "-e", %(require "./config/load"), chdir: dir)
+
+      assert status.success?, out
+      assert_equal "config/jobs app/jobs config/recurring ", out
     end
   end
 end

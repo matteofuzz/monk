@@ -4,6 +4,38 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.22.0 - 2026-10-13
+
+### Added
+
+- **Recurring jobs.** `Monk::Jobs.recurring "purge_sessions",
+  PurgeSessions, cron: "0 3 * * *"`, declared in `config/recurring.rb`,
+  is enqueued by `bin/jobs` at each occurrence, once however many job
+  processes run. Five-field cron in UTC, plus `@hourly` to `@yearly`. A
+  new task first runs at its next occurrence, missed occurrences run
+  once, and `skip_if_pending: true` skips a run while the previous one
+  hasn't finished. `Monk::Jobs.run_scheduler!(at:)` runs the schedule in
+  tests. One checkpoint row per task in the new `monk_recurring_tasks`
+  table (ADR 0016, `docs/guides/jobs.md`, "Recurring jobs").
+  `monk add jobs` writes `config/recurring.rb` with a commented example
+  and the table's migration, and the base `config/load.rb` loads
+  `config/recurring.rb` after `app/`. An app that already has jobs:
+  `docs/guides/upgrading.md`, 0.22; until then its tests that call
+  `Monk::Jobs.clear!` fail on the missing table.
+- **A login-email rate limit in `Monk::Auth`.**
+  `Monk::Auth.allow_login_request?(email)` allows one login email per
+  address per `login_request_interval:` (60 seconds), counted in a new
+  `login_requests` table, so across every process. The scaffolded login
+  routes use it instead of the per-process `RateLimiter`.
+  `Monk::Auth.clear_login_requests!` resets it in tests.
+- **Auth cleans up after itself.** `Monk::Auth.sweep!` deletes in batches
+  and covers `login_requests`; the new `Monk::Auth::Sweep` job runs it,
+  and `monk add jobs`'s `config/recurring.rb` schedules it nightly
+  (`monk_auth_sweep`) when auth is installed.
+- **An index on `sessions (subject)`**, in the same new auth migration,
+  `create_login_requests`. An app that already has auth:
+  `docs/guides/upgrading.md`, 0.22, "Auth housekeeping".
+
 ## 0.21.1 - 2026-10-09
 
 ### Fixed

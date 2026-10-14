@@ -8,28 +8,33 @@ gets its own design doc and plan when work on it starts.
 
 1. **0.22: Recurring jobs and auth housekeeping.** Until then, an app that
    prunes old rows on a schedule needs a job that re-enqueues itself.
-   - **Scheduled jobs.** Recurring jobs on a cron-like schedule in
-     `Monk::Jobs`. One-off delayed jobs already exist (`enqueue(..., wait:)` /
-     `at:`); recurring ones were left out of the first version
-     (`docs/guides/jobs.md`, "What's not here"). The plan,
-     `docs/plan-scheduled-jobs.md`, is on the `main_dev/scheduled_job` branch.
-     It predates scaffolding by module: its scaffold phase still says
-     `monk new --jobs` and must become a change to the jobs generator
-     (`monk add jobs`, ADR 0017).
-   - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and `login_tokens`
-     belong to `Monk::Auth`, and expired rows pile up in every app, roughly
-     one session a month per active person. `Monk::Auth` ships the cleanup as
-     a recurring job: the first real user of the feature above.
-   - **An index on `sessions (subject)`.** Any app that looks up a person's
-     sessions needs it, including a future "log out everywhere". Today each
-     app has to add it in its own migration; it belongs in Monk's auth
-     schema.
-   - **A rate limit on login emails.** `docs/guides/auth.md` leaves "your
-     per-email rate limit" to the app, but every app with magic links needs
-     one. It takes one table and one upsert, small enough to move into
-     `Monk::Auth`.
-     `Monk::Auth::RateLimiter` stays as it is: per process, in memory,
-     approximate.
+   - **Scheduled jobs.** Done: `Monk::Jobs.recurring`, declared in
+     `config/recurring.rb` and enqueued by `bin/jobs` (ADR 0016,
+     `docs/history/plan-scheduled-jobs.md`).
+   - **Auth housekeeping.** Done (`docs/history/plan-auth-housekeeping.md`):
+     - **Cleaning up `Monk::Auth`'s own tables.** `sessions` and
+       `login_tokens` belong to `Monk::Auth`, and expired rows pile up in
+       every app, roughly one session a month per active person.
+       `Monk::Auth.sweep!` already deletes them; `Monk::Auth` ships it as a
+       job, `Monk::Auth::Sweep`, scheduled nightly in the `config/recurring.rb`
+       that `monk add jobs` writes: the first real user of recurring jobs.
+     - **An index on `sessions (subject)`.** Any app that looks up a
+       person's sessions needs it, including `Monk::Auth.revoke_all` and a
+       future "log out everywhere". Today each app adds it in its own
+       migration; it belongs in Monk's auth schema.
+     - **A rate limit on login emails.** `docs/guides/auth.md` leaves "your
+       per-email rate limit" to the app, but every app with magic links
+       needs one. One table and one upsert: at most one login email per
+       address per interval, checked in the login route before the link
+       is sent or enqueued. The scaffolded login routes use it instead of
+       the per-process `Monk::Auth::RateLimiter`, which stays for other
+       limits. A limit across many addresses (per IP, say) stays the app's.
+   - **An upgrade guide for 0.21 apps.** `docs/guides/upgrading.md`, one
+     section per release from now on: the files to copy and the lines to
+     add (`monk help MODULE --file PATH` prints Monk's version), and the
+     migrations to add. `monk add` does nothing for a module already
+     installed, so this is how an existing app picks up recurring jobs and
+     the new auth table and index. Done: the 0.22 section covers both.
 
 2. **0.23: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.

@@ -4,6 +4,12 @@ require_relative "test_helper"
 # sent by config/auth.rb's deliver: (AuthMailer, to log/test.log here), and
 # redeemed into a session. SETUP.md, auth.
 class AuthTest < Minitest::Test
+  # Lifts the login-email rate limit, so the next test can ask for a link
+  # for the same address at once.
+  def teardown
+    Monk::Auth.clear_login_requests!
+  end
+
   def test_a_login_link_is_sent_and_redeems_into_a_session
     email = "login-check-#{rand(1_000_000)}@example.test"
     token = Monk::Auth.request_login(email)

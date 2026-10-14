@@ -247,6 +247,12 @@ parties. This is a good fit for the primitive as documented in
 `CONTEXT.md` — the counter update block must be predefined where `self`
 is shareable, not written inline in the route.
 
+> **Update (Monk 0.22):** the login route's per-address limit moved to
+> Postgres, `Monk::Auth.allow_login_request?` over a `login_requests`
+> table, so it holds across processes and restarts. `RateLimiter` stays
+> for other, approximate limits. See
+> [`docs/history/plan-auth-housekeeping.md`](../history/plan-auth-housekeeping.md).
+
 ## Where today's `Pg::Model` doesn't reach
 
 Three queries this design needs are outside the current API. `where` is
@@ -281,6 +287,9 @@ equality + `AND` only, deliberately (`docs/history/plan-persistence.md` Phase 3,
    raw SQL through `Pg.checkout`, run on a schedule, is the honest
    answer. Expired rows are already rejected at verification time, so
    the sweep is hygiene, not correctness.
+   **Update (Monk 0.22):** `sweep!` deletes in batches and runs nightly
+   as the `Monk::Auth::Sweep` job, scheduled by `config/recurring.rb`
+   ([`docs/history/plan-auth-housekeeping.md`](../history/plan-auth-housekeeping.md)).
 
 ## Ractor-safety notes specific to this feature
 

@@ -9,6 +9,7 @@ Monk::Generator.define(:auth) do
   copy "app/routes/auth.rb", role: :example
   copy "test/auth_test.rb", role: :test
   migration "create_auth_tables"
+  migration "create_login_requests"
 
   env :development, { "AUTH_SECRET" => "change-me-dev-secret" }
   env :test, { "AUTH_SECRET" => "change-me-test-secret" }

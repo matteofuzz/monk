@@ -267,7 +267,7 @@ class ViewsTest < Minitest::Test
     Monk::Views.root = File.join(Dir.tmpdir, "monk-nonexistent-views")
 
     app = Class.new(Monk::Base) { get("/") { "plain" } }
-    Monk.boot(app)
+    boot_quietly(app)
 
     _status, _headers, body = app.call(env_for("GET", "/"))
 
@@ -347,7 +347,7 @@ class ViewsTest < Minitest::Test
     app = Class.new(Monk::Base, &block)
     app.views(root)
     app.layout(layout) if layout
-    Monk.boot(app)
+    boot_quietly(app)
     app
   end
 end

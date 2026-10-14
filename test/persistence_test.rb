@@ -121,6 +121,10 @@ class PersistenceTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("SELECT 1") }
 
     proxy.stop
+    # The close reaches the client's socket asynchronously; checking out
+    # before it lands would be a drop nobody can see yet (terminate_backend
+    # waits for the same reason).
+    assert Monk::Persistence::Pg[DB_NAME].socket_io.wait_readable(5), "the drop never reached the client"
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     assert_raises(PG::ConnectionBad) { Monk::Persistence::Pg.checkout(DB_NAME) { flunk "ran on a dead connection" } }
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1

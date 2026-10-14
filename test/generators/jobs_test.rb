@@ -16,6 +16,44 @@ class GeneratorsJobsTest < Minitest::Test
     end
   end
 
+  # The recurring tasks' table comes second, stamped after the queue's.
+  def test_writes_the_recurring_migration_after_the_queues
+    with_new_app(:jobs) do |dest|
+      names = Dir.children(File.join(dest, "db/migrate")).grep(/\.up\.sql\z/).sort
+
+      assert_equal 2, names.size
+      assert_match(/_create_jobs_tables\.up\.sql\z/, names[0])
+      assert_match(/_create_recurring_tables\.up\.sql\z/, names[1])
+      assert_equal 2, Dir.children(File.join(dest, "db/migrate")).grep(/_create_recurring_tables\./).size
+    end
+  end
+
+  # config/recurring.rb holds the schedules, its demo task commented out
+  # so a new app's bin/jobs doesn't enqueue every hour.
+  def test_writes_config_recurring_with_a_commented_example
+    with_new_app(:jobs) do |dest, result|
+      assert_equal template("jobs/config/recurring.rb"), generated(dest, "config/recurring.rb")
+      assert_includes generated(dest, "config/recurring.rb"), "# monk:example jobs-recurring"
+      assert_equal "uncomment to run the demo job every hour",
+        result.examples.find { |entry| entry[:tag] == "jobs-recurring" }[:todo]
+    end
+  end
+
+  # With auth, config/recurring.rb schedules Monk::Auth::Sweep nightly,
+  # whichever module came first; without auth, nothing
+  # (docs/history/plan-auth-housekeeping.md decision 1).
+  def test_with_auth_the_sweep_is_scheduled_in_either_order
+    [%i[jobs auth], %i[auth jobs]].each do |modules|
+      with_new_app(*modules) do |dest|
+        assert_equal '[["monk_auth_sweep", "17 3 * * *"]]', recurring_tasks(dest), modules.inspect
+      end
+    end
+  end
+
+  def test_without_auth_nothing_is_scheduled
+    with_new_app(:jobs) { |dest| assert_equal "[]", recurring_tasks(dest) }
+  end
+
   def test_says_to_run_bin_jobs
     with_new_app do |dest|
       result = add_modules(dest, :jobs)
@@ -92,6 +130,19 @@ class GeneratorsJobsTest < Minitest::Test
         assert_equal 0, count(env, "monk_processes"), "it unregisters on the way out"
       end
     end
+  end
+
+  # The app's declared recurring tasks, [key, cron] each, as config/load
+  # leaves them. Loaded as development, which needs no MAIL_URL.
+  def recurring_tasks(dest)
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../../Gemfile", __dir__), "MONK_ENV" => "development",
+            "AUTH_SECRET" => "probe", }
+    out, status = Open3.capture2e(env,
+      RbConfig.ruby, "-W0", "-rbundler/setup", "-e",
+      %(require "./config/load"; print Monk::Jobs.recurring_tasks.map { |t| [t.key, t.cron.expression] }.inspect),
+      chdir: dest,)
+    assert status.success?, out
+    out
   end
 
   def count(env, table, where = "true")

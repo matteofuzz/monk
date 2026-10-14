@@ -20,6 +20,37 @@ end
 
 Minitest::Test.include(EnvHelper)
 
+# Monk.freeze! (and Monk.boot) keeps the MONK_ENV it saw, so a test that
+# freezes under with_monk_env("development") and doesn't reset Settings
+# would leave Monk.env reading "development" for whichever test runs
+# next. Every test starts from unfrozen Settings instead, reading
+# MONK_ENV (test) live.
+module FreshSettings
+  def before_setup
+    Monk::Settings.reset!
+    super
+  end
+end
+
+Minitest::Test.include(FreshSettings)
+
+# Monk.boot prints its banner, and an app frozen in development echoes
+# each request line, to $stdout; tests swallow both so they don't land in
+# the suite's output. Each returns the block's (or boot's) value.
+module Quietly
+  def quietly
+    result = nil
+    capture_io { result = yield }
+    result
+  end
+
+  def boot_quietly(app)
+    quietly { Monk.boot(app) }
+  end
+end
+
+Minitest::Test.include(Quietly)
+
 # Shared by views_test.rb and assets_test.rb: a throwaway views/ or
 # public/ root on disk, torn down after the block, with the global
 # Monk::Views / Monk::Assets state reset either way.
@@ -423,6 +454,15 @@ module AuthTestHelpers
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       SQL
+      # As in create_login_requests (auth's template migrations;
+      # test/auth_schema_test.rb checks those).
+      conn.exec(<<~SQL)
+        CREATE TABLE login_requests (
+          email TEXT PRIMARY KEY,
+          requested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      SQL
+      conn.exec("CREATE INDEX sessions_subject ON sessions (subject)")
     end
     Monk::Auth.configure(
       db_name: db_name, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
@@ -431,6 +471,7 @@ module AuthTestHelpers
   end
 
   def drop_auth_tables(conn)
+    drop_table_if_exists(conn, "login_requests")
     drop_table_if_exists(conn, "sessions")
     drop_table_if_exists(conn, "login_tokens")
   end
@@ -450,7 +491,7 @@ module JobsTestHelpers
   end
 
   def drop_jobs_tables(conn)
-    %w[monk_job_payloads monk_jobs monk_processes schema_migrations].each do |table|
+    %w[monk_job_payloads monk_jobs monk_processes monk_recurring_tasks schema_migrations].each do |table|
       drop_table_if_exists(conn, table, cascade: true)
     end
   end

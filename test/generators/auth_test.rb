@@ -21,8 +21,21 @@ class GeneratorsAuthTest < Minitest::Test
       assert_includes generated(dest, "config/auth.rb"), %(require_relative "../app/mailers/auth_mailer")
       assert_includes generated(dest, "app/mailers/auth_mailer.rb"), "module AuthMailer"
       assert_includes generated(dest, "app/mailers/app_mailer.rb"), "module AppMailer"
-      assert_equal %w[20261008143000_create_auth_tables.down.sql 20261008143000_create_auth_tables.up.sql],
+      assert_equal %w[20261008143000_create_auth_tables.down.sql 20261008143000_create_auth_tables.up.sql
+                      20261008143001_create_login_requests.down.sql 20261008143001_create_login_requests.up.sql],
         Dir.children(File.join(dest, "db/migrate")).grep(/\.sql\z/).sort
+    end
+  end
+
+  # The login routes count login emails in the database
+  # (docs/history/plan-auth-housekeeping.md decision 7), not per process.
+  def test_the_login_routes_use_the_database_rate_limit
+    with_new_app(:auth) do |dest|
+      routes = generated(dest, "app/routes/auth.rb")
+
+      assert_includes routes, "#     halt(429) unless Monk::Auth.allow_login_request?(email)"
+      refute_includes routes, "RateLimiter"
+      assert_includes generated(dest, "test/auth_test.rb"), "Monk::Auth.clear_login_requests!"
     end
   end
 

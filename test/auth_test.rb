@@ -239,7 +239,7 @@ class AuthTest < Minitest::Test
 
     counts = Monk::Auth.sweep!
 
-    assert_equal({ login_tokens: 1, sessions: 1 }, counts)
+    assert_equal({ login_tokens: 1, sessions: 1, login_requests: 0 }, counts)
     refute_nil Monk::Auth.redeem(live_raw)
     assert_equal "b@c.com", Monk::Auth.verify(live_session[:token])
   end

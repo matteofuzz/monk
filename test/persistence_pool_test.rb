@@ -174,10 +174,12 @@ class PersistencePoolTest < Minitest::Test
   # -- Phase 10: the boot line --
 
   def test_the_boot_line_lists_the_pools_running_in_this_process
+    # Taken before start_pool, which skips without Postgres: the ensure
+    # still runs then, and mustn't set $stdout to nil.
+    original = $stdout
     start_pool(:p, size: 2)
     app = Class.new(Monk::Base) { get("/") { "hi" } }
 
-    original = $stdout
     $stdout = StringIO.new
     Monk.boot(app)
     output = $stdout.string
@@ -622,11 +624,11 @@ class PersistencePoolTest < Minitest::Test
 
   def with_log_table
     conn = PG.connect(**pg_test_opts)
-    conn.exec("DROP TABLE IF EXISTS pool_test_log")
+    drop_table_if_exists(conn, "pool_test_log")
     conn.exec("CREATE TABLE pool_test_log (seq bigserial PRIMARY KEY, n int NOT NULL)")
     yield
   ensure
-    conn&.exec("DROP TABLE IF EXISTS pool_test_log")
+    drop_table_if_exists(conn, "pool_test_log") if conn
     conn&.close
   end
 
@@ -654,11 +656,11 @@ class PersistencePoolTest < Minitest::Test
 
   def with_items_table
     conn = PG.connect(**pg_test_opts)
-    conn.exec("DROP TABLE IF EXISTS pool_test_items")
+    drop_table_if_exists(conn, "pool_test_items")
     conn.exec("CREATE TABLE pool_test_items (id int PRIMARY KEY)")
     yield
   ensure
-    conn&.exec("DROP TABLE IF EXISTS pool_test_items")
+    drop_table_if_exists(conn, "pool_test_items") if conn
     conn&.close
   end
 end
