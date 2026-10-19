@@ -1,0 +1,454 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Connect-rate benchmark for Monk::WebSocket::Server
+# (docs/plan-ws-connect-ceiling.md). Not run in CI or by `rake test`: a
+# manual tool, like bin/benchmark_router.
+#
+# Opens sockets at fixed rates (an open model: each connect is due at its
+# time whether or not earlier ones finished, and its latency counts from
+# then) against a server in a child process, pinned to its own cores, and
+# reports per rate: how many got ready, the latency to ready, the errors,
+# and the server's CPU, GC and Ractor count over the step.
+#
+# Variants, each adding one part of what bin/websocket_server does:
+#   bare  -- authenticate: false; ready = the 101
+#   auth  -- + authenticate: :optional through a db_pool (a session cookie);
+#            ready = the 101
+#   live  -- + Monk::Live (in-process Registry, ALLOW_ALL) and a subscribe
+#            to --topics topics; ready = the "subscribed" reply
+#
+# Linux only, for the numbers to mean anything: Ruby's M:N scheduler, which
+# runs the connection Ractors, is Linux-only. On a Mac, in the image the
+# monk-vs-rails bench builds (Ruby, pg, taskset):
+#
+#   docker run --rm -v "$PWD":/monk -w /monk --ulimit nofile=1048576:1048576 \
+#     -e MONK_BENCH_PG_HOST=host.docker.internal --entrypoint taskset bench-monk \
+#     -c 4-7 ruby bin/benchmark_ws_connect --variant live --held 5000 --rates 200,400
+#
+# (taskset -c 4-7 keeps the client off the server's cores; without it, the
+# client's own lag, reported as "lag p99", grows and blurs the latencies.)
+#
+# Options:
+#   --variant bare|auth|live   (live)
+#   --rates 100,200,400        connects a second, one step each (100,200,400)
+#   --duration 20              seconds of connects per step (20)
+#   --held 0                   sockets opened before the steps and kept
+#                              open through all of them (0)
+#   --held-rate 200            connects a second for --held (200)
+#   --topics 8                 topics per subscribe, live only (8)
+#   --users 2000               sessions to rotate through (2000)
+#   --pool-size 4              the :auth pool's size (4)
+#   --timeout 10               seconds a connect may take to be ready (10)
+#   --server-cpus 0-3          taskset list for the server (0-3)
+#   --client-threads 2000      client threads, so connects in flight (2000)
+#   --installed-gem            the installed monkrb, not this checkout's lib/
+#
+# Postgres (auth and live): MONK_BENCH_PG_HOST, _PORT, _USER, _PASSWORD
+# (127.0.0.1, 5432, postgres, postgres). Uses its own database,
+# monk_bench_ws, created if missing.
+
+require "optparse"
+require "json"
+require "socket"
+require "securerandom"
+require "rbconfig"
+require "tmpdir"
+require "io/wait"
+
+options = {
+  variant: "live", rates: [100, 200, 400], duration: 20, held: 0, held_rate: 200, topics: 8, users: 2000,
+  pool_size: 4, timeout: 10.0, server_cpus: "0-3", client_threads: 2000, installed_gem: false, serve: false,
+}
+OptionParser.new do |o|
+  o.on("--variant V", %w[bare auth live]) { |v| options[:variant] = v }
+  o.on("--rates LIST") { |v| options[:rates] = v.split(",").map { Integer(_1) } }
+  o.on("--duration N", Integer) { |v| options[:duration] = v }
+  o.on("--held N", Integer) { |v| options[:held] = v }
+  o.on("--held-rate N", Integer) { |v| options[:held_rate] = v }
+  o.on("--topics N", Integer) { |v| options[:topics] = v }
+  o.on("--users N", Integer) { |v| options[:users] = v }
+  o.on("--pool-size N", Integer) { |v| options[:pool_size] = v }
+  o.on("--timeout S", Float) { |v| options[:timeout] = v }
+  o.on("--server-cpus LIST") { |v| options[:server_cpus] = v }
+  o.on("--client-threads N", Integer) { |v| options[:client_threads] = v }
+  o.on("--installed-gem") { options[:installed_gem] = true }
+  o.on("--serve") { options[:serve] = true }
+end.parse!
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__)) unless options[:installed_gem]
+
+PG_OPTS = {
+  host: ENV.fetch("MONK_BENCH_PG_HOST", "127.0.0.1"),
+  port: ENV.fetch("MONK_BENCH_PG_PORT", "5432").to_i,
+  user: ENV.fetch("MONK_BENCH_PG_USER", "postgres"),
+  password: ENV.fetch("MONK_BENCH_PG_PASSWORD", "postgres"),
+}.freeze
+PG_DATABASE = "monk_bench_ws"
+
+# The raw session token of user i; the server seeds its hash.
+def token_for(index) = "bench-token-#{index}"
+
+# -- The server: the child process ------------------------------------------
+
+# Module scope, so the handler is Ractor-shareable (self is a Module).
+module BenchWsConnect
+  # bare and auth: hold the socket until the client closes it.
+  DRAIN = proc { |connection| nil while connection.read }
+end
+
+def seed_sessions(users)
+  require "pg"
+  admin = PG.connect(**PG_OPTS, dbname: "postgres")
+  unless admin.exec_params("SELECT 1 FROM pg_database WHERE datname = $1", [PG_DATABASE]).ntuples.positive?
+    admin.exec("CREATE DATABASE #{PG_DATABASE}")
+  end
+  admin.close
+
+  conn = PG.connect(**PG_OPTS, dbname: PG_DATABASE)
+  conn.exec(<<~SQL)
+    DROP TABLE IF EXISTS sessions, login_tokens;
+    CREATE TABLE login_tokens (
+      id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, redirect_to TEXT,
+      expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE sessions (
+      id BIGSERIAL PRIMARY KEY, subject TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  SQL
+  # Digest::SHA256.hexdigest, as Monk::Auth.hash_token.
+  conn.exec_params(<<~SQL, [users])
+    INSERT INTO sessions (subject, token_hash, expires_at)
+    SELECT 'user' || i || '@bench.test', encode(sha256(('bench-token-' || i)::bytea), 'hex'), now() + interval '1 day'
+    FROM generate_series(1, $1::int) AS i
+  SQL
+  conn.close
+end
+
+def serve(options)
+  variant = options[:variant]
+  require "monk"
+  require "monk/websocket"
+  authenticate = false
+  db_pool = nil
+
+  unless variant == "bare"
+    seed_sessions(options[:users])
+    require "monk/auth"
+    Monk::Persistence::Pg.register(:bench, **PG_OPTS, dbname: PG_DATABASE)
+    Monk::Auth.configure(db_name: :bench, secret: "bench", login_ttl: 600, session_ttl: 86_400)
+    Monk::Persistence::Pg.pool(:auth, db: :bench, size: options[:pool_size])
+    authenticate = :optional
+    db_pool = :auth
+  end
+
+  handler = BenchWsConnect::DRAIN
+  if variant == "live"
+    require "monk/live"
+    Monk::Live.configure(registry: Monk::WebSocket::Registry.new)
+    Monk::Live.authorize("board:*", &Monk::Live::ALLOW_ALL)
+    handler = Monk::Live::HANDLER
+  end
+
+  # As bin/websocket_server: the pool starts before the server.
+  Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
+  server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", authenticate: authenticate, db_pool: db_pool)
+
+  # What triggered each GC (newobj, malloc, ...), sampled: a GC between two
+  # looks counts once, under the later one's reason.
+  gc_by = Hash.new(0)
+  Thread.new do
+    seen = GC.count
+    loop do
+      sleep 0.005
+      next if GC.count == seen
+
+      seen = GC.count
+      info = GC.latest_gc_info
+      gc_by["#{info[:gc_by]}#{"/#{info[:major_by]}" if info[:major_by]}"] += 1
+    end
+  end
+
+  # The parent asks for stats on stdin; answers go to stdout, prefixed, so
+  # anything else Monk prints there can't be mistaken for one.
+  # Ruby 4.1 collects per Ractor: unscoped GC.stat is this (main) Ractor's
+  # only, and scope: :global sums every Ractor's, global GCs counted apart.
+  # It has no allocation count, so objects a connect is 4.0-only.
+  global_scope = begin
+    GC.stat(scope: :global)
+    true
+  rescue ArgumentError
+    false
+  end
+  Thread.new do
+    while $stdin.gets
+      gc = global_scope ? GC.stat(scope: :global) : GC.stat
+      rss_kb = File.read("/proc/self/status")[/^VmRSS:\s+(\d+)/, 1].to_i
+      stats = {
+        cpu: Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID), gc_count: gc[:count],
+        gc_minor: gc[:minor_gc_count], gc_major: gc[:major_gc_count], gc_global: gc.fetch(:global_gc_count, 0),
+        gc_ms: gc[:time], mark_ms: gc[:marking_time], allocated: gc[:total_allocated_objects],
+        sweep_ms: gc[:sweeping_time], ractors: Ractor.count, rss_mb: rss_kb / 1024, gc_by: gc_by.dup,
+      }
+      $stdout.puts("BENCH #{JSON.generate(stats)}")
+      $stdout.flush
+    end
+  end
+
+  $stdout.puts("BENCH PORT #{server.port} monk #{Monk::VERSION} #{RUBY_DESCRIPTION}")
+  $stdout.flush
+  server.run(&handler)
+end
+
+if options[:serve]
+  serve(options)
+  exit
+end
+
+# -- The client: this process ------------------------------------------------
+
+class BenchServer
+  attr_reader :port, :banner
+
+  def initialize(options, log_path)
+    args = [RbConfig.ruby, __FILE__, "--serve", "--variant", options[:variant], "--users", options[:users].to_s,
+            "--pool-size", options[:pool_size].to_s]
+    args << "--installed-gem" if options[:installed_gem]
+    @io = IO.popen(["taskset", "-c", options[:server_cpus], *args], "r+", err: [log_path, "w"])
+    line = read_line
+    _, _, port, *rest = line.split
+    @port = Integer(port)
+    @banner = rest.join(" ")
+  end
+
+  def stats
+    @io.puts("stats")
+    @io.flush
+    JSON.parse(read_line.delete_prefix("BENCH "), symbolize_names: true)
+  end
+
+  def stop
+    Process.kill("TERM", @io.pid)
+    @io.close
+  rescue Errno::ESRCH, IOError
+    nil
+  end
+
+  private
+
+  def read_line
+    loop do
+      line = @io.gets or raise "the server exited; see its log"
+      return line.chomp if line.start_with?("BENCH ")
+    end
+  end
+end
+
+class Client
+  KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+
+  def initialize(port:, variant:, topics:, users:, timeout:)
+    @port = port
+    @variant = variant
+    @topics = topics
+    @users = users
+    @timeout = timeout
+  end
+
+  # [:ok, socket] once ready, or [error kind, nil].
+  def connect(index)
+    deadline = now + @timeout
+    socket = Socket.tcp("127.0.0.1", @port, connect_timeout: @timeout)
+    socket.write(request(index))
+    head = read_until(socket, "\r\n\r\n", deadline)
+    return fail(socket, :closed) unless head
+    return fail(socket, :"http_#{head[9, 3]}") unless head.start_with?("HTTP/1.1 101")
+    return [:ok, socket] unless @variant == "live"
+
+    socket.write(text_frame(subscribe(index)))
+    reply = read_frame(socket, deadline)
+    return fail(socket, :closed) unless reply
+    return fail(socket, :not_subscribed) unless reply.include?("\"subscribed\"")
+
+    [:ok, socket]
+  rescue ReadTimeout
+    fail(socket, :timeout)
+  rescue Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EPIPE, IOError => e
+    fail(socket, e.class.name.split("::").last.downcase.to_sym)
+  rescue Errno::ETIMEDOUT
+    fail(socket, :timeout)
+  end
+
+  private
+
+  class ReadTimeout < StandardError; end
+
+  def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+  def fail(socket, kind)
+    socket&.close
+    [kind, nil]
+  end
+
+  # A cookie the size of the bench app's: a session token and a CSRF token.
+  def request(index)
+    user = (index % @users) + 1
+    "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+      "Sec-WebSocket-Key: #{KEY}\r\nSec-WebSocket-Version: 13\r\n" \
+      "Cookie: session_token=#{token_for(user)}; csrf_token=#{"0" * 64}\r\n\r\n"
+  end
+
+  def subscribe(index)
+    topics = Array.new(@topics) { |i| "board:#{((index * 7919) + (i * 104_729)) % 10_000}" }.uniq
+    JSON.generate(op: "subscribe", topics: topics)
+  end
+
+  def read_some(socket, deadline)
+    remaining = deadline - now
+    raise ReadTimeout if remaining <= 0
+    raise ReadTimeout unless socket.wait_readable(remaining)
+
+    socket.read_nonblock(4096, exception: false).then { |chunk| chunk == :wait_readable ? "" : chunk }
+  end
+
+  def read_until(socket, marker, deadline)
+    buffer = +""
+    until buffer.include?(marker)
+      chunk = read_some(socket, deadline)
+      return nil if chunk.nil?
+
+      buffer << chunk
+    end
+    buffer
+  end
+
+  # One unmasked server frame's payload.
+  def read_frame(socket, deadline)
+    buffer = +"".b
+    until (payload = complete_frame(buffer))
+      chunk = read_some(socket, deadline)
+      return nil if chunk.nil?
+  
+      buffer << chunk.b
+    end
+    payload
+  end
+  
+  def complete_frame(buffer)
+    return nil if buffer.bytesize < 2
+  
+    length = buffer.getbyte(1) & 0x7F
+    header = 2
+    if length == 126
+      return nil if buffer.bytesize < 4
+  
+      length = buffer.byteslice(2, 2).unpack1("n")
+      header = 4
+    end
+    buffer.byteslice(header, length) if buffer.bytesize >= header + length
+  end
+  
+  # Masked, as a browser sends it.
+  def text_frame(payload)
+    payload = payload.b
+    mask = SecureRandom.random_bytes(4)
+    length = payload.bytesize <= 125 ? [0x80 | payload.bytesize].pack("C") : [0x80 | 126, payload.bytesize].pack("Cn")
+    masked = payload.bytes.each_with_index.map { |byte, i| byte ^ mask.getbyte(i % 4) }.pack("C*")
+    [0x81].pack("C") + length + mask + masked
+  end
+end
+
+def percentile(sorted, p)
+  return nil if sorted.empty?
+
+  sorted[[(sorted.size * p).ceil - 1, 0].max]
+end
+
+def ms(seconds) = seconds ? format("%.0f", seconds * 1000) : "-"
+
+# Opens rate*duration sockets on schedule; returns what happened to each.
+def run_step(client, rate, duration, threads, held)
+  count = rate * duration
+  start = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.2
+  queue = Queue.new
+  count.times { |i| queue << [i, start + (i.to_f / rate)] }
+  threads.times { queue << nil }
+  results = Queue.new
+  workers = Array.new(threads) do
+    Thread.new do
+      while (ticket = queue.pop)
+        index, due = ticket
+        wait = due - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        sleep(wait) if wait.positive?
+        began = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        kind, socket = client.connect(index)
+        done = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        held << socket if socket
+        results << [kind, done - due, began - due, done - start]
+      end
+    end
+  end
+  workers.each(&:join)
+  Array.new(results.size) { results.pop }
+end
+
+def report_step(label, rate, outcomes, before, after, wall)
+  ok = outcomes.select { |o| o[0] == :ok }
+  latencies = ok.map { |o| o[1] }.sort
+  lags = outcomes.map { |o| o[2] }.sort
+  last_ok = ok.map { |o| o[3] }.max
+  errors = outcomes.reject { |o| o[0] == :ok }.map(&:first).tally.map { |k, v| "#{k}=#{v}" }.join(" ")
+  cpu = (after[:cpu] - before[:cpu]) / wall * 100
+  printf(
+    "%-6s %5d/s  ready %6d/%-6d p50 %6s p99 %6s max %6s ms  lag p99 %5s ms  cpu %4.0f%%  " \
+    "gc %4d (%d major, %d global) %6d ms  ractors %6d  rss %5d MB  last ready %5.1fs  %s\n",
+    label, rate, ok.size, outcomes.size, ms(percentile(latencies, 0.5)), ms(percentile(latencies, 0.99)),
+    ms(latencies.last), ms(percentile(lags, 0.99)), cpu, after[:gc_count] - before[:gc_count],
+    after[:gc_major] - before[:gc_major], after[:gc_global] - before[:gc_global], after[:gc_ms] - before[:gc_ms], after[:ractors], after[:rss_mb],
+    last_ok || 0, errors,
+  )
+  reasons = after[:gc_by].to_h { |k, v| [k, v - before[:gc_by].fetch(k, 0)] }.select { |_, v| v.positive? }
+  puts "         gc by: #{reasons.map { |k, v| "#{k}=#{v}" }.join(" ")}; marking #{after[:mark_ms] - before[:mark_ms]} ms, sweeping #{after[:sweep_ms] - before[:sweep_ms]} ms" \
+    "#{"; #{(after[:allocated] - before[:allocated]) / [outcomes.size, 1].max} objects a connect" if after[:allocated]}"
+  $stdout.flush
+end
+
+log_path = File.join(Dir.tmpdir, "benchmark_ws_connect-#{Process.pid}.log")
+server = BenchServer.new(options, log_path)
+at_exit { server.stop }
+client = Client.new(
+  port: server.port, variant: options[:variant], topics: options[:topics], users: options[:users],
+  timeout: options[:timeout],
+)
+
+puts "#{server.banner}"
+puts "variant #{options[:variant]}, server on cpus #{options[:server_cpus]}, #{options[:duration]} s a step, " \
+  "#{options[:held]} held, #{options[:topics]} topics, pool #{options[:pool_size]}, timeout #{options[:timeout]} s; " \
+  "server log #{log_path}"
+
+held_forever = []
+if options[:held].positive?
+  before = server.stats
+  t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  outcomes = run_step(client, options[:held_rate], options[:held] / options[:held_rate], options[:client_threads],
+    held_forever)
+  report_step("held", options[:held_rate], outcomes, before, server.stats,
+    Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0)
+end
+
+options[:rates].each do |rate|
+  held = Queue.new
+  before = server.stats
+  t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  outcomes = run_step(client, rate, options[:duration], options[:client_threads], held)
+  report_step("step", rate, outcomes, before, server.stats, Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0)
+  # This step's sockets close; the held ones stay. A moment for the server
+  # to end their Ractors before the next step.
+  held.close
+  held.size.times { held.pop.close }
+  sleep 3
+end
+
+log_lines = File.foreach(log_path).count
+puts "server log: #{log_lines} lines (#{log_path})"
