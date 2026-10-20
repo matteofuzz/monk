@@ -66,6 +66,20 @@ class WebSocketServerTest < Minitest::Test
     socket&.close
   end
 
+  # Item 4: the request is read through the socket's buffer, so a frame
+  # sent in the same packet as the request still reaches the handler.
+  def test_a_frame_sent_right_behind_the_request_is_not_lost
+    server = start_server(&ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    socket.write(handshake_request + Monk::WebSocket::Frame.encode("right behind", opcode: 0x1))
+    read_response_head(socket)
+
+    assert_equal "right behind", read_frame(socket)
+  ensure
+    socket&.close
+  end
+
   def test_accept_loop_does_not_block_on_a_slow_connection
     server = start_server(&SLEEP_IF_TOLD_THEN_ECHO)
 

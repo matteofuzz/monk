@@ -28,6 +28,14 @@ in `lib/monk/version.rb`.
   connection. Clients without an `Origin` also get `Retry-After`
   (item 3).
 
+### Changed
+
+- **A WebSocket handshake allocates less.** The request is read with one
+  `gets` instead of a String a byte, parsed once instead of twice, and
+  its credential worked out once instead of up to three times. Fewer
+  objects a connect means fewer GCs, which is what limits connects a
+  second once thousands of sockets are open (item 4).
+
 ## 0.22.0 - 2026-10-13
 
 ### Added

@@ -234,7 +234,7 @@ module Monk
       )
         # A `return` in here (a refused handshake) ends serve, and its
         # ensure frees the slot.
-        headers, subject = with_deadline(socket, handshake_timeout) do
+        credential, subject = with_deadline(socket, handshake_timeout) do
           request = read_handshake_request(socket)
           return unless request
           return socket.write("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n") if request == :too_large
@@ -247,30 +247,30 @@ module Monk
             end
 
           subject = nil
+          credential = Handshake.credential_from(headers) if authenticate
           case authenticate
           when true
-            subject = authenticate!(socket, headers, allowed_origins, db_pool)
+            subject = authenticate!(socket, headers, credential, allowed_origins, db_pool)
             return unless subject
           when :optional
-            return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
+            return unless origin_allowed_for_optional?(socket, headers, credential, allowed_origins)
 
-            subject = identify(headers, db_pool)
+            subject = identify(credential, db_pool)
             # Not anonymous: that would quietly sign the user out of their
             # topics until the next reconnect.
             return unavailable!(socket, headers) if subject.equal?(VERIFY_FAILED)
           end
 
-          socket.write(Handshake.response_for(request))
-          [headers, subject]
+          socket.write(Handshake.response(headers))
+          [credential, subject]
         end
         handshake_done = handshake_over(handshake_done)
 
         connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
         connection.start_heartbeat(ping_interval) if ping_interval
-        reverify_thread =
-          if reverify_interval && subject
-            start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval, db_pool)
-          end
+        if reverify_interval && subject
+          reverify_thread = start_reverify(connection, credential[:token], reverify_interval, db_pool)
+        end
         begin
           block.call(connection)
         rescue StandardError
@@ -346,9 +346,7 @@ module Monk
       # docs/history/plan-auth.md). Returns the verified subject, or nil after writing
       # the appropriate 403/401 response itself -- or 503, when verify
       # couldn't answer (docs/plan-ws-connect-ceiling.md, item 3).
-      def self.authenticate!(socket, headers, allowed_origins, db_pool)
-        credential = Handshake.credential_from(headers)
-
+      def self.authenticate!(socket, headers, credential, allowed_origins, db_pool)
         if credential&.fetch(:via) == :cookie && allowed_origins
           origin = headers["origin"]
           unless origin && allowed_origins.include?(origin)
@@ -384,10 +382,9 @@ module Monk
       # stops another site's page from opening sockets here on its
       # visitors' behalf; one that sends none (not a browser) gets in.
       # Writes the 403 itself and returns false when refused.
-      def self.origin_allowed_for_optional?(socket, headers, allowed_origins)
+      def self.origin_allowed_for_optional?(socket, headers, credential, allowed_origins)
         return true unless allowed_origins
 
-        credential = Handshake.credential_from(headers)
         return true if credential&.fetch(:via) == :bearer
 
         origin = headers["origin"]
@@ -402,8 +399,7 @@ module Monk
       # The subject of a valid session, or nil -- no credential, or one
       # Monk::Auth no longer accepts, both mean anonymous under :optional --
       # or VERIFY_FAILED.
-      def self.identify(headers, db_pool)
-        credential = Handshake.credential_from(headers)
+      def self.identify(credential, db_pool)
         credential && handshake_verify(credential[:token], db_pool)
       end
       private_class_method :identify
@@ -455,17 +451,16 @@ module Monk
 
       # The request head, nil if the client went away or was too slow, or
       # :too_large past Handshake::MAX_REQUEST_SIZE.
+      #
+      # One String, read through the socket's own buffer: Connection's
+      # reads use that buffer after it, so a frame the client sent right
+      # behind its request isn't lost (a readpartial would take it into
+      # the request and drop it). A read(1) loop made a String a byte.
       def self.read_handshake_request(socket)
-        request = +""
-        until request.end_with?("\r\n\r\n")
-          return :too_large if request.bytesize >= Handshake::MAX_REQUEST_SIZE
+        request = socket.gets("\r\n\r\n", Handshake::MAX_REQUEST_SIZE)
+        return request if request&.end_with?("\r\n\r\n")
 
-          chunk = socket.read(1)
-          return nil if chunk.nil?
-
-          request << chunk
-        end
-        request
+        :too_large if request && request.bytesize >= Handshake::MAX_REQUEST_SIZE
       end
       private_class_method :read_handshake_request
     end

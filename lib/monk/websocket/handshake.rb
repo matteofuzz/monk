@@ -17,12 +17,27 @@ module Monk
         Base64.strict_encode64(Digest::SHA1.digest(client_key + MAGIC))
       end
 
+      # Two Strings a header line (its name and its value), plus the line:
+      # this runs once a connect, and every object it makes is one more
+      # towards the next GC (docs/plan-ws-connect-ceiling.md, item 4).
       def self.parse_request(raw_request)
-        headers = raw_request.split("\r\n").drop(1).each_with_object({}) do |line, h|
-          next if line.empty?
+        headers = {}
+        request_line = true
+        raw_request.each_line("\r\n", chomp: true) do |line|
+          if request_line
+            request_line = false
+            next
+          end
 
-          name, value = line.split(":", 2)
-          h[name.strip.downcase] = value.strip if name && value
+          colon = line.index(":")
+          next unless colon
+
+          name = line.byteslice(0, colon)
+          name.strip!
+          name.downcase!
+          value = line.byteslice(colon + 1, line.bytesize)
+          value.strip!
+          headers[name] = value
         end
 
         unless headers["upgrade"]&.downcase == "websocket"
@@ -59,17 +74,21 @@ module Monk
       end
       private_class_method :bearer_token
 
+      # The last session_token in the header wins, as when it was a Hash.
       def self.session_cookie_token(headers)
-        headers["cookie"].to_s.split(";").each_with_object({}) do |pair, cookies|
+        token = nil
+        headers["cookie"]&.split(";")&.each do |pair|
           name, value = pair.strip.split("=", 2)
-          cookies[name] = value if name
-        end["session_token"]
+          token = value if name == "session_token"
+        end
+        token
       end
       private_class_method :session_cookie_token
 
-      def self.response_for(raw_request)
-        headers = parse_request(raw_request)
+      def self.response_for(raw_request) = response(parse_request(raw_request))
 
+      # The 101 for headers parse_request already returned.
+      def self.response(headers)
         "HTTP/1.1 101 Switching Protocols\r\n" \
         "Upgrade: websocket\r\n" \
         "Connection: Upgrade\r\n" \
