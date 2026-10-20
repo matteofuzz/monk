@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Fixed
+
+- **A WebSocket connect burst queues instead of collapsing.** The server
+  caps the handshakes in flight (`Server.new(max_handshakes:)`, 128 by
+  default); past the cap, connects wait in the kernel's listen backlog.
+  Before, every accepted socket started its handshake at once, and a
+  burst past what the process could verify (a restart's reconnect wave)
+  filled the `db_pool:` queue and timed most of them out
+  (`docs/plan-ws-connect-ceiling.md`, item 1).
+
 ## 0.22.0 - 2026-10-13
 
 ### Added

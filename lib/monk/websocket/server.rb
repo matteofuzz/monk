@@ -55,14 +55,28 @@ module Monk
       # hostile client on a public endpoint, not an opt-in behavior
       # change, so a server that doesn't mention it still gets the
       # default cap rather than no cap at all.
+      #
+      # max_handshakes: caps the connections still in their handshake (the
+      # HTTP upgrade and, with authenticate:, verifying the session). At the
+      # cap the accept loop stops accepting until one finishes, and new
+      # connects wait in the kernel's listen backlog. Without it, a burst
+      # past what the process can verify (a restart's reconnect wave) starts
+      # every handshake at once, fills db_pool:'s queue, and ends with most
+      # of them timing out instead of the rest queueing
+      # (docs/plan-ws-connect-ceiling.md, item 1). Kept well under the
+      # pool's queue (1,000 by default), so a full cap can't overfill it.
+      # Always on, like max_payload_size:.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
+
+      DEFAULT_MAX_HANDSHAKES = 128
 
       # The signals #run treats as "stop": Ctrl+C and TERM.
       STOP_SIGNALS = [Signal.list.fetch("INT"), Signal.list.fetch("TERM")].freeze
 
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
-        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil
+        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
+        max_handshakes: DEFAULT_MAX_HANDSHAKES
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -83,6 +97,10 @@ module Monk
 
         unless max_payload_size.positive?
           raise ArgumentError, "max_payload_size must be positive, got #{max_payload_size.inspect}"
+        end
+
+        unless max_handshakes.is_a?(Integer) && max_handshakes.positive?
+          raise ArgumentError, "max_handshakes must be a positive Integer, got #{max_handshakes.inspect}"
         end
 
         if authenticate
@@ -113,6 +131,7 @@ module Monk
         @reverify_interval = reverify_interval
         @max_payload_size = max_payload_size
         @db_pool = db_pool
+        @max_handshakes = max_handshakes
       end
 
       def port
@@ -130,16 +149,30 @@ module Monk
               "top-level block -- mirrors StateRactor#update's own constraint)"
           end
 
+        # One slot a handshake in flight (max_handshakes:). Each connection
+        # Ractor sends to handshake_done once its handshake is over, however
+        # it ended, and the releaser thread frees a slot for it.
+        slots = Thread::SizedQueue.new(@max_handshakes)
+        handshake_done = Ractor::Port.new
+        releaser = Thread.new do
+          loop do
+            handshake_done.receive
+            slots.pop
+          end
+        end
+
         loop do
+          slots.push(true)
           socket = @tcp_server.accept
           ractor = Ractor.new(
             shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
-            @db_pool
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool|
+            @db_pool, handshake_done
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
               authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
-              reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool
+              reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool,
+              handshake_done: done
             )
           end
           ractor.send(socket, move: true)
@@ -161,15 +194,22 @@ module Monk
         # different failure point in this same shutdown -- a live
         # connection's cleanup racing the registry Ractor's teardown.
         @tcp_server.close
+      ensure
+        releaser&.kill
+        handshake_done&.close
       end
 
       # Runs entirely inside the connection's own dedicated Ractor
       # (docs/history/plan-websocket.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
+      #
+      # handshake_done: is #run's port for max_handshakes:, told once the
+      # handshake is over: the 101 written, or the connection refused or
+      # dropped before it.
       def self.serve(
         socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
-        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil
+        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil, handshake_done: nil
       )
         request = read_handshake_request(socket)
         return socket.close unless request
@@ -193,6 +233,7 @@ module Monk
         end
 
         socket.write(Handshake.response_for(request))
+        handshake_done = handshake_over(handshake_done)
 
         connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
         connection.start_heartbeat(ping_interval) if ping_interval
@@ -214,12 +255,25 @@ module Monk
         # handshake, and a crashed handler alike -- so a subscribed
         # connection never leaks a stale registry entry (step 17), a
         # heartbeat thread, or a reverify thread outliving its socket.
+        # A handshake that never reached its 101 still frees its slot.
+        handshake_over(handshake_done)
         reverify_thread&.kill
         connection&.unsubscribe!
         connection&.stop_heartbeat!
         socket.close
         disconnect_all
       end
+
+      # Frees this connection's max_handshakes: slot in #run; returns nil,
+      # so serve can mark it freed. The port is gone once #run has
+      # returned, and then there's no slot to free.
+      def self.handshake_over(handshake_done)
+        handshake_done&.send(true)
+        nil
+      rescue Ractor::ClosedError
+        nil
+      end
+      private_class_method :handshake_over
 
       # Closes the connections this socket's Ractor opened: its database
       # connection (verifying the session without db_pool:, or a block

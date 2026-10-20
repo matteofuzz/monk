@@ -53,7 +53,13 @@ checks the credential once, at connect time. `max_payload_size:` (bytes,
 whose declared length exceeds it before ever reading that many bytes off
 the wire, and applies the same cap to a fragmented message's reassembled
 total — a public endpoint shouldn't trust a claimed length, or let many
-small frames add up past it. A reverse proxy in front routes `/ws` to
+small frames add up past it. `max_handshakes:` (128 by default, also
+always on) caps the connections still in their handshake, the HTTP
+upgrade and the session check: at the cap the server stops accepting
+until one finishes, and new connects wait in the kernel's listen
+backlog, so a burst past what the process can verify (every page
+reconnecting after a restart) queues instead of timing out all at once.
+A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 [`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
 phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/history/plan-websocket.md`.

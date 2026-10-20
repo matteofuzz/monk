@@ -126,6 +126,55 @@ class WebSocketServerTest < Minitest::Test
     healthy&.close
   end
 
+  # docs/plan-ws-connect-ceiling.md item 1: at max_handshakes:, the accept
+  # loop waits for a handshake to end before it takes the next connect.
+  def test_at_max_handshakes_a_new_connect_waits_for_a_handshake_to_end
+    server = start_server(max_handshakes: 2, &ECHO_ONE_MESSAGE)
+
+    # Connected, but never sending a request: both stay in their handshake.
+    silent = Array.new(2) { TCPSocket.new("127.0.0.1", server.port) }
+    sleep 0.1
+    waiting = TCPSocket.new("127.0.0.1", server.port)
+    waiting.write(handshake_request)
+
+    assert_nil waiting.wait_readable(0.3), "a third handshake was served past the cap"
+
+    silent.first.close
+    response = read_response_head(waiting)
+
+    assert_match(%r{\AHTTP/1.1 101 Switching Protocols}, response)
+  ensure
+    silent&.each(&:close)
+    waiting&.close
+  end
+
+  def test_a_refused_handshake_frees_its_slot
+    server = start_server(max_handshakes: 1, &ECHO_ONE_MESSAGE)
+
+    3.times do
+      socket = TCPSocket.new("127.0.0.1", server.port)
+      socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+      assert_match(%r{\AHTTP/1.1 400 Bad Request}, read_response_head(socket))
+      socket.close
+    end
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert_match(%r{\AHTTP/1.1 101}, handshake!(socket))
+  ensure
+    socket&.close
+  end
+
+  def test_max_handshakes_must_be_a_positive_integer
+    [0, -1, 1.5, nil].each do |value|
+      error = assert_raises(ArgumentError) do
+        Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", max_handshakes: value)
+      end
+      assert_match(/max_handshakes must be a positive Integer/, error.message)
+    end
+  end
+
   # TERM is how docker stop, Kubernetes, Fly, Render and systemd stop a
   # process -- every deploy. The server handles it like Ctrl-C: it stops
   # accepting, run returns, and the script ends with exit 0, as bin/server
