@@ -167,7 +167,9 @@ same as a crash or a network blip.
 A `Registry` only reaches connections held by its own process. Once a
 WebSocket server is scaled to more than one process (or host),
 `Monk::WebSocket::RedisFanout` wraps a `Registry` behind the identical
-`#register`/`#unregister`/`#count`/`#broadcast`/`#listen!` interface, so swapping which
+`#register`/`#unregister`/`#register_many`/`#unregister_many`/`#count`/`#broadcast`/`#listen!`
+interface (the `_many` pair takes an Array of keys in one ask, which is how
+`Monk::Live` subscribes a page's topics), so swapping which
 object a connection holds is the only change an app makes:
 
 ```ruby
@@ -186,7 +188,7 @@ in the process that holds the sockets (the scaffolded `bin/websocket_server`
 does it before `server.run`). It returns when the subscription is in
 effect, and raises `Monk::WebSocket::ListenError` if Redis can't be
 reached. A process that only broadcasts never calls it, so it opens no
-subscriber connection. `#register` on a fanout that isn't listening raises
+subscriber connection. `#register` (or `#register_many`) on a fanout that isn't listening raises
 `Monk::WebSocket::NotListeningError`. A plain `Registry` has `#listen!` too,
 as a no-op, so the same line works whichever one `REGISTRY` holds. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it

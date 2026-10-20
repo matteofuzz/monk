@@ -225,17 +225,17 @@ module Monk
       end
 
       def register(key, port)
-        unless Listeners.listening?(@origin)
-          raise NotListeningError,
-            "Monk::WebSocket::PgFanout#register before #listen!: this socket would never get " \
-            "other processes' broadcasts -- call listen! once at boot in the process that holds " \
-            "sockets (bin/websocket_server: Monk::Live.listen!)"
-        end
-
+        ensure_listening!(:register)
         @registry.register(key, port)
       end
 
+      def register_many(keys, port)
+        ensure_listening!(:register_many)
+        @registry.register_many(keys, port)
+      end
+
       def unregister(key, port) = @registry.unregister(key, port)
+      def unregister_many(keys, port) = @registry.unregister_many(keys, port)
       def count(key) = @registry.count(key)
 
       def broadcast(key, payload)
@@ -265,6 +265,15 @@ module Monk
       end
 
       private
+
+      def ensure_listening!(method)
+        return if Listeners.listening?(@origin)
+
+        raise NotListeningError,
+          "Monk::WebSocket::PgFanout##{method} before #listen!: this socket would never get " \
+          "other processes' broadcasts -- call listen! once at boot in the process that holds " \
+          "sockets (bin/websocket_server: Monk::Live.listen!)"
+      end
 
       # The pool's database's connection options, for #listen!.
       def pooled_pg_opts(db_pool)

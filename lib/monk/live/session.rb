@@ -58,18 +58,24 @@ module Monk
           topics.all? { |topic| topic.is_a?(String) && topic.valid_encoding? }
       end
 
+      # The new topics go to the registry in one ask, not one each: at a
+      # reconnect wave's rate, one ask per topic is most of the registry
+      # Ractor's work (docs/plan-ws-connect-ceiling.md, item 5).
       def subscribe(topics)
-        allowed, denied = topics.partition { |topic| try_subscribe?(topic) }
+        added = {}
+        allowed, denied = topics.partition { |topic| try_subscribe?(topic, added) }
+        unless added.empty?
+          @registry.register_many(added.values, @port)
+          @topics.merge!(added)
+        end
         reply(op: "subscribed", topics: allowed, denied: denied)
       end
 
-      def try_subscribe?(topic)
-        return true if @topics.key?(topic)
-        return false unless permitted?(topic) && @topics.size < @max_topics
+      def try_subscribe?(topic, added)
+        return true if @topics.key?(topic) || added.key?(topic)
+        return false unless permitted?(topic) && @topics.size + added.size < @max_topics
 
-        key = topic.to_sym
-        @registry.register(key, @port)
-        @topics[topic] = key
+        added[topic] = topic.to_sym
         true
       end
 
@@ -79,7 +85,8 @@ module Monk
 
       def unsubscribe(topics)
         removed = topics.select { |topic| @topics.key?(topic) }
-        removed.each { |topic| @registry.unregister(@topics.delete(topic), @port) }
+        keys = removed.filter_map { |topic| @topics.delete(topic) }
+        @registry.unregister_many(keys, @port) unless keys.empty?
         reply(op: "unsubscribed", topics: removed)
       end
 
@@ -119,7 +126,7 @@ module Monk
       # read -- so a connection never leaves a stale registry entry.
       def cleanup
         @relay&.kill
-        @topics.each_value { |key| @registry.unregister(key, @port) }
+        @registry.unregister_many(@topics.values, @port) unless @topics.empty?
         @topics.clear
         @port&.close
       end

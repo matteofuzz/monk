@@ -35,6 +35,13 @@ in `lib/monk/version.rb`.
   its credential worked out once instead of up to three times. Fewer
   objects a connect means fewer GCs, which is what limits connects a
   second once thousands of sockets are open (item 4).
+- **A Live subscribe is one registry ask, not one a topic.**
+  `Registry#register_many(keys, port)` and `#unregister_many` (on
+  `RedisFanout` and `PgFanout` too) take every key at once;
+  `Monk::Live`'s subscribe, unsubscribe and cleanup use them. Each fiber
+  also reuses one reply port for its asks instead of making one an ask,
+  and the registry survives answering an ask whose caller gave up
+  (item 5).
 
 ## 0.22.0 - 2026-10-13
 
