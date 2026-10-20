@@ -80,6 +80,11 @@ module Monk
       DEFAULT_MAX_HANDSHAKES = 128
       DEFAULT_HANDSHAKE_TIMEOUT = 10
 
+      # What the handshake's verify returns when it raised instead of
+      # answering (the pool full or timed out, the database down): neither
+      # a subject nor "no session", so the connection gets a 503.
+      VERIFY_FAILED = Object.new.freeze
+
       # The signals #run treats as "stop": Ctrl+C and TERM.
       STOP_SIGNALS = [Signal.list.fetch("INT"), Signal.list.fetch("TERM")].freeze
 
@@ -250,6 +255,9 @@ module Monk
             return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
 
             subject = identify(headers, db_pool)
+            # Not anonymous: that would quietly sign the user out of their
+            # topics until the next reconnect.
+            return unavailable!(socket, headers) if subject.equal?(VERIFY_FAILED)
           end
 
           socket.write(Handshake.response_for(request))
@@ -336,7 +344,8 @@ module Monk
       # credential -- a Bearer connection has no Origin header to check
       # by construction (mirrors require_csrf!'s own Bearer exemption in
       # docs/history/plan-auth.md). Returns the verified subject, or nil after writing
-      # the appropriate 403/401 response itself.
+      # the appropriate 403/401 response itself -- or 503, when verify
+      # couldn't answer (docs/plan-ws-connect-ceiling.md, item 3).
       def self.authenticate!(socket, headers, allowed_origins, db_pool)
         credential = Handshake.credential_from(headers)
 
@@ -348,11 +357,25 @@ module Monk
           end
         end
 
-        subject = credential && verify(credential[:token], db_pool)
+        subject = credential && handshake_verify(credential[:token], db_pool)
+        return unavailable!(socket, headers) if subject.equal?(VERIFY_FAILED)
+
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n") unless subject
         subject
       end
       private_class_method :authenticate!
+
+      # A handshake whose verify couldn't answer: 503, and nil. Browser JS
+      # never sees a failed handshake's status or headers (only onclose,
+      # 1006), so Retry-After is for the other clients, the ones without
+      # an Origin, and jittered, so a wave of them doesn't come back as
+      # one.
+      def self.unavailable!(socket, headers)
+        retry_after = headers["origin"] ? "" : "Retry-After: #{rand(1..10)}\r\n"
+        socket.write("HTTP/1.1 503 Service Unavailable\r\n#{retry_after}\r\n")
+        nil
+      end
+      private_class_method :unavailable!
 
       # authenticate: :optional's Origin check, before anything is verified.
       # A Bearer connection is exempt, as under true. A cookie needs an
@@ -377,12 +400,26 @@ module Monk
       private_class_method :origin_allowed_for_optional?
 
       # The subject of a valid session, or nil -- no credential, or one
-      # Monk::Auth no longer accepts, both mean anonymous under :optional.
+      # Monk::Auth no longer accepts, both mean anonymous under :optional --
+      # or VERIFY_FAILED.
       def self.identify(headers, db_pool)
         credential = Handshake.credential_from(headers)
-        credential && verify(credential[:token], db_pool)
+        credential && handshake_verify(credential[:token], db_pool)
       end
       private_class_method :identify
+
+      # verify, or VERIFY_FAILED with one line on stderr if it raised:
+      # under a burst, a backtrace per refused connection buries the log.
+      # The message's first line only (a PG error adds the query and a
+      # caret), and not Kernel#warn, which -W0 silences.
+      def self.handshake_verify(raw_token, db_pool)
+        verify(raw_token, db_pool)
+      rescue StandardError => e
+        reason = e.message.lines.first&.chomp
+        $stderr.puts "monk-websocket: handshake refused with 503, verify failed: #{e.class}: #{reason}" # rubocop:disable Style/StderrPuts
+        VERIFY_FAILED
+      end
+      private_class_method :handshake_verify
 
       # Sleeps in `interval`-sized steps, re-running Monk::Auth.verify
       # against the same raw credential each time, until it comes back

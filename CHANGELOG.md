@@ -20,6 +20,13 @@ in `lib/monk/version.rb`.
   `431`. Before, a socket that connected and sent nothing held its
   connection Ractor forever, and a request with no blank line grew
   without limit (item 2).
+- **A WebSocket handshake whose session check fails is refused with
+  `503`**, and one line on stderr. Before, a `verify` that raised (the
+  `db_pool:` full or timed out, the database down) killed the
+  connection's Ractor with a backtrace and sent no response. Under
+  `authenticate: :optional` it is a `503` too, not an anonymous
+  connection. Clients without an `Origin` also get `Retry-After`
+  (item 3).
 
 ## 0.22.0 - 2026-10-13
 

@@ -90,6 +90,13 @@ server = Monk::WebSocket::Server.new(port: 9293, authenticate: :optional, db_poo
 | `true` | its subject | refused, `401` |
 | `:optional` | its subject | anonymous (`connection.subject` is `nil`) |
 
+In either mode, a check that can't answer (the pool full or timed out,
+the database down) refuses the connection with `503` and one line on
+stderr; under `:optional` it isn't let in as anonymous, which would
+quietly sign the user out of their topics. A client without an `Origin`
+(not a browser) also gets `Retry-After`. A browser can't read a failed
+handshake's status, so it retries on `monk_live.js`'s own backoff.
+
 `:optional` is for an app where visitors and logged-in users share pages:
 the handler decides what an anonymous connection may do. Under
 `Monk::Live` that's the topic rules: deny by default, and a topic is open
