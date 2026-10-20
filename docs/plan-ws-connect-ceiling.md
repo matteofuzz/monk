@@ -1,7 +1,8 @@
 # The WebSocket server's connect ceiling — plan
 
-Drafted 2026-10-19, rewritten the same day after review. Not started:
-the measurements below are done, the decisions are open. Found by the
+Drafted 2026-10-19, rewritten the same day after review. Items 1–5
+done 2026-10-20 (see "After items 1–5"); the VM run and the rest are
+open. Found by the
 monk-vs-rails benchmark (its PLAN.md, "Phase 7 results"), which waits
 for this before tuning: a fix released before its phase 7 tuning goes
 in, one released later doesn't.
@@ -78,7 +79,8 @@ its worker and dispatcher Ractors too. A pool failure in the handshake
 kills the Ractor with a backtrace on stderr (139K lines in the
 benchmark's log), and the client gets no HTTP response.
 
-**4. GC tuning buys a constant factor.** Live, 5,000 held:
+**4. GC tuning buys a constant factor.** (Not so: with items 1–5 in,
+it's the main lever; see "After items 1–5".) Live, 5,000 held:
 
 | | 200/s p99 | 400/s | GC time at 400/s |
 |---|---|---|---|
@@ -115,6 +117,64 @@ and less to mark per socket) helps every app, by a constant factor.
 own pauses, divides both held and rate per process by K. That cuts GC
 load by K², but only big apps need it. Success is stated in these
 terms: k before and after, and t for 25K.
+
+## After items 1–5
+
+Measured 2026-10-20, same setup, Live unless named, one run each.
+`bin/benchmark_ws_connect` now also prints, per heap, objects a connect,
+slots and live slots.
+
+**Objects a connect fell ~3×, k ~1.5×.** Bare 701 → 95, auth 781 → 173,
+Live 931 → ~280.
+
+| | before | after |
+|---|---|---|
+| 0 held, 400/s | 4,643/6,000 ready, p99 5.9 s, 431 GCs | 6,000/6,000, p99 55 ms, 129 GCs |
+| 5K held, 400/s | p99 160 ms, 67 GCs | p99 123 ms, 96 GCs |
+| 5K held, 600/s | 723/9,000 ready (collapse) | 9,000/9,000, p99 3.6 s, 229 GCs |
+| 15K held, 200/s | p99 2.2 s, 83 GCs | p99 185 ms, 43 GCs |
+| 15K held, 300/s | not run | 4,500/4,500, p99 6.3 s, 154 GCs |
+
+k went from under 3M to about 3–4.5M. Without overload (5K held,
+200–400/s) the GC count didn't fall, and at 400/s it rose.
+
+**Why: GCs follow new Ractors, not objects.** On 4.0 each new Ractor
+takes a page (64 KB, 1,638 slots) of the shared 40-byte heap for its own
+allocations, however few it makes; the next GC sweeps what it didn't
+use back. Ruby sizes the heap by what's live, so a GC comes every
+(free 40-byte pages) new Ractors. Cutting garbage shrinks the heap and
+leaves fewer free pages, which is why item 4 barely moved the count. A
+microbenchmark, 5,000 Ractors each keeping N objects and blocking:
+
+| N | GCs | with `RUBY_GC_HEAP_0_INIT_SLOTS=2000000` |
+|---|---|---|
+| 0 | 168–170 | 5 |
+| 20 | 139–140 | |
+| 200 | 52–53 | |
+
+Pre-sizing the other heaps (80–640 B) changes nothing. With 2M slots
+(~1,220 pages) a GC came about every 1,000 Ractors: about a page each.
+
+**So heap size is the lever** (item 7). Live, after items 1–5, p99 to
+ready:
+
+| | defaults | `RUBY_GC_HEAP_0_INIT_SLOTS=2000000` | free-slot ratios 0.6 / 0.8 / 0.9 |
+|---|---|---|---|
+| 5K held, 600/s | p99 3.6 s, 229 GCs | p99 121 ms, 33 GCs | not run |
+| 5K held, 800/s | p99 10.5 s | p99 1.8 s | not run |
+| 15K held, 200/s | p99 185 ms, 43 GCs | p99 479 ms, 47 GCs | p99 390 ms, 7 GCs |
+| 15K held, 300/s | p99 6.3 s, 154 GCs | p99 1.1 s, 27 GCs | p99 1.2 s, 5 GCs |
+| RSS at 15K held, 300/s | 979 MB | 1,084 MB | 1,256 MB |
+
+- A fixed pre-size is swamped once live objects pass it: at 15K held,
+  ~1M live 40-byte slots against 2M. The ratios grow with what's held.
+- With the ratios, the limit is the pause, not the count: 5 GCs in the
+  300/s step, marking ~650 ms each. Every GC, minor ones included,
+  marks every socket's Ractor and threads.
+- At 15K held, steps above 300/s mean little: the client's own lag p99
+  reaches 0.5–3 s at 400/s on its 4 cores.
+- With either setting, about 700–800/s at 5K held and 300–350/s at 15K:
+  k ≈ 4–5M.
 
 ## Ruby 4.1: per-Ractor GC
 
@@ -159,6 +219,43 @@ heaps reclaimed only by a global GC) and
 [#22455](https://bugs.ruby-lang.org/issues/22455) (~100 KB per idle
 Ractor, and the global GC's cost). Both open, no replies yet. The
 reproductions are in the reports.
+
+**The page per Ractor, on 4.1** (2026-10-20, `bench-monk-41`,
+microbenchmarks only):
+
+- **#22455's ~100 KB is whole pages.** A 4.1 Ractor gets its own 64 KB
+  page in each heap it uses, at least three (32, 40 and 64 B) even if
+  it allocates nothing, and a fourth (256 B) for a kept 20-element
+  Array. RSS per idle Ractor: 101 KB with N=0, 238 KB with N=20,
+  173 KB with N=200 (4.0: 16–28 KB). The same design shows as GC count
+  on 4.0 and as memory on 4.1.
+- **#22454 is a missing trigger, not a leak.** Rounds of 2,000 Ractors
+  that start, keep 20 objects and exit:
+
+  | RSS above start | 4.0.7 | 4.1, no `GC.start` | 4.1, `GC.start` each round |
+  |---|---|---|---|
+  | round 0 | +37 MB | +465 MB | +465 MB |
+  | round 1 | +41 MB | +859 MB | +858 MB |
+  | round 5 | +56 MB | +2,429 MB | +859 MB |
+  | global GCs | 32–80 a round | 1 in 6 rounds | 1 a round, 24 ms |
+
+  On 4.0, new Ractors taking pages is what triggers GC, so exited
+  Ractors' memory is reused without asking. On 4.1 nothing starts the
+  global GC; one does reclaim it for reuse (RSS isn't given back to
+  the OS).
+- **Each exiting Ractor runs its own major GC** on 4.1: 5,000 exits,
+  5,000 major GCs, no global one.
+- **Item 7's settings don't reach a Ractor's own heap.** With
+  `RUBY_GC_HEAP_0_INIT_SLOTS=2000000` and the min ratio set, a new
+  Ractor still starts with one page per heap.
+
+The likely fix for #22454, a global GC once exited Ractors hold enough
+memory, brings back 4.0's coupling of GC to connect rate, with a
+costlier GC: churn at 300/s × ~200 KB is ~60 MB/s, and a global GC
+with 2,000–5,000 Ractors alive paused 0.8–3.9 s above. So a fixed 4.1
+needs item 10's churn step with sockets held, measuring global-GC
+pauses, not only that memory levels off. Neither finding is posted to
+the reports yet.
 
 What this means for the plan: items 1–5 are right on any Ruby. Items 6,
 7 and 9 are 4.0 work that 4.1 may make unnecessary, so they wait for
@@ -232,14 +329,20 @@ Everything here is code, and applies to every app.
    instead of one per ask (an ask is synchronous, so a thread has at
    most one outstanding).
 6. **Less kept alive per socket.** 55 KB a socket, and every live
-   object is marked on every major GC. Measure what a held socket
-   retains (`ObjectSpace.count_objects` per variant at N held, and how
-   many end up old), then trim. Measured with item 5 as minor vs major
+   object is marked on every major GC. It won't lower the GC count
+   (less live means a smaller heap, so it may raise it): its value is
+   shorter marking, and it's measured on that. Measure what a held
+   socket retains (`ObjectSpace.count_objects` per variant at N held,
+   and how many end up old), then trim. Measured with item 5 as minor vs major
    GCs and marking time per GC.
 7. **GC settings for the WS process.** In the scaffold's
    `bin/websocket_server` environment (Procfile, Dockerfile) and the
-   deploying guide, so a user who runs it as documented gets them. A
-   constant factor (~2.4× less GC time at 400/s above).
+   deploying guide, so a user who runs it as documented gets them.
+   After items 1–5 this is the main lever, not a constant factor: GCs
+   follow new Ractors per free 40-byte page ("After items 1–5"). The
+   free-slot ratios rather than a fixed `RUBY_GC_HEAP_0_INIT_SLOTS`,
+   which held sockets swamp; they cost ~30% more RSS at 15K held. 4.0
+   only: they don't size a 4.1 Ractor's own heap.
 
 Target for items 4–7 together: objects per connect well under half of
 today's 928, and k up by 4× or more. That puts 25K's refill near 20 s.
@@ -295,9 +398,9 @@ today's 928, and k up by 4× or more. That puts 25K's refill near 20 s.
 
 ## Proposed order
 
-1. Items 1–5, in one release, measured with `bin/benchmark_ws_connect`
-   before and after (k and objects per connect, on 4.0), then on the
-   benchmark's VM (S6 at a connect-rate sweep, 25K held). If phase 7
+1. Done but for the VM run. Items 1–5, in one release, measured with
+   `bin/benchmark_ws_connect` before and after (k and objects per
+   connect, on 4.0), then on the benchmark's VM (S6 at a connect-rate sweep, 25K held). If phase 7
    can't wait for all of it, items 1–3 go first on their own.
 2. Item 8, docs and `reuse_port:`, in the same release if it fits:
    it's small and independent of the rest.

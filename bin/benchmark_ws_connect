@@ -190,6 +190,11 @@ def serve(options)
         gc_minor: gc[:minor_gc_count], gc_major: gc[:major_gc_count], gc_global: gc.fetch(:global_gc_count, 0),
         gc_ms: gc[:time], mark_ms: gc[:marking_time], allocated: gc[:total_allocated_objects],
         sweep_ms: gc[:sweeping_time], ractors: Ractor.count, rss_mb: rss_kb / 1024, gc_by: gc_by.dup,
+        # Per size pool: a GC starts when any one of them runs out of free
+        # slots, so the pool that fills first sets the pace, not the total.
+        heaps: GC.stat_heap.values.map do |h|
+          h.slice(:slot_size, :total_allocated_objects, :heap_eden_slots, :heap_live_slots)
+        end,
       }
       $stdout.puts("BENCH #{JSON.generate(stats)}")
       $stdout.flush
@@ -411,6 +416,12 @@ def report_step(label, rate, outcomes, before, after, wall)
   reasons = after[:gc_by].to_h { |k, v| [k, v - before[:gc_by].fetch(k, 0)] }.select { |_, v| v.positive? }
   puts "         gc by: #{reasons.map { |k, v| "#{k}=#{v}" }.join(" ")}; marking #{after[:mark_ms] - before[:mark_ms]} ms, sweeping #{after[:sweep_ms] - before[:sweep_ms]} ms" \
     "#{"; #{(after[:allocated] - before[:allocated]) / [outcomes.size, 1].max} objects a connect" if after[:allocated]}"
+  heaps = after[:heaps].zip(before[:heaps]).map do |a, b|
+    allocated = a[:total_allocated_objects] - b[:total_allocated_objects]
+    "#{a[:slot_size]}B #{allocated / [outcomes.size, 1].max}/connect, #{a[:heap_eden_slots]} slots " \
+      "(#{a[:heap_live_slots]} live)"
+  end
+  puts "         heaps: #{heaps.join("; ")}"
   $stdout.flush
 end
 
