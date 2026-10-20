@@ -1,8 +1,8 @@
 # The WebSocket server's connect ceiling — plan
 
-Drafted 2026-10-19, rewritten the same day after review. Items 1–5
-done 2026-10-20 (see "After items 1–5"); the VM run and the rest are
-open. Found by the
+Drafted 2026-10-19, rewritten the same day after review. Items 1–5,
+7 and 8 done 2026-10-20, in monkrb 0.22.1 (see "After items 1–5"); the
+VM run and the rest are open. Found by the
 monk-vs-rails benchmark (its PLAN.md, "Phase 7 results"), which waits
 for this before tuning: a fix released before its phase 7 tuning goes
 in, one released later doesn't.
