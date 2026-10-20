@@ -45,6 +45,30 @@ module Monk
         exec(missing, RbConfig.ruby, *warning_flags, script, *ARGV)
       end
 
+      # Runs the script in `count` processes: this one starts that many
+      # copies of it, then only waits on them, passing INT and TERM on; in
+      # each copy (MONK_BIN_PROCESS set) it returns at once. Copies, not
+      # forks: on macOS a forked child that opens a Postgres connection
+      # crashes in the Objective-C runtime, and a fresh process inherits
+      # nothing. If one ends on its own (a crash, a service down at boot),
+      # the others are stopped too, and this process exits with its status,
+      # so whatever restarts the script restarts them all. With 1, returns
+      # at once, in this process.
+      def spawn_processes!(script, count)
+        unless count.is_a?(Integer) && count.positive?
+          raise ArgumentError, "the process count must be a positive Integer, got #{count.inspect}"
+        end
+        return if count == 1 || ENV.key?("MONK_BIN_PROCESS")
+
+        # Each in its own process group, so a Ctrl-C at the terminal
+        # reaches it once, passed on from here, and not twice.
+        pids = Array.new(count) do |index|
+          env = { "MONK_BIN_PROCESS" => (index + 1).to_s }
+          Process.spawn(env, RbConfig.ruby, *warning_flags, script, *ARGV, pgroup: true)
+        end
+        exit supervise(pids)
+      end
+
       def run(script)
         yield
       rescue StandardError => e
@@ -79,6 +103,36 @@ module Monk
         flags << "-W0" if $VERBOSE.nil?
         flags << "-W:no-experimental" unless Warning[:experimental]
         flags
+      end
+
+      # Waits until every pid has ended, and returns the first nonzero
+      # status among them, or 0.
+      def supervise(pids)
+        stop = -> { pids.each { |pid| terminate(pid) } }
+        stopping = false
+        %w[INT TERM].each do |name|
+          trap(name) do
+            stopping = true
+            stop.call
+          end
+        end
+        status = 0
+        until pids.empty?
+          pid, process_status = Process.wait2
+          pids.delete(pid)
+          status = process_status.exitstatus || 1 if status.zero? && !process_status.success?
+          next if stopping
+
+          stopping = true
+          stop.call
+        end
+        status
+      end
+
+      def terminate(pid)
+        Process.kill("TERM", pid)
+      rescue Errno::ESRCH
+        nil # already gone
       end
 
       def postgres(error, context)

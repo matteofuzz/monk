@@ -373,6 +373,16 @@ today's 928, and k up by 4× or more. That puts 25K's refill near 20 s.
    server on all of its cores, and with a larger k, fewer of them are
    needed.
 
+   Done: `reuse_port:`, `WS_PROCESSES` (1) in `bin/websocket_server`,
+   and `websocket.md`'s "Several processes". The script starts K copies
+   of itself (`Monk::Bin.spawn_processes!`) rather than forking: on
+   macOS a forked child crashes in the Objective-C runtime on its first
+   Postgres connection (libpq), and a copy inherits nothing. On Linux,
+   40 connects to 2 processes split 28/12. Each copy holds its own
+   Postgres connections (`:auth`'s 4, plus `LISTEN` and `:notify` with
+   Postgres). The guide's "when" (~5K sockets a process, up to one a
+   core) is from the Mac's k, to restate after the VM run.
+
 9. **Fewer Ractors per socket.** This is the one that changes the cost
    per socket rather than how often it's paid: N connection Ractors
    (one per core), each running many sockets as Fibers under a
@@ -409,8 +419,9 @@ today's 928, and k up by 4× or more. That puts 25K's refill near 20 s.
    `bin/benchmark_ws_connect` before and after (k and objects per
    connect, on 4.0), then on the benchmark's VM (S6 at a connect-rate sweep, 25K held). If phase 7
    can't wait for all of it, items 1–3 go first on their own.
-2. Item 8, docs and `reuse_port:`, in the same release if it fits:
-   it's small and independent of the rest.
+2. Done (2026-10-20), with item 7 brought forward: it costs a line of
+   scaffold and is harmless on 4.1. Item 8, docs and `reuse_port:`, in
+   the same release if it fits: it's small and independent of the rest.
 3. Item 10's reruns on each 4.1 preview. If #22454 and #22455 are fixed
    for 4.1's release, the WS process recommends 4.1 and items 6, 7 and
    9 are dropped. If not, item 7 (the cheapest) for 4.0, then 6, and

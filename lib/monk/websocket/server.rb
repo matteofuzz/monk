@@ -75,6 +75,12 @@ module Monk
       # the server, and a request that never ends grows without limit
       # (item 2). Off once the 101 is written: an idle socket is the
       # handler's business, not the handshake's.
+      #
+      # reuse_port: true lets several processes listen on the one port, and
+      # on Linux the kernel spreads connects across them. Each has its own
+      # heap, so its own GC pauses, over a share of the sockets: on Ruby 4.0
+      # K processes cut what GC costs a connect by about K squared
+      # (item 8). A broadcast reaches all of them through the fan-out.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
 
       DEFAULT_MAX_HANDSHAKES = 128
@@ -91,7 +97,7 @@ module Monk
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
-        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT
+        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, reuse_port: false
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -143,7 +149,7 @@ module Monk
         # declared or isn't started in this process.
         Monk::Persistence::Pg.pool(db_pool) if db_pool
 
-        @tcp_server = TCPServer.new(bind, port)
+        @tcp_server = reuse_port ? Server.listen_reusing_port(bind, port) : TCPServer.new(bind, port)
         @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
         @authenticate = authenticate
         @ping_interval = ping_interval
@@ -156,6 +162,31 @@ module Monk
 
       def port
         @tcp_server.addr[1]
+      end
+
+      # reuse_port:, for several processes on one port (bin/websocket_server's
+      # WS_PROCESSES): SO_REUSEPORT has to be set before the bind, which
+      # TCPServer.new does at once. On Linux the kernel spreads connects
+      # across the processes listening.
+      def self.listen_reusing_port(bind, port)
+        unless defined?(Socket::SO_REUSEPORT)
+          raise ArgumentError, "reuse_port: true needs SO_REUSEPORT, which this platform doesn't have"
+        end
+
+        address = Addrinfo.tcp(bind, port)
+        socket = Socket.new(address.afamily, :STREAM)
+        socket.setsockopt(:SOCKET, :REUSEADDR, true)
+        socket.setsockopt(:SOCKET, :REUSEPORT, true)
+        socket.bind(address)
+        socket.listen(Socket::SOMAXCONN)
+        # A TCPServer on the same descriptor, so accept returns a TCPSocket
+        # as without reuse_port:.
+        socket.autoclose = false
+        TCPServer.for_fd(socket.fileno)
+      rescue StandardError
+        socket&.autoclose = true
+        socket&.close
+        raise
       end
 
       def run(&block)

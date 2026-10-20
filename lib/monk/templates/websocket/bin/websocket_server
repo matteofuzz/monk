@@ -8,6 +8,15 @@ require "monk/bin"
 # Ruby takes them: at boot. Any already in the environment win.
 Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
 
+# WS_PROCESSES (1): this many server processes on WS_PORT, each with its own
+# heap and its own GC pauses over a share of the sockets
+# (docs/guides/websocket.md, "Several processes").
+processes = Integer(ENV.fetch("WS_PROCESSES", "1"), exception: false)
+unless processes&.positive?
+  abort "bin/websocket_server: WS_PROCESSES must be a whole number, 1 or more, got #{ENV["WS_PROCESSES"].inspect}."
+end
+Monk::Bin.spawn_processes!(__FILE__, processes)
+
 Monk::Bin.run(__FILE__) do
   require_relative "../config/settings"
   require_relative "../config/websocket"
@@ -59,6 +68,7 @@ Monk::Bin.run(__FILE__) do
 
   server = Monk::WebSocket::Server.new(
     port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+    reuse_port: processes > 1,
   )
   puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
     "(#{live ? "live" : "app/sockets"}, transport: #{AppWebSocket::TRANSPORT}, authenticate: #{authenticate})"

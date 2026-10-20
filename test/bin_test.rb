@@ -126,7 +126,93 @@ class BinTest < Minitest::Test
     end
   end
 
+  # WS_PROCESSES: the script runs again in each copy; this one waits,
+  # passes TERM on, and exits 0 once they have.
+  def test_spawn_processes_runs_the_rest_in_each_and_passes_term_on
+    with_probe(<<~RUBY) do |stdout, pid|
+      Monk::Bin.spawn_processes!(__FILE__, 2)
+      trap("TERM") { exit 0 }
+      puts Process.pid
+      $stdout.flush
+      sleep
+    RUBY
+      pids = @children = Array.new(2) { Integer(stdout.gets) }
+      Process.kill("TERM", pid)
+
+      assert_equal 0, wait_or_kill(pid).exitstatus
+      assert_equal 2, pids.uniq.size
+      refute_includes pids, pid, "the rest runs in the copies, not this one"
+      pids.each { |child| assert_raises(Errno::ESRCH) { Process.kill(0, child) } }
+    end
+  end
+
+  def test_spawn_processes_stops_the_rest_when_one_ends_on_its_own
+    with_probe(<<~RUBY) do |stdout, pid|
+      Monk::Bin.spawn_processes!(__FILE__, 3)
+      first = begin
+        File.open(ARGV[0], File::CREAT | File::EXCL | File::WRONLY).close
+        true
+      rescue Errno::EEXIST
+        false
+      end
+      puts Process.pid
+      $stdout.flush
+      sleep 0.2
+      exit 3 if first
+      sleep
+    RUBY
+      pids = @children = Array.new(3) { Integer(stdout.gets) }
+
+      assert_equal 3, wait_or_kill(pid).exitstatus, "the one that ended on its own decides the status"
+      pids.each { |child| assert_raises(Errno::ESRCH) { Process.kill(0, child) } }
+    end
+  end
+
+  def test_spawn_processes_with_one_returns_in_this_process
+    assert_nil Monk::Bin.spawn_processes!("unused", 1)
+    assert_raises(ArgumentError) { Monk::Bin.spawn_processes!("unused", 0) }
+  end
+
   private
+
+  # Runs body as a script that has loaded monk/bin; yields its stdout and
+  # pid while it runs. Whatever a failed test leaves running is killed:
+  # the copies are in their own process groups, so killing the
+  # supervisor doesn't end them.
+  def with_probe(body)
+    Dir.mktmpdir do |dir|
+      script = File.join(dir, "probe")
+      @flag = File.join(dir, "flag")
+      lib = File.expand_path("../lib", __dir__)
+      File.write(script, %($LOAD_PATH.unshift #{lib.inspect}\nrequire "monk/bin"\n#{body}))
+      stdout, writer = IO.pipe
+      pid = Process.spawn(RbConfig.ruby, script, @flag, out: writer, err: File::NULL)
+      writer.close
+      yield stdout, pid
+    ensure
+      stdout&.close
+      wait_or_kill(pid) if pid
+      @children&.each { |child| Process.kill("KILL", child) rescue Errno::ESRCH } # rubocop:disable Style/RescueModifier
+    end
+  end
+
+  # The process's status; a supervisor still running after 5 s is killed
+  # and fails the test.
+  def wait_or_kill(pid)
+    @statuses ||= {}
+    return @statuses[pid] if @statuses.key?(pid)
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until (done = Process.wait2(pid, Process::WNOHANG))
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        Process.kill("KILL", pid)
+        Process.wait(pid)
+        flunk "the probe didn't exit"
+      end
+      sleep 0.02
+    end
+    @statuses[pid] = done.last
+  end
 
   def explain(error)
     with_env("DB_HOST", nil) do

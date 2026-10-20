@@ -6,6 +6,19 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Added
+
+- **Several WebSocket processes on one port.** `Server.new(reuse_port:
+  true)` binds with `SO_REUSEPORT`, and the scaffold's
+  `bin/websocket_server` runs `WS_PROCESSES` processes (1 by default),
+  starting that many copies of itself through the new
+  `Monk::Bin.spawn_processes!` and passing `TERM`/`INT` on. Each has its
+  own heap and its own GC pauses over its share of the sockets, so on
+  Ruby 4.0 K processes take about K² times the connects a second
+  (`docs/guides/websocket.md`, "Several processes"; plan item 8). An
+  existing app copies the new script (`docs/guides/upgrading.md`,
+  0.22.1).
+
 ### Fixed
 
 - **A WebSocket connect burst queues instead of collapsing.** The server

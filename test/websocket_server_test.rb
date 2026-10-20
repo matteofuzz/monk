@@ -247,6 +247,23 @@ class WebSocketServerTest < Minitest::Test
     end
   end
 
+  # Item 8: several processes on one port. Without reuse_port:, a second
+  # bind fails; with it on both, both bind, and connects get served
+  # whichever of the two the kernel hands them to.
+  def test_reuse_port_lets_two_servers_share_a_port
+    first = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", reuse_port: true)
+    assert_raises(Errno::EADDRINUSE) { Monk::WebSocket::Server.new(port: first.port, bind: "127.0.0.1") }
+    second = Monk::WebSocket::Server.new(port: first.port, bind: "127.0.0.1", reuse_port: true)
+    threads = [first, second].map { |server| Thread.new { server.run(&ECHO_ONE_MESSAGE) } }
+
+    sockets = Array.new(10) { TCPSocket.new("127.0.0.1", first.port) }
+
+    sockets.each { |socket| assert_match(%r{\AHTTP/1.1 101}, handshake!(socket)) }
+  ensure
+    sockets&.each(&:close)
+    threads&.each(&:kill)&.each(&:join)
+  end
+
   # TERM is how docker stop, Kubernetes, Fly, Render and systemd stop a
   # process -- every deploy. The server handles it like Ctrl-C: it stops
   # accepting, run returns, and the script ends with exit 0, as bin/server

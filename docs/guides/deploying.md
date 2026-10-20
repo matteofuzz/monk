@@ -33,7 +33,7 @@ modules it adds.
 | `mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp` |
 | `auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
 | `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
-| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`) | — |
+| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
 | `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
 
 `PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
@@ -64,6 +64,11 @@ When the WebSocket process runs:
   thousands of sockets are open, for ~30% more memory
   ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)). A
   process manager sees the same PID throughout.
+- Past ~5K open sockets, `WS_PROCESSES` runs several server processes on
+  its port, each with its own GC pauses
+  ([`websocket.md`](websocket.md#several-processes)): on one host or in
+  one container. Replicas of the service behind the proxy do the same
+  across containers.
 
 **With jobs**, there's one more process: `bin/jobs`, which runs the
 background jobs. Like the WebSocket process it runs from the same image

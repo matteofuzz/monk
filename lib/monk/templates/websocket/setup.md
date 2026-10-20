@@ -18,7 +18,8 @@ exits. In production it's one more process from the same image, with
 
 `WS_ALLOWED_ORIGINS` (default: `PUBLIC_URL`) must list every origin your
 pages are served from, or browsers' sockets are refused. Behind TLS, pages
-connect with `wss://`.
+connect with `wss://`. Past ~5K open sockets, `WS_PROCESSES` (default 1)
+runs several server processes on the port, on Linux.
 
 ### Switching transports
 

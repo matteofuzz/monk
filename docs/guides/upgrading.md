@@ -18,16 +18,26 @@ An app made with the release named in a section needs none of its steps.
 
 `bundle update monkrb`.
 
-### WebSocket GC settings (apps with websocket)
+### `bin/websocket_server` (apps with websocket)
 
 `bin/websocket_server` now starts itself with GC settings for many open
-sockets ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)).
-Add this line after `require "monk/bin"`, or copy the file from
-`monk help websocket --file bin/websocket_server`:
+sockets ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)),
+and runs `WS_PROCESSES` server processes
+([`websocket.md`](websocket.md#several-processes)). Copy the file from
+`monk help websocket --file bin/websocket_server`, then carry over
+anything you changed in it, or add the new lines yourself:
 
-```ruby
-Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
-```
+1. After `require "monk/bin"`:
+   ```ruby
+   Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
+
+   processes = Integer(ENV.fetch("WS_PROCESSES", "1"), exception: false)
+   unless processes&.positive?
+     abort "bin/websocket_server: WS_PROCESSES must be a whole number, 1 or more, got #{ENV["WS_PROCESSES"].inspect}."
+   end
+   Monk::Bin.spawn_processes!(__FILE__, processes)
+   ```
+2. In `Monk::WebSocket::Server.new(...)`, add `reuse_port: processes > 1`.
 
 An app that already sets the `RUBY_GC_HEAP_FREE_SLOTS_*` variables keeps
 its values.
