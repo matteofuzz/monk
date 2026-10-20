@@ -58,6 +58,12 @@ When the WebSocket process runs:
   right there if Redis or Postgres is unreachable); `bin/server` and
   `bin/jobs` only publish, and open a connection for that the first time
   they do.
+- It sets its own GC settings, the three
+  `RUBY_GC_HEAP_FREE_SLOTS_*_RATIO`s, by starting itself again with them
+  once at boot; any you set win. On Ruby 4.0 they cut GC pauses while
+  thousands of sockets are open, for ~30% more memory
+  ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)). A
+  process manager sees the same PID throughout.
 
 **With jobs**, there's one more process: `bin/jobs`, which runs the
 background jobs. Like the WebSocket process it runs from the same image

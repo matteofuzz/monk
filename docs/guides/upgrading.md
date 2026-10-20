@@ -14,6 +14,24 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.22.1
+
+`bundle update monkrb`.
+
+### WebSocket GC settings (apps with websocket)
+
+`bin/websocket_server` now starts itself with GC settings for many open
+sockets ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)).
+Add this line after `require "monk/bin"`, or copy the file from
+`monk help websocket --file bin/websocket_server`:
+
+```ruby
+Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
+```
+
+An app that already sets the `RUBY_GC_HEAP_FREE_SLOTS_*` variables keeps
+its values.
+
 ## 0.22
 
 First update the gem: in the `Gemfile`, `gem "monkrb", "~> 0.22", require: "monk"`

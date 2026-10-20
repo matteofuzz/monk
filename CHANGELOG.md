@@ -42,6 +42,16 @@ in `lib/monk/version.rb`.
   also reuses one reply port for its asks instead of making one an ask,
   and the registry survives answering an ask whose caller gave up
   (item 5).
+- **`bin/websocket_server` runs with GC settings for many open sockets.**
+  It starts itself again, once at boot, with
+  `RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8` and
+  `_MAX_RATIO=0.9` (`Monk::Bin::WEBSOCKET_GC_ENV`, through the new
+  `Monk::Bin.boot_with_env!`), unless the environment sets them. On Ruby
+  4.0, with 15K sockets held, 6–30× fewer GCs and p99 to ready at
+  300 connects/s from 6.3 s to 1.2 s, for ~30% more memory. An existing
+  app adds one line (`docs/guides/upgrading.md`, 0.22.1) (item 7).
+  Restarting with the settings carries the warning level (`-W0`) over;
+  other flags given to `ruby` itself aren't (`RUBYOPT` is).
 
 ## 0.22.0 - 2026-10-13
 

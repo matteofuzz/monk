@@ -344,6 +344,13 @@ Everything here is code, and applies to every app.
    which held sockets swamp; they cost ~30% more RSS at 15K held. 4.0
    only: they don't size a 4.1 Ractor's own heap.
 
+   Done in the script itself: there's no Procfile in the scaffold, and
+   the Dockerfile is every process's. Ruby reads them only at boot
+   (`GC.config` can't set them on 4.0 or 4.1), so `bin/websocket_server`
+   calls `Monk::Bin.boot_with_env!` first, which execs the script again
+   with whichever aren't set. Checked on 4.1.0-preview1: no change in RSS
+   per Ractor or after exits.
+
 Target for items 4–7 together: objects per connect well under half of
 today's 928, and k up by 4× or more. That puts 25K's refill near 20 s.
 

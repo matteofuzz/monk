@@ -1,3 +1,5 @@
+require "rbconfig"
+
 module Monk
   # What a scaffolded app's bin/ scripts run their work in:
   #
@@ -13,7 +15,36 @@ module Monk
   # is. Errors are recognized by class name, so this file loads neither pg
   # nor redis (docs/adr/0017).
   module Bin
+    # bin/websocket_server's GC settings: keep the heap 60-90% free. On Ruby
+    # 4.0 a GC runs whenever new connection Ractors have used up the free
+    # pages of the smallest heap (each takes one, however little it
+    # allocates), and every GC stops and marks every open socket: at 15K
+    # sockets held, these run 6-30x fewer GCs, for ~30% more memory
+    # (docs/plan-ws-connect-ceiling.md, "After items 1-5"). Measured to
+    # change nothing on 4.1, whose Ractors have heaps of their own.
+    WEBSOCKET_GC_ENV = {
+      "RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO" => "0.6",
+      "RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO" => "0.8",
+      "RUBY_GC_HEAP_FREE_SLOTS_MAX_RATIO" => "0.9",
+    }.freeze
+
     class << self
+      # Ruby reads settings like these only when it boots, so a script
+      # that needs them starts itself again, once, with the ones the
+      # environment doesn't set; what it does set wins. Call it first,
+      # before the script loads the app. The same PID throughout. Of the
+      # flags given to ruby itself, only the warning level is carried over
+      # (RUBYOPT is, whole).
+      def boot_with_env!(script, env)
+        missing = env.reject { |name, _| ENV.key?(name) }
+        return if missing.empty?
+
+        # exec drops what's still buffered.
+        $stdout.flush
+        $stderr.flush
+        exec(missing, RbConfig.ruby, *warning_flags, script, *ARGV)
+      end
+
       def run(script)
         yield
       rescue StandardError => e
@@ -40,6 +71,15 @@ module Monk
       end
 
       private
+
+      # The warning level this Ruby runs at, as flags for another: a script
+      # started with -W0 stays quiet when it starts again.
+      def warning_flags
+        flags = []
+        flags << "-W0" if $VERBOSE.nil?
+        flags << "-W:no-experimental" unless Warning[:experimental]
+        flags
+      end
 
       def postgres(error, context)
         host = error.message[/server at "([^"]+)"/, 1] || ENV.fetch("DB_HOST", "127.0.0.1")

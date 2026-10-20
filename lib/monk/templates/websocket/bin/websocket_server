@@ -4,6 +4,10 @@ require "bundler/setup"
 # with what to fix (SETUP.md's commands), not a backtrace.
 require "monk/bin"
 
+# Fewer GC pauses while thousands of sockets are open, set the only way
+# Ruby takes them: at boot. Any already in the environment win.
+Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
+
 Monk::Bin.run(__FILE__) do
   require_relative "../config/settings"
   require_relative "../config/websocket"

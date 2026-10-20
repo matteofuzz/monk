@@ -3,6 +3,8 @@ require "monk/bin"
 require "pg"
 require "redis"
 require "monk/websocket"
+require "open3"
+require "tmpdir"
 
 # Monk::Bin.run, what a scaffolded app's bin/ scripts run their work in
 # (docs/history/plan-scaffold.md decision 29): a service that's down, a missing
@@ -93,6 +95,35 @@ class BinTest < Minitest::Test
   def test_run_re_raises_what_it_cant_explain
     assert_raises(ArgumentError) { Monk::Bin.run(SCRIPT) { raise ArgumentError, "boom" } }
     assert_equal :done, Monk::Bin.run(SCRIPT) { :done }
+  end
+
+  # bin/websocket_server's GC settings take effect only at boot, so the
+  # script starts again with the ones the environment doesn't set.
+  def test_boot_with_env_starts_the_script_again_once_with_what_is_missing
+    Dir.mktmpdir do |dir|
+      script = File.join(dir, "probe")
+      File.write(script, <<~RUBY)
+        $LOAD_PATH.unshift #{File.expand_path("../lib", __dir__).inspect}
+        require "monk/bin"
+        puts "boot"
+        Monk::Bin.boot_with_env!(__FILE__, { "MONK_PROBE_A" => "set", "MONK_PROBE_B" => "set" })
+        puts [ENV["MONK_PROBE_A"], ENV["MONK_PROBE_B"], *ARGV].join(" ")
+      RUBY
+
+      out, status = Open3.capture2({ "MONK_PROBE_A" => nil, "MONK_PROBE_B" => "mine" }, RbConfig.ruby, script, "arg")
+
+      assert status.success?
+      assert_equal "boot\nboot\nset mine arg\n", out
+
+      out, = Open3.capture2({ "MONK_PROBE_A" => "a", "MONK_PROBE_B" => "b" }, RbConfig.ruby, script)
+
+      assert_equal "boot\na b\n", out, "nothing missing, nothing restarted"
+
+      File.write(script, File.read(script).sub("puts [", "puts $VERBOSE.inspect, ["))
+      out, = Open3.capture2({ "MONK_PROBE_A" => nil }, RbConfig.ruby, "-W0", script)
+
+      assert_equal "boot\nboot\nnil\nset set\n", out, "-W0 carried over"
+    end
   end
 
   private

@@ -135,6 +135,16 @@ should keep `true`, which refuses them at the door.
   whose rules decide what visitors get, and `true` otherwise.
 - **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
   configure it.
+- **GC settings**: `bin/websocket_server` keeps Ruby's heap 60–90% free
+  (`RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8`,
+  `_MAX_RATIO=0.9`, `Monk::Bin::WEBSOCKET_GC_ENV`). Ruby reads these only
+  at boot, so the script starts itself again with the ones the
+  environment doesn't set; a value you set wins. On Ruby 4.0 each new
+  connection's Ractor takes a page of the heap, a GC runs once the free
+  pages are gone, and every GC stops and marks every open socket. At 15K
+  sockets held, these run 6–30× fewer GCs, for ~30% more memory
+  (`docs/plan-ws-connect-ceiling.md`). On 4.1 they were measured to change
+  nothing.
 
 **Switching transports** is three steps:
 
