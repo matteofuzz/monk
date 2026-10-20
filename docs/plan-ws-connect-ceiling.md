@@ -194,6 +194,16 @@ of a collapse. All of this is on by default.
    socket for the handshake (reset to nil before the handler runs, so
    an idle socket isn't timed out later), and the `limit` of item 4's
    `gets`.
+
+   Done with a watchdog thread in the connection's Ractor instead, which
+   shuts the socket down at the deadline (ending a blocked read) and is
+   killed once the 101 is written; the deadline covers the whole
+   handshake, the session check included. Not `IO#timeout=`: on 4.0.6
+   and 4.0.7, once an `IO#timeout` has fired in one Ractor, a read in a
+   Ractor made after it can raise `IO::TimeoutError` at once, on a
+   socket with no timeout set (about 1 in 10 in a loop of a timed-out
+   read in one Ractor, then a plain read in the next; never with
+   threads in one Ractor). Not yet reported upstream.
 3. **A refusal, not a crash.** A handshake whose `verify` raises (pool
    full, timed out, database down) answers `503` and logs one line, not
    a backtrace. `Retry-After` is added for non-browser clients only.

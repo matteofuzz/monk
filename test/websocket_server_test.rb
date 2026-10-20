@@ -166,6 +166,64 @@ class WebSocketServerTest < Minitest::Test
     socket&.close
   end
 
+  # Item 2: a socket that sends nothing can't hold a handshake slot forever.
+  def test_a_client_that_sends_nothing_is_dropped_after_handshake_timeout
+    server = start_server(handshake_timeout: 0.2, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert socket.wait_readable(2), "the silent socket was never dropped"
+    assert_nil socket.read(1)
+  ensure
+    socket&.close
+  end
+
+  def test_a_timed_out_handshake_frees_its_slot
+    server = start_server(max_handshakes: 1, handshake_timeout: 0.2, &ECHO_ONE_MESSAGE)
+
+    silent = TCPSocket.new("127.0.0.1", server.port)
+    sleep 0.05
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert_match(%r{\AHTTP/1.1 101}, handshake!(socket))
+  ensure
+    silent&.close
+    socket&.close
+  end
+
+  def test_the_handshake_timeout_ends_with_the_handshake
+    server = start_server(handshake_timeout: 0.1, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket)
+    sleep 0.3
+    socket.write(Monk::WebSocket::Frame.encode("still here", opcode: 0x1))
+
+    assert_equal "still here", read_frame(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_a_request_head_past_the_size_limit_is_refused_as_too_large
+    server = start_server(&ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    socket.write("GET / HTTP/1.1\r\nCookie: #{"a" * Monk::WebSocket::Handshake::MAX_REQUEST_SIZE}")
+
+    assert_match(%r{\AHTTP/1.1 431 Request Header Fields Too Large}, read_response_head(socket))
+  ensure
+    socket&.close
+  end
+
+  def test_handshake_timeout_must_be_positive
+    [0, -1, nil].each do |value|
+      error = assert_raises(ArgumentError) do
+        Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", handshake_timeout: value)
+      end
+      assert_match(/handshake_timeout must be positive/, error.message)
+    end
+  end
+
   def test_max_handshakes_must_be_a_positive_integer
     [0, -1, 1.5, nil].each do |value|
       error = assert_raises(ArgumentError) do

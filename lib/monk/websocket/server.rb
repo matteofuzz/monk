@@ -66,9 +66,19 @@ module Monk
       # (docs/plan-ws-connect-ceiling.md, item 1). Kept well under the
       # pool's queue (1,000 by default), so a full cap can't overfill it.
       # Always on, like max_payload_size:.
+      #
+      # handshake_timeout: (seconds) bounds the whole handshake, from
+      # accept to the 101, and Handshake::MAX_REQUEST_SIZE its request; a
+      # client past the deadline is dropped, one past the size gets a 431.
+      # Without them, a socket that connects and sends nothing holds a
+      # max_handshakes: slot forever, so a few hundred of them would shut
+      # the server, and a request that never ends grows without limit
+      # (item 2). Off once the 101 is written: an idle socket is the
+      # handler's business, not the handshake's.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
 
       DEFAULT_MAX_HANDSHAKES = 128
+      DEFAULT_HANDSHAKE_TIMEOUT = 10
 
       # The signals #run treats as "stop": Ctrl+C and TERM.
       STOP_SIGNALS = [Signal.list.fetch("INT"), Signal.list.fetch("TERM")].freeze
@@ -76,7 +86,7 @@ module Monk
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
-        max_handshakes: DEFAULT_MAX_HANDSHAKES
+        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -101,6 +111,10 @@ module Monk
 
         unless max_handshakes.is_a?(Integer) && max_handshakes.positive?
           raise ArgumentError, "max_handshakes must be a positive Integer, got #{max_handshakes.inspect}"
+        end
+
+        unless handshake_timeout.is_a?(Numeric) && handshake_timeout.positive?
+          raise ArgumentError, "handshake_timeout must be positive, got #{handshake_timeout.inspect}"
         end
 
         if authenticate
@@ -132,6 +146,7 @@ module Monk
         @max_payload_size = max_payload_size
         @db_pool = db_pool
         @max_handshakes = max_handshakes
+        @handshake_timeout = handshake_timeout
       end
 
       def port
@@ -166,13 +181,13 @@ module Monk
           socket = @tcp_server.accept
           ractor = Ractor.new(
             shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
-            @db_pool, handshake_done
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done|
+            @db_pool, handshake_done, @handshake_timeout
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done, timeout|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
               authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
               reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool,
-              handshake_done: done
+              handshake_done: done, handshake_timeout: timeout
             )
           end
           ractor.send(socket, move: true)
@@ -209,30 +224,37 @@ module Monk
       # dropped before it.
       def self.serve(
         socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
-        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil, handshake_done: nil
+        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil, handshake_done: nil,
+        handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT
       )
-        request = read_handshake_request(socket)
-        return socket.close unless request
+        # A `return` in here (a refused handshake) ends serve, and its
+        # ensure frees the slot.
+        headers, subject = with_deadline(socket, handshake_timeout) do
+          request = read_handshake_request(socket)
+          return unless request
+          return socket.write("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n") if request == :too_large
 
-        headers =
-          begin
-            Handshake.parse_request(request)
-          rescue Monk::WebSocket::HandshakeError
-            return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+          headers =
+            begin
+              Handshake.parse_request(request)
+            rescue Monk::WebSocket::HandshakeError
+              return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+            end
+
+          subject = nil
+          case authenticate
+          when true
+            subject = authenticate!(socket, headers, allowed_origins, db_pool)
+            return unless subject
+          when :optional
+            return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
+
+            subject = identify(headers, db_pool)
           end
 
-        subject = nil
-        case authenticate
-        when true
-          subject = authenticate!(socket, headers, allowed_origins, db_pool)
-          return unless subject
-        when :optional
-          return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
-
-          subject = identify(headers, db_pool)
+          socket.write(Handshake.response_for(request))
+          [headers, subject]
         end
-
-        socket.write(Handshake.response_for(request))
         handshake_done = handshake_over(handshake_done)
 
         connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
@@ -250,6 +272,9 @@ module Monk
           # not re-raised -- there's no caller left to hand it to once
           # we're inside this connection's own dedicated Ractor.
         end
+      rescue IOError, SystemCallError
+        # The client went away, or was shut out by the deadline, before
+        # the handshake was over: nothing to answer.
       ensure
         # Runs on every exit path -- normal completion, the close
         # handshake, and a crashed handler alike -- so a subscribed
@@ -263,6 +288,24 @@ module Monk
         socket.close
         disconnect_all
       end
+
+      # Runs the block with a watchdog that shuts the socket down once
+      # `seconds` have passed, which ends a read or write blocked on it (a
+      # read returns nil, a write raises). Not IO#timeout=: on Ruby 4.0,
+      # once an IO#timeout has fired in one Ractor, reads in Ractors made
+      # after it can raise IO::TimeoutError on sockets with no timeout set.
+      def self.with_deadline(socket, seconds)
+        watchdog = Thread.new do
+          sleep seconds
+          socket.shutdown(:RDWR)
+        rescue IOError, SystemCallError
+          # Already closed or gone.
+        end
+        yield
+      ensure
+        watchdog&.kill
+      end
+      private_class_method :with_deadline
 
       # Frees this connection's max_handshakes: slot in #run; returns nil,
       # so serve can mark it freed. The port is gone once #run has
@@ -373,9 +416,13 @@ module Monk
       end
       private_class_method :verify
 
+      # The request head, nil if the client went away or was too slow, or
+      # :too_large past Handshake::MAX_REQUEST_SIZE.
       def self.read_handshake_request(socket)
         request = +""
         until request.end_with?("\r\n\r\n")
+          return :too_large if request.bytesize >= Handshake::MAX_REQUEST_SIZE
+
           chunk = socket.read(1)
           return nil if chunk.nil?
 

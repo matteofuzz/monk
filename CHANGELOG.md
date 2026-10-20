@@ -15,6 +15,11 @@ in `lib/monk/version.rb`.
   burst past what the process could verify (a restart's reconnect wave)
   filled the `db_pool:` queue and timed most of them out
   (`docs/plan-ws-connect-ceiling.md`, item 1).
+- **A WebSocket handshake has a deadline and a size limit.** A handshake
+  not over within `handshake_timeout:` (10 s by default) is dropped, and a request head past 16 KiB gets a
+  `431`. Before, a socket that connected and sent nothing held its
+  connection Ractor forever, and a request with no blank line grew
+  without limit (item 2).
 
 ## 0.22.0 - 2026-10-13
 

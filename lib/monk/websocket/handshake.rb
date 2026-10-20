@@ -9,6 +9,10 @@ module Monk
       # read from a connection Ractor. .freeze is not optional.
       MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".freeze
 
+      # The most a handshake request's head may be (Server.serve answers
+      # 431 past it): room for a large cookie, nowhere near a memory risk.
+      MAX_REQUEST_SIZE = 16 * 1024
+
       def self.accept_key(client_key)
         Base64.strict_encode64(Digest::SHA1.digest(client_key + MAGIC))
       end

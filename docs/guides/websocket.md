@@ -59,6 +59,9 @@ upgrade and the session check: at the cap the server stops accepting
 until one finishes, and new connects wait in the kernel's listen
 backlog, so a burst past what the process can verify (every page
 reconnecting after a restart) queues instead of timing out all at once.
+A slot can't be held forever: a handshake not over within
+`handshake_timeout:` (10 s by default, the session check included) is
+dropped, and a request head past 16 KiB gets a `431`.
 A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 [`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
