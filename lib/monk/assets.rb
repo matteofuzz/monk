@@ -1,4 +1,8 @@
 require "digest"
+# Loaded here, at boot: left to Digest.const_missing it loads on the first
+# development request for an asset, and a worker Ractor serving another in
+# parallel can catch it half-defined (test/digest_preload_test.rb).
+require "digest/sha2"
 
 require_relative "freeze_hooks"
 require_relative "environment"

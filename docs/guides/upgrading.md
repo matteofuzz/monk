@@ -14,6 +14,10 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.22.2
+
+`bundle update monkrb`. Nothing in the app changes.
+
 ## 0.22.1
 
 `bundle update monkrb`.

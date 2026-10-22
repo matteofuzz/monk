@@ -1,4 +1,8 @@
 require "digest"
+# Loaded here, at boot: left to Digest.const_missing it loads on the first
+# handshake, and a connection Ractor handshaking in parallel can catch it
+# half-defined (test/digest_preload_test.rb).
+require "digest/sha1"
 require "base64"
 
 module Monk

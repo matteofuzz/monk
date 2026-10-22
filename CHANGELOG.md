@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.22.2 - 2026-10-22
+
+### Fixed
+
+- **A WebSocket handshake no longer dies with "Digest::Base cannot be
+  directly inherited in Ruby".** `require "digest"` loads
+  `Digest::SHA1` on first use, and a connection Ractor handshaking in
+  parallel with the first one could catch the class defined but not yet
+  set up. Two handshakes at once right after boot (a connect burst)
+  were enough. `Monk::WebSocket` now loads `digest/sha1` when it is
+  required, and `Monk::Auth` (login tokens) and `Monk::Assets`
+  (development ETags) load `digest/sha2` for the same race on
+  `Digest::SHA256` (`docs/plan-digest-preload.md`).
+
 ## 0.22.1 - 2026-10-20
 
 ### Added
