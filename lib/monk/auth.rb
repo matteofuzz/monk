@@ -1,5 +1,9 @@
 require "securerandom"
 require "digest"
+# Loaded here, at boot: left to Digest.const_missing it loads on the first
+# hash_token, and a Ractor hashing in parallel can catch it half-defined
+# (test/digest_preload_test.rb).
+require "digest/sha2"
 require "openssl"
 
 require_relative "freeze_hooks"
