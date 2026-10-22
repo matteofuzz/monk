@@ -4,6 +4,7 @@ require "monk/websocket"
 require "socket"
 require "open3"
 require "securerandom"
+require "tempfile"
 
 class WebSocketAuthTest < Minitest::Test
   include WebSocketTestHelpers
@@ -272,6 +273,51 @@ class WebSocketAuthTest < Minitest::Test
     socket&.close
   end
 
+  # docs/plan-ws-connect-ceiling.md item 3: a verify that raises (here, no
+  # sessions table; in production, the pool full or the database down) is
+  # a 503 and one line on stderr, not a dead Ractor and a backtrace.
+  def test_a_verify_that_raises_gets_a_503_with_retry_after_and_one_log_line
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
+    server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    response = nil
+    log = capture_stderr_fd do
+      response = handshake!(socket, extra_headers: { "Authorization" => "Bearer #{session[:token]}" })
+    end
+
+    assert_equal "HTTP/1.1 503 Service Unavailable", status_line(response)
+    assert_match(/^Retry-After: \d+\r$/, response)
+    assert_equal 1, log.lines.size, log
+    assert_match(/monk-websocket: handshake refused with 503, verify failed: PG::UndefinedTable/, log)
+  ensure
+    socket&.close
+  end
+
+  # Under :optional too, and not as anonymous: that would quietly sign the
+  # user out of their topics. A browser (it sends an Origin) can't read
+  # Retry-After, so it gets none.
+  def test_optional_answers_a_verify_that_raises_with_a_503_not_anonymous
+    setup_auth_tables(DB_NAME)
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
+    server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    cookie = "session_token=#{session[:token]}"
+    response = nil
+    capture_stderr_fd do
+      response = handshake!(socket, extra_headers: { "Cookie" => cookie, "Origin" => "https://example.com" })
+    end
+
+    assert_equal "HTTP/1.1 503 Service Unavailable", status_line(response)
+    refute_match(/Retry-After/, response)
+  ensure
+    socket&.close
+  end
+
   def test_optional_still_refuses_a_cookie_from_a_disallowed_origin
     setup_auth_tables(DB_NAME)
     session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
@@ -449,6 +495,22 @@ class WebSocketAuthTest < Minitest::Test
   end
 
   private
+
+  # What the process writes to stderr (fd 2) during the block: a
+  # connection Ractor's $stderr is its own, so swapping the main Ractor's
+  # wouldn't catch it.
+  def capture_stderr_fd
+    saved = $stderr.dup
+    Tempfile.create("monk-ws-stderr") do |file|
+      $stderr.reopen(file)
+      yield
+      $stderr.flush
+      File.read(file.path)
+    ensure
+      $stderr.reopen(saved)
+      saved.close
+    end
+  end
 
   # Monk::Auth on DB_NAME, with a pool of its own; pooled_connection_count
   # sees only the pool's connections.

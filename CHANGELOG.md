@@ -4,6 +4,68 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.22.1 - 2026-10-20
+
+### Added
+
+- **Several WebSocket processes on one port.** `Server.new(reuse_port:
+  true)` binds with `SO_REUSEPORT`, and the scaffold's
+  `bin/websocket_server` runs `WS_PROCESSES` processes (1 by default),
+  starting that many copies of itself through the new
+  `Monk::Bin.spawn_processes!` and passing `TERM`/`INT` on. Each has its
+  own heap and its own GC pauses over its share of the sockets, so on
+  Ruby 4.0 K processes take about K² times the connects a second
+  (`docs/guides/websocket.md`, "Several processes"; plan item 8). An
+  existing app copies the new script (`docs/guides/upgrading.md`,
+  0.22.1).
+
+### Fixed
+
+- **A WebSocket connect burst queues instead of collapsing.** The server
+  caps the handshakes in flight (`Server.new(max_handshakes:)`, 128 by
+  default); past the cap, connects wait in the kernel's listen backlog.
+  Before, every accepted socket started its handshake at once, and a
+  burst past what the process could verify (a restart's reconnect wave)
+  filled the `db_pool:` queue and timed most of them out
+  (`docs/plan-ws-connect-ceiling.md`, item 1).
+- **A WebSocket handshake has a deadline and a size limit.** A handshake
+  not over within `handshake_timeout:` (10 s by default) is dropped, and a request head past 16 KiB gets a
+  `431`. Before, a socket that connected and sent nothing held its
+  connection Ractor forever, and a request with no blank line grew
+  without limit (item 2).
+- **A WebSocket handshake whose session check fails is refused with
+  `503`**, and one line on stderr. Before, a `verify` that raised (the
+  `db_pool:` full or timed out, the database down) killed the
+  connection's Ractor with a backtrace and sent no response. Under
+  `authenticate: :optional` it is a `503` too, not an anonymous
+  connection. Clients without an `Origin` also get `Retry-After`
+  (item 3).
+
+### Changed
+
+- **A WebSocket handshake allocates less.** The request is read with one
+  `gets` instead of a String a byte, parsed once instead of twice, and
+  its credential worked out once instead of up to three times. Fewer
+  objects a connect means fewer GCs, which is what limits connects a
+  second once thousands of sockets are open (item 4).
+- **A Live subscribe is one registry ask, not one a topic.**
+  `Registry#register_many(keys, port)` and `#unregister_many` (on
+  `RedisFanout` and `PgFanout` too) take every key at once;
+  `Monk::Live`'s subscribe, unsubscribe and cleanup use them. Each fiber
+  also reuses one reply port for its asks instead of making one an ask,
+  and the registry survives answering an ask whose caller gave up
+  (item 5).
+- **`bin/websocket_server` runs with GC settings for many open sockets.**
+  It starts itself again, once at boot, with
+  `RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8` and
+  `_MAX_RATIO=0.9` (`Monk::Bin::WEBSOCKET_GC_ENV`, through the new
+  `Monk::Bin.boot_with_env!`), unless the environment sets them. On Ruby
+  4.0, with 15K sockets held, 6–30× fewer GCs and p99 to ready at
+  300 connects/s from 6.3 s to 1.2 s, for ~30% more memory. An existing
+  app adds one line (`docs/guides/upgrading.md`, 0.22.1) (item 7).
+  Restarting with the settings carries the warning level (`-W0`) over;
+  other flags given to `ruby` itself aren't (`RUBYOPT` is).
+
 ## 0.22.0 - 2026-10-13
 
 ### Added

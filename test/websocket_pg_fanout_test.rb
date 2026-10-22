@@ -74,6 +74,12 @@ class WebSocketPgFanoutTest < Minitest::Test
 
     fanout.unregister(:room1, port)
     assert_equal 0, fanout.count(:room1)
+
+    fanout.register_many(%i[room1 room2], port)
+    assert_equal [1, 1], [fanout.count(:room1), fanout.count(:room2)]
+
+    fanout.unregister_many(%i[room1 room2], port)
+    assert_equal [0, 0], [fanout.count(:room1), fanout.count(:room2)]
   ensure
     port&.close
   end
@@ -116,6 +122,9 @@ class WebSocketPgFanoutTest < Minitest::Test
 
     error = assert_raises(Monk::WebSocket::NotListeningError) { fanout.register(:room1, port) }
     assert_match(/listen!/, error.message)
+
+    error = assert_raises(Monk::WebSocket::NotListeningError) { fanout.register_many(%i[room1], port) }
+    assert_match(/#register_many before #listen!/, error.message)
   ensure
     port&.close
   end

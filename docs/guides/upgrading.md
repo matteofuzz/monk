@@ -14,6 +14,34 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.22.1
+
+`bundle update monkrb`.
+
+### `bin/websocket_server` (apps with websocket)
+
+`bin/websocket_server` now starts itself with GC settings for many open
+sockets ([`websocket.md`](websocket.md#in-a-monk-app-monk-add-websocket)),
+and runs `WS_PROCESSES` server processes
+([`websocket.md`](websocket.md#several-processes)). Copy the file from
+`monk help websocket --file bin/websocket_server`, then carry over
+anything you changed in it, or add the new lines yourself:
+
+1. After `require "monk/bin"`:
+   ```ruby
+   Monk::Bin.boot_with_env!(__FILE__, Monk::Bin::WEBSOCKET_GC_ENV)
+
+   processes = Integer(ENV.fetch("WS_PROCESSES", "1"), exception: false)
+   unless processes&.positive?
+     abort "bin/websocket_server: WS_PROCESSES must be a whole number, 1 or more, got #{ENV["WS_PROCESSES"].inspect}."
+   end
+   Monk::Bin.spawn_processes!(__FILE__, processes)
+   ```
+2. In `Monk::WebSocket::Server.new(...)`, add `reuse_port: processes > 1`.
+
+An app that already sets the `RUBY_GC_HEAP_FREE_SLOTS_*` variables keeps
+its values.
+
 ## 0.22
 
 First update the gem: in the `Gemfile`, `gem "monkrb", "~> 0.22", require: "monk"`

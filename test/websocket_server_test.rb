@@ -66,6 +66,20 @@ class WebSocketServerTest < Minitest::Test
     socket&.close
   end
 
+  # Item 4: the request is read through the socket's buffer, so a frame
+  # sent in the same packet as the request still reaches the handler.
+  def test_a_frame_sent_right_behind_the_request_is_not_lost
+    server = start_server(&ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    socket.write(handshake_request + Monk::WebSocket::Frame.encode("right behind", opcode: 0x1))
+    read_response_head(socket)
+
+    assert_equal "right behind", read_frame(socket)
+  ensure
+    socket&.close
+  end
+
   def test_accept_loop_does_not_block_on_a_slow_connection
     server = start_server(&SLEEP_IF_TOLD_THEN_ECHO)
 
@@ -124,6 +138,130 @@ class WebSocketServerTest < Minitest::Test
   ensure
     crashing&.close
     healthy&.close
+  end
+
+  # docs/plan-ws-connect-ceiling.md item 1: at max_handshakes:, the accept
+  # loop waits for a handshake to end before it takes the next connect.
+  def test_at_max_handshakes_a_new_connect_waits_for_a_handshake_to_end
+    server = start_server(max_handshakes: 2, &ECHO_ONE_MESSAGE)
+
+    # Connected, but never sending a request: both stay in their handshake.
+    silent = Array.new(2) { TCPSocket.new("127.0.0.1", server.port) }
+    sleep 0.1
+    waiting = TCPSocket.new("127.0.0.1", server.port)
+    waiting.write(handshake_request)
+
+    assert_nil waiting.wait_readable(0.3), "a third handshake was served past the cap"
+
+    silent.first.close
+    response = read_response_head(waiting)
+
+    assert_match(%r{\AHTTP/1.1 101 Switching Protocols}, response)
+  ensure
+    silent&.each(&:close)
+    waiting&.close
+  end
+
+  def test_a_refused_handshake_frees_its_slot
+    server = start_server(max_handshakes: 1, &ECHO_ONE_MESSAGE)
+
+    3.times do
+      socket = TCPSocket.new("127.0.0.1", server.port)
+      socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+      assert_match(%r{\AHTTP/1.1 400 Bad Request}, read_response_head(socket))
+      socket.close
+    end
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert_match(%r{\AHTTP/1.1 101}, handshake!(socket))
+  ensure
+    socket&.close
+  end
+
+  # Item 2: a socket that sends nothing can't hold a handshake slot forever.
+  def test_a_client_that_sends_nothing_is_dropped_after_handshake_timeout
+    server = start_server(handshake_timeout: 0.2, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert socket.wait_readable(2), "the silent socket was never dropped"
+    assert_nil socket.read(1)
+  ensure
+    socket&.close
+  end
+
+  def test_a_timed_out_handshake_frees_its_slot
+    server = start_server(max_handshakes: 1, handshake_timeout: 0.2, &ECHO_ONE_MESSAGE)
+
+    silent = TCPSocket.new("127.0.0.1", server.port)
+    sleep 0.05
+    socket = TCPSocket.new("127.0.0.1", server.port)
+
+    assert_match(%r{\AHTTP/1.1 101}, handshake!(socket))
+  ensure
+    silent&.close
+    socket&.close
+  end
+
+  def test_the_handshake_timeout_ends_with_the_handshake
+    server = start_server(handshake_timeout: 0.1, &ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket)
+    sleep 0.3
+    socket.write(Monk::WebSocket::Frame.encode("still here", opcode: 0x1))
+
+    assert_equal "still here", read_frame(socket)
+  ensure
+    socket&.close
+  end
+
+  def test_a_request_head_past_the_size_limit_is_refused_as_too_large
+    server = start_server(&ECHO_ONE_MESSAGE)
+
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    socket.write("GET / HTTP/1.1\r\nCookie: #{"a" * Monk::WebSocket::Handshake::MAX_REQUEST_SIZE}")
+
+    assert_match(%r{\AHTTP/1.1 431 Request Header Fields Too Large}, read_response_head(socket))
+  ensure
+    socket&.close
+  end
+
+  def test_handshake_timeout_must_be_positive
+    [0, -1, nil].each do |value|
+      error = assert_raises(ArgumentError) do
+        Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", handshake_timeout: value)
+      end
+      assert_match(/handshake_timeout must be positive/, error.message)
+    end
+  end
+
+  def test_max_handshakes_must_be_a_positive_integer
+    [0, -1, 1.5, nil].each do |value|
+      error = assert_raises(ArgumentError) do
+        Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", max_handshakes: value)
+      end
+      assert_match(/max_handshakes must be a positive Integer/, error.message)
+    end
+  end
+
+  # Item 8: several processes on one port. Without reuse_port:, a second
+  # bind fails; with it on both, both bind, and connects get served
+  # whichever of the two the kernel hands them to.
+  def test_reuse_port_lets_two_servers_share_a_port
+    first = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", reuse_port: true)
+    assert_raises(Errno::EADDRINUSE) { Monk::WebSocket::Server.new(port: first.port, bind: "127.0.0.1") }
+    second = Monk::WebSocket::Server.new(port: first.port, bind: "127.0.0.1", reuse_port: true)
+    threads = [first, second].map { |server| Thread.new { server.run(&ECHO_ONE_MESSAGE) } }
+
+    sockets = Array.new(10) { TCPSocket.new("127.0.0.1", first.port) }
+
+    sockets.each { |socket| assert_match(%r{\AHTTP/1.1 101}, handshake!(socket)) }
+  ensure
+    sockets&.each(&:close)
+    threads&.each(&:kill)&.each(&:join)
   end
 
   # TERM is how docker stop, Kubernetes, Fly, Render and systemd stop a

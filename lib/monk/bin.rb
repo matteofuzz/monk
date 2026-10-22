@@ -1,3 +1,5 @@
+require "rbconfig"
+
 module Monk
   # What a scaffolded app's bin/ scripts run their work in:
   #
@@ -13,7 +15,60 @@ module Monk
   # is. Errors are recognized by class name, so this file loads neither pg
   # nor redis (docs/adr/0017).
   module Bin
+    # bin/websocket_server's GC settings: keep the heap 60-90% free. On Ruby
+    # 4.0 a GC runs whenever new connection Ractors have used up the free
+    # pages of the smallest heap (each takes one, however little it
+    # allocates), and every GC stops and marks every open socket: at 15K
+    # sockets held, these run 6-30x fewer GCs, for ~30% more memory
+    # (docs/plan-ws-connect-ceiling.md, "After items 1-5"). Measured to
+    # change nothing on 4.1, whose Ractors have heaps of their own.
+    WEBSOCKET_GC_ENV = {
+      "RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO" => "0.6",
+      "RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO" => "0.8",
+      "RUBY_GC_HEAP_FREE_SLOTS_MAX_RATIO" => "0.9",
+    }.freeze
+
     class << self
+      # Ruby reads settings like these only when it boots, so a script
+      # that needs them starts itself again, once, with the ones the
+      # environment doesn't set; what it does set wins. Call it first,
+      # before the script loads the app. The same PID throughout. Of the
+      # flags given to ruby itself, only the warning level is carried over
+      # (RUBYOPT is, whole).
+      def boot_with_env!(script, env)
+        missing = env.reject { |name, _| ENV.key?(name) }
+        return if missing.empty?
+
+        # exec drops what's still buffered.
+        $stdout.flush
+        $stderr.flush
+        exec(missing, RbConfig.ruby, *warning_flags, script, *ARGV)
+      end
+
+      # Runs the script in `count` processes: this one starts that many
+      # copies of it, then only waits on them, passing INT and TERM on; in
+      # each copy (MONK_BIN_PROCESS set) it returns at once. Copies, not
+      # forks: on macOS a forked child that opens a Postgres connection
+      # crashes in the Objective-C runtime, and a fresh process inherits
+      # nothing. If one ends on its own (a crash, a service down at boot),
+      # the others are stopped too, and this process exits with its status,
+      # so whatever restarts the script restarts them all. With 1, returns
+      # at once, in this process.
+      def spawn_processes!(script, count)
+        unless count.is_a?(Integer) && count.positive?
+          raise ArgumentError, "the process count must be a positive Integer, got #{count.inspect}"
+        end
+        return if count == 1 || ENV.key?("MONK_BIN_PROCESS")
+
+        # Each in its own process group, so a Ctrl-C at the terminal
+        # reaches it once, passed on from here, and not twice.
+        pids = Array.new(count) do |index|
+          env = { "MONK_BIN_PROCESS" => (index + 1).to_s }
+          Process.spawn(env, RbConfig.ruby, *warning_flags, script, *ARGV, pgroup: true)
+        end
+        exit supervise(pids)
+      end
+
       def run(script)
         yield
       rescue StandardError => e
@@ -40,6 +95,45 @@ module Monk
       end
 
       private
+
+      # The warning level this Ruby runs at, as flags for another: a script
+      # started with -W0 stays quiet when it starts again.
+      def warning_flags
+        flags = []
+        flags << "-W0" if $VERBOSE.nil?
+        flags << "-W:no-experimental" unless Warning[:experimental]
+        flags
+      end
+
+      # Waits until every pid has ended, and returns the first nonzero
+      # status among them, or 0.
+      def supervise(pids)
+        stop = -> { pids.each { |pid| terminate(pid) } }
+        stopping = false
+        %w[INT TERM].each do |name|
+          trap(name) do
+            stopping = true
+            stop.call
+          end
+        end
+        status = 0
+        until pids.empty?
+          pid, process_status = Process.wait2
+          pids.delete(pid)
+          status = process_status.exitstatus || 1 if status.zero? && !process_status.success?
+          next if stopping
+
+          stopping = true
+          stop.call
+        end
+        status
+      end
+
+      def terminate(pid)
+        Process.kill("TERM", pid)
+      rescue Errno::ESRCH
+        nil # already gone
+      end
 
       def postgres(error, context)
         host = error.message[/server at "([^"]+)"/, 1] || ENV.fetch("DB_HOST", "127.0.0.1")

@@ -59,7 +59,45 @@ class GeneratorsWebSocketServerTest < Minitest::Test
     end
   end
 
+  # WS_PROCESSES: two processes on one port, each with its own pool, and
+  # TERM to the script stops both, with exit 0.
+  def test_ws_processes_runs_that_many_servers_on_one_port
+    skip_unless_redis_available
+    setup_auth_tables(:primary)
+    token = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))[:token]
+
+    with_new_app(:auth, :websocket, options: { transport: "redis" }) do |dest|
+      uncomment_examples(dest)
+      app_name = "monk_generated_ws_#{SecureRandom.hex(4)}"
+      status = with_server(dest, app_name, "WS_PROCESSES" => "2") do |port|
+        assert wait_until { backend_count(app_name) == 2 * POOL_SIZE }, "two pools: two processes"
+
+        sockets = Array.new(10) do
+          TCPSocket.new("127.0.0.1", port).tap do |socket|
+            response = handshake!(socket, extra_headers: { "Authorization" => "Bearer #{token}" })
+            assert_equal "HTTP/1.1 101 Switching Protocols", response.lines.first.strip
+          end
+        end
+      ensure
+        sockets&.each(&:close)
+      end
+
+      assert_equal 0, status.exitstatus
+      assert wait_until { backend_count(app_name).zero? }, "both processes gone"
+    end
+  end
+
   private
+
+  def wait_until(seconds = 10)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+    until (done = yield)
+      break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.05
+    end
+    done
+  end
 
   def assert_connections_stay_fixed(*modules, transport:, extra:)
     skip_unless_redis_available
@@ -86,12 +124,14 @@ class GeneratorsWebSocketServerTest < Minitest::Test
     end
   end
 
-  def with_server(dest, app_name)
+  # The server's exit status, once the block is done and it's stopped.
+  def with_server(dest, app_name, env = {})
     port = free_port
-    pid = Process.spawn(server_env(port, app_name), RbConfig.ruby, "-W0", "bin/websocket_server",
+    pid = Process.spawn(server_env(port, app_name).merge(env), RbConfig.ruby, "-W0", "bin/websocket_server",
       chdir: dest, out: File::NULL,)
     wait_for_port(port, pid)
     yield port
+    stop(pid).tap { pid = nil }
   ensure
     stop(pid) if pid
   end
@@ -129,7 +169,7 @@ class GeneratorsWebSocketServerTest < Minitest::Test
 
   def stop(pid)
     Process.kill("TERM", pid)
-    Process.wait(pid)
+    Process.wait2(pid).last
   rescue Errno::ESRCH, Errno::ECHILD
     nil
   end

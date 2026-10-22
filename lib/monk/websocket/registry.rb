@@ -8,8 +8,9 @@ module Monk
     # A dedicated Ractor holding the live set of connection handles keyed by
     # an app-assigned channel/subject -- mirrors StateRactor's shape
     # (docs/design/ractor.md): the mutable Hash stays hidden inside this one
-    # Ractor, and every call is a synchronous "ask" via a fresh
-    # Ractor::Port, so registration/broadcast can never race each other.
+    # Ractor, and every call is a synchronous "ask" answered on the
+    # caller's reply port, so registration/broadcast can never race each
+    # other.
     class Registry
       def initialize
         @ractor = Ractor.new do
@@ -24,6 +25,14 @@ module Monk
                 true
               when :unregister
                 keys[key].delete(arg)
+                true
+              when :register_many
+                # key is the Array of keys: a Live subscribe's topics in
+                # one ask, not one each.
+                key.each { |k| keys[k] << arg unless keys[k].include?(arg) }
+                true
+              when :unregister_many
+                key.each { |k| keys[k].delete(arg) }
                 true
               when :broadcast
                 # A port can be closed out from under this loop without
@@ -58,7 +67,13 @@ module Monk
                 end
                 ports.size
               end
-            reply_port.send(result)
+            begin
+              reply_port.send(result)
+            rescue Ractor::ClosedError
+              # The caller gave up on this ask (its thread was killed while
+              # it waited) and closed its port: nobody to answer, and no
+              # reason to end the registry for every other caller.
+            end
           end
         end
         freeze
@@ -70,6 +85,16 @@ module Monk
 
       def unregister(key, port)
         ask(:unregister, key, port)
+      end
+
+      # register for each of keys, in one ask: one message and one reply
+      # instead of one each (docs/plan-ws-connect-ceiling.md, item 5).
+      def register_many(keys, port)
+        ask(:register_many, keys, port)
+      end
+
+      def unregister_many(keys, port)
+        ask(:unregister_many, keys, port)
       end
 
       def broadcast(key, payload)
@@ -99,10 +124,20 @@ module Monk
 
       private
 
+      # An ask is synchronous, so a fiber has at most one outstanding: its
+      # reply port is made once and reused (a Port is an allocation and a
+      # message each), taken out of fiber storage while the ask is in
+      # flight. An ask cut short (the thread killed while it waits) closes
+      # the port instead of putting it back, so its late reply can't be
+      # read as the next ask's.
       def ask(op, key, arg)
-        reply_port = Ractor::Port.new
+        reply_port = Thread.current[:monk_registry_reply_port] || Ractor::Port.new
+        Thread.current[:monk_registry_reply_port] = nil
         @ractor.send([op, key, arg, reply_port])
-        reply_port.receive
+        result = reply_port.receive
+        Thread.current[:monk_registry_reply_port] = reply_port
+        reply_port = nil
+        result
       rescue Ractor::ClosedError
         # The registry Ractor itself can be gone by the time this runs --
         # e.g. process-wide shutdown (Ctrl+C) tearing down Ractors in

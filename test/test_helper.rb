@@ -366,12 +366,20 @@ module WebSocketTestHelpers
   end
 
   def handshake!(socket, extra_headers: {})
+    socket.write(handshake_request(extra_headers: extra_headers))
+    read_response_head(socket)
+  end
+
+  def handshake_request(extra_headers: {})
     request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
       "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
     extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
     request << "\r\n"
-    socket.write(request)
+  end
 
+  # The response's status line and headers, or nil if the server closed
+  # the socket first.
+  def read_response_head(socket)
     response = +""
     until response.end_with?("\r\n\r\n")
       byte = socket.read(1)
