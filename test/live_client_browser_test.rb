@@ -219,8 +219,10 @@ class LiveClientBrowserTest < Minitest::Test
       hits_before = @pages.page_hits
 
       @proxy.sever!
+      # The client's own subscribed, not @registry.count: a count of 1 can
+      # still be the severed connection, before its cleanup has run.
+      wait_for("resubscribed") { events("subscribed").size == 2 }
       wait_for("resync fetch in flight") { @pages.page_hits == hits_before + 1 }
-      wait_for("resubscribed") { @registry.count(:"t:1") == 1 }
       3.times do |n|
         @proxy.drop_next_server_frame!
         @publisher.remove("t:1", to: "#nothing")

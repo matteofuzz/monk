@@ -26,6 +26,7 @@ module LiveBrowserPage
   def page_html(body_html)
     <<~HTML
       <!doctype html><meta charset="utf-8">
+      <link rel="icon" href="data:,">
       <meta name="monk-live-url" content="ws://127.0.0.1:#{@proxy.port}">
       <script>
         window.__events = [];
