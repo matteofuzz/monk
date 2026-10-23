@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1, 2 and 3 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 to 4 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
