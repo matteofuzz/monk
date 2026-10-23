@@ -164,7 +164,9 @@ These fill gaps the ADR leaves open. Each can still change in review.
   `s3://KEY:SECRET@bucket?endpoint=…&region=…[&path_style=1]`. It requires
   `endpoint` and `region`, rejects unknown options, URL-decodes the
   credentials, and redacts the secret in errors (copied from
-  `Mail::URL.redact`).
+  `Mail::URL.redact`). A bare `endpoint` host means HTTPS. An
+  `http://` prefix is accepted for a local server only (MinIO in the
+  test suite) and refused in staging and production.
 - `storage.rb`: `configure`, `config`, `freeze_registry!`, `reset!`, and
   registration with `Monk.freeze_hooks`.
 - Tests (`storage_config_test.rb`): each row of the ADR table, each
@@ -225,9 +227,15 @@ These fill gaps the ADR leaves open. Each can still change in review.
   rebuilt as a test: it runs the contract tests and the browser flow
   (presigned PUT with `Net::HTTP` acting as the browser, wrong length and
   wrong type refused, ranged get, copy, signed GET) from a worker Ractor
-  against `STORAGE_TEST_URL`, and is skipped when that is unset.
-  `bin/localstack` (or a doc line) starts LocalStack with strict
-  signatures.
+  against a local MinIO container, never skipped, like the Postgres and
+  Redis tests. A `StorageTestHelpers` module in `test_helper.rb` reads
+  `MONK_TEST_STORAGE_URL`, defaulting to
+  `s3://minioadmin:minioadmin@monk-test?endpoint=http://127.0.0.1:9000&region=us-east-1&path_style=1`,
+  and creates the bucket if it's missing (one signed `PUT /monk-test`).
+  If MinIO can't be reached, the test fails with the command that starts
+  it: `docker run -d --name monk-minio -p 9000:9000 minio/minio server /data`,
+  written down in `docs/development.md`'s test section. MinIO checks signatures strictly, including the signed
+  `Content-Length` and `Content-Type`.
 
 ### Phase 6: content sniffing
 
@@ -236,7 +244,7 @@ These fill gaps the ADR leaves open. Each can still change in review.
 
 ### Phase 7: verifying the four open items on Hetzner (manual, before the S3 backend ships)
 
-Run by you on a staging Hetzner project: `STORAGE_TEST_URL=s3://…fsn1…`
+Run by you on a staging Hetzner project: `MONK_TEST_STORAGE_URL=s3://…fsn1…`
 and the Phase 5 integration test, plus one script per item:
 
 1. A presigned PUT with a longer body, then with another content type:
@@ -314,6 +322,13 @@ as live routes, because ADR 0017 gives only `live` a demo, and a live
   download-and-upload jobs).
 - `CONTEXT.md`: Storage, key, `tmp/` upload, confirm, signed link,
   cache window.
+- `docs/development.md`: a test section listing the three containers the
+  suite needs, so it runs with 0 skips: Postgres with `ssl = on` (for the
+  probe over TLS in `persistence_test.rb`), Redis, and MinIO (Phase 5).
+  For each, the `docker run` command, the `MONK_TEST_*` variables
+  `test_helper.rb` reads and their defaults. The skip messages in
+  `test_helper.rb` point there instead of
+  `docs/design/persistence-ractor-connections.md`.
 - README module list, CHANGELOG entry. The version bump is left to you.
 - When everything is done, this plan moves to `docs/history/`.
 
