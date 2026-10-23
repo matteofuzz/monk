@@ -271,7 +271,7 @@ module PersistenceTestHelpers
 
   def skip_unless_postgres_available
     skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
-      "(set MONK_TEST_PG_* env vars, or start one -- see docs/design/persistence-ractor-connections.md)" unless postgres_available?
+      "(set MONK_TEST_PG_* env vars, or start one -- see docs/development.md)" unless postgres_available?
   end
 
   # Same information_schema check Migrator#ensure_schema_migrations_table
@@ -340,7 +340,66 @@ module RedisTestHelpers
 
   def skip_unless_redis_available
     skip "no local Redis reachable at #{redis_test_url} " \
-      "(set MONK_TEST_REDIS_URL, or start one)" unless redis_available?
+      "(set MONK_TEST_REDIS_URL, or start one -- see docs/development.md)" unless redis_available?
+  end
+end
+
+# Shared by the tests that run the S3 backend against a real server
+# (storage_s3_integration_test.rb): a local floci, never skipped. Not
+# included globally -- `include StorageTestHelpers` where needed.
+module StorageTestHelpers
+  FLOCI = "docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0"
+
+  def storage_test_url
+    ENV.fetch("MONK_TEST_STORAGE_URL",
+      "s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1")
+  end
+
+  # The backend under test, on an empty bucket that exists, on a server
+  # that checks signatures. Fails, naming the fix, when any of that isn't so.
+  def s3_test_backend
+    backend = Monk::Storage::URL.parse(storage_test_url)
+    bucket_request(backend, "PUT", "/") # created, or already ours
+    refuses_a_wrong_secret!(backend)
+    empty_bucket!(backend)
+    backend
+  rescue Monk::Storage::RequestError, SystemCallError, Net::OpenTimeout => e
+    flunk "no S3 server reachable for #{Monk::Storage::URL.redact(storage_test_url)} (#{e.message}). " \
+          "Start one with `#{FLOCI}`, or set MONK_TEST_STORAGE_URL."
+  end
+
+  # Without FLOCI_AUTH_VALIDATE_SIGNATURES floci accepts any signature, and
+  # every refusal these tests expect would quietly pass as a success.
+  def refuses_a_wrong_secret!(backend)
+    status = bucket_request(backend.with(secret_key: "#{backend.secret_key}-wrong"), "GET", "/").code
+    return if status == "403"
+
+    flunk "the S3 server accepted a request signed with the wrong secret (HTTP #{status}): it isn't checking " \
+          "signatures. For floci, set FLOCI_AUTH_VALIDATE_SIGNATURES=true (`#{FLOCI}`)."
+  end
+
+  def empty_bucket!(backend)
+    loop do
+      keys = bucket_request(backend, "GET", "/", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>})
+      break if keys.empty?
+
+      keys.flatten.each { |key| backend.delete(key) }
+    end
+  end
+
+  # A request on the bucket itself (create, list), which the backend's API
+  # has no call for. Path-style, signed with the Phase 4 signer.
+  def bucket_request(backend, method, path, query: {})
+    host = backend.path_style ? backend.endpoint : "#{backend.bucket}.#{backend.endpoint}"
+    full = backend.path_style ? "/#{backend.bucket}#{path.delete_suffix("/")}" : path
+    credentials = { access_key: backend.access_key, secret_key: backend.secret_key, region: backend.region }
+    signed = { "host" => host, "x-amz-content-sha256" => Monk::Storage::SigV4::EMPTY_PAYLOAD }
+    signed.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: full, query: query, headers: signed,
+      payload_hash: Monk::Storage::SigV4::EMPTY_PAYLOAD, credentials: credentials, now: Time.now.to_i,))
+    target = query.empty? ? full : "#{full}?#{Monk::Storage::SigV4.canonical_query(query)}"
+    Net::HTTP.start(host.sub(/:\d+\z/, ""), host[/:(\d+)\z/, 1].to_i, open_timeout: 2, read_timeout: 10) do |http|
+      http.request(Net::HTTPGenericRequest.new(method, false, true, target, signed))
+    end
   end
 end
 

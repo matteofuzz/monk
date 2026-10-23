@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 to 4 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 to 5 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -180,7 +180,7 @@ These fill gaps the ADR leaves open. Each can still change in review.
   `endpoint` and `region`, rejects unknown options, URL-decodes the
   credentials, and redacts the secret in errors (copied from
   `Mail::URL.redact`). A bare `endpoint` host means HTTPS. An
-  `http://` prefix is accepted for a local server only (MinIO in the
+  `http://` prefix is accepted for a local server only (floci in the
   test suite) and refused in staging and production.
 - `storage.rb`: `configure`, `config`, `freeze_registry!`, `reset!`, and
   registration with `Monk.freeze_hooks`.
@@ -242,15 +242,23 @@ These fill gaps the ADR leaves open. Each can still change in review.
   rebuilt as a test: it runs the contract tests and the browser flow
   (presigned PUT with `Net::HTTP` acting as the browser, wrong length and
   wrong type refused, ranged get, copy, signed GET) from a worker Ractor
-  against a local MinIO container, never skipped, like the Postgres and
-  Redis tests. A `StorageTestHelpers` module in `test_helper.rb` reads
-  `MONK_TEST_STORAGE_URL`, defaulting to
-  `s3://minioadmin:minioadmin@monk-test?endpoint=http://127.0.0.1:9000&region=us-east-1&path_style=1`,
+  against a local [floci](https://github.com/floci-io/floci) container
+  (MIT, an AWS emulator; MinIO's images stopped being published), never
+  skipped, like the Postgres and Redis tests. A `StorageTestHelpers`
+  module in `test_helper.rb` reads `MONK_TEST_STORAGE_URL`, defaulting to
+  `s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1`,
   and creates the bucket if it's missing (one signed `PUT /monk-test`).
-  If MinIO can't be reached, the test fails with the command that starts
-  it: `docker run -d --name monk-minio -p 9000:9000 minio/minio server /data`,
-  written down in `docs/development.md`'s test section. MinIO checks signatures strictly, including the signed
-  `Content-Length` and `Content-Type`.
+  If floci can't be reached, the test fails with the command that starts
+  it: `docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0`,
+  written down in `docs/development.md`'s test section. Without that
+  variable floci accepts any signature, so the helper also checks that a
+  request signed with the wrong secret is refused, and fails naming the
+  variable if it isn't. Probed on 2026-10-23 with it set, floci 2.3.0
+  refuses a wrong secret, a tampered or expired presigned link, and a
+  presigned PUT whose body is longer or shorter than the signed
+  `Content-Length` or whose `Content-Type` differs; answers a range past
+  the end with 416, a copy of a missing key with 404 `NoSuchKey`, and a
+  delete of a missing key with 204.
 
 ### Phase 6: content sniffing
 
@@ -339,11 +347,12 @@ as live routes, because ADR 0017 gives only `live` a demo, and a live
   cache window.
 - `docs/development.md`: a test section listing the three containers the
   suite needs, so it runs with 0 skips: Postgres with `ssl = on` (for the
-  probe over TLS in `persistence_test.rb`), Redis, and MinIO (Phase 5).
+  probe over TLS in `persistence_test.rb`), Redis, and floci (Phase 5).
   For each, the `docker run` command, the `MONK_TEST_*` variables
   `test_helper.rb` reads and their defaults. The skip messages in
   `test_helper.rb` point there instead of
-  `docs/design/persistence-ractor-connections.md`.
+  `docs/design/persistence-ractor-connections.md`. Done with Phase 5,
+  since its floci command needed a place.
 - README module list, CHANGELOG entry. The version bump is left to you.
 - When everything is done, this plan moves to `docs/history/`.
 

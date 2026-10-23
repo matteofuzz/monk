@@ -89,11 +89,11 @@ class StorageConfigTest < Minitest::Test
     refute backend_for("#{HETZNER}&path_style=0").path_style
   end
 
-  # Monk's own suite runs the S3 backend against a local MinIO over http.
+  # Monk's own suite runs the S3 backend against a local floci over http.
   def test_s3_http_endpoint_for_a_local_server
-    backend = backend_for("s3://minioadmin:minioadmin@monk-test?endpoint=http://127.0.0.1:9000&region=us-east-1&path_style=1")
+    backend = backend_for("s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1")
 
-    assert_equal "127.0.0.1:9000", backend.endpoint
+    assert_equal "127.0.0.1:4566", backend.endpoint
     refute backend.tls
   end
 
@@ -102,7 +102,7 @@ class StorageConfigTest < Minitest::Test
       with_settings do
         with_monk_env(env) do
           error = assert_raises(Monk::Storage::InvalidStorageUrlError, env) do
-            backend_for("s3://k:s@media?endpoint=http://minio.internal:9000&region=eu")
+            backend_for("s3://k:s@media?endpoint=http://s3.internal:9000&region=eu")
           end
           assert_includes error.message, "MONK_ENV=#{env}"
         end

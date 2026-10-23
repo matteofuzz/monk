@@ -72,7 +72,7 @@ module Monk
       end
 
       # A bare host means HTTPS. http:// sends the credentials and every
-      # body in clear: accepted for a local server (MinIO in Monk's own
+      # body in clear: accepted for a local server (floci in Monk's own
       # suite), refused in staging and production.
       def endpoint(value, url)
         invalid!(url, "missing endpoint=, e.g. #{S3_EXAMPLE}") if value.nil? || value.empty?

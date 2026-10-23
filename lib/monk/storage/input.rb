@@ -51,6 +51,20 @@ module Monk
         raise ArgumentError, "byte_size: is the upload's length in bytes, not #{value.inspect}"
       end
 
+      # The body's SHA-256 in hex, read in chunks and rewound, so an IO can
+      # then be sent from the start.
+      def sha256(body)
+        return Digest::SHA256.hexdigest(body) if body.is_a?(String)
+
+        digest = Digest::SHA256.new
+        body.rewind
+        while (chunk = body.read(CHUNK_BYTES))
+          digest << chunk
+        end
+        body.rewind
+        digest.hexdigest
+      end
+
       # A Range of byte offsets -> [first, last], last nil for "to the end".
       def byte_span(range)
         first = range.begin if range.is_a?(Range)
