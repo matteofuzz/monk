@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07, not started.
+Status: draft 2026-10-07. Phase 1 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -24,7 +24,7 @@ lib/monk/storage/object.rb          # Data: key, byte_size, content_type, etag (
 lib/monk/storage/upload.rb          # Data: url, headers (presigned_put's result)
 lib/monk/storage/sniff.rb           # magic bytes -> content type; SVG refusal
 lib/monk/storage/backends/file.rb   # Data: root, secret
-lib/monk/storage/backends/s3.rb     # Data: bucket, endpoint, region, access_key, secret_key, path_style
+lib/monk/storage/backends/s3.rb     # Data: bucket, endpoint, region, access_key, secret_key, path_style, tls
 lib/monk/storage/sig_v4.rb          # header signing + query presigning, pure functions
 lib/monk/storage/token.rb           # file backend's HMAC tokens for /_monk/storage/:token
 lib/monk/generators/storage.rb      # monk add storage
