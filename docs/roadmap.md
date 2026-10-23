@@ -102,10 +102,10 @@ gets its own design doc and plan when work on it starts.
    (Hetzner, R2, B2, AWS, MinIO) that signs its own SigV4 requests, and
    local files in development and test. Browsers upload straight to the
    bucket through a presigned PUT, and downloads go through an app route
-   that redirects to a signed link. Designed in ADR 0016; the ADR and
-   `docs/plan-storage.md` are on the `main_dev/monk_storage` branch. The
-   plan's scaffold phase still says `monk new --storage` and must become a
-   generator of its own (`monk add storage`, ADR 0017). Before the S3
+   that redirects to a signed link. Designed in ADR 0018; the ADR and
+   `docs/plan-storage.md` are on the `main_dev/monk_storage` branch, and
+   the plan scaffolds it with a generator of its own (`monk add storage`,
+   ADR 0017). Before the S3
    backend ships, four open items need checking on a real Hetzner bucket:
    the signed `Content-Length`, CORS for `PUT`, the `tmp/` lifecycle rule,
    and same-bucket copy. The plan's earlier phases don't depend on them.

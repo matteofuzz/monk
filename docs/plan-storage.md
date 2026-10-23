@@ -1,7 +1,7 @@
 # File storage (`Monk::Storage`): implementation plan
 
 Status: draft 2026-10-07, not started.
-Companion record: [`adr/0016-storage-s3-compatible-direct-upload.md`](adr/0016-storage-s3-compatible-direct-upload.md)
+Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
 
@@ -27,7 +27,8 @@ lib/monk/storage/backends/file.rb   # Data: root, secret
 lib/monk/storage/backends/s3.rb     # Data: bucket, endpoint, region, access_key, secret_key, path_style
 lib/monk/storage/sig_v4.rb          # header signing + query presigning, pure functions
 lib/monk/storage/token.rb           # file backend's HMAC tokens for /_monk/storage/:token
-lib/monk/templates/storage/...      # monk new --storage
+lib/monk/generators/storage.rb      # monk add storage
+lib/monk/templates/storage/...
 docs/guides/storage.md
 test/storage_*_test.rb
 ```
@@ -99,7 +100,7 @@ These fill gaps the ADR leaves open. Each can still change in review.
    `nil` unless the backend is `file://` and the path starts with
    `/_monk/storage/`, and it does nothing at all unless `monk/storage` is
    loaded (a `defined?` check, leaving `Base` without a hard dependency).
-   ADR 0016 was amended to match on 2026-10-07.
+   ADR 0018 was amended to match on 2026-10-07.
 8. **Tokens for the file backend** are
    `base64url(JSON payload) + "." + base64url(HMAC-SHA256)`, with the
    payload `{m: "GET"|"PUT", k: key, e: expires_at, l: length, t: type}`.
@@ -145,7 +146,7 @@ These fill gaps the ADR leaves open. Each can still change in review.
     (monk_talk) store ciphertext as `application/octet-stream` and skip it.
     Separately, the file backend's `GET /_monk/storage/:token` answers
     `Range` with `206` and `Content-Range`, as a bucket does, because Safari
-    won't play `<audio>`/`<video>` without it. ADR 0016 was amended to
+    won't play `<audio>`/`<video>` without it. ADR 0018 was amended to
     match on 2026-10-07.
 13. **Logging.** Each backend call writes one `Monk::Log.info` line
     (`[storage] put key=… bytes=… 23ms`). URLs, signatures and tokens are
@@ -250,35 +251,58 @@ The results go into the ADR's Open items, and the guide uses only what
 passed. A failure moves to the fallback the ADR names for that item, and
 this plan gets a new phase for it.
 
-### Phase 8: `monk new --storage`
+### Phase 8: `monk add storage`
 
-How every opt-in flag scaffolds is going to be reviewed in a separate
-session, possibly moving to generator scripts. If that happens first,
-this phase follows the outcome. What it generates stays the same: config
-plus a demo flow, with no migration and no JS.
+A generator of its own (`lib/monk/generators/storage.rb`), built like
+`mail`'s under ADR 0017: it only creates files and appends lines. What
+it writes is what was settled on 2026-10-07: config and the upload
+flow, with no migration and no JS. The flow comes as commented examples, not
+as live routes, because ADR 0017 gives only `live` a demo, and a live
+`/media` route would have no access check.
 
-- `templates/storage/config/storage.rb`: `require "monk/storage"` and
-  `configure` (decision 1). `wire_load!` requires it after `settings`.
-- `.env.example` / `.env.development` / `.env.test`: commented
-  `STORAGE_URL` and `STORAGE_SECRET` lines. `/storage/` goes in both
-  `.gitignore` and `.dockerignore`.
-- Demo routes added after the same anchor in `app/app.rb` as `--jobs`'s
-  route, and **defined only in development** (`if Monk.env.development?`),
-  so a forgotten demo never reaches production. They can be driven with
+- `installed_if "config/storage.rb"`, no `depends_on`: the file backend
+  needs no service.
+- `templates/storage/config/storage.rb` (`role: :wiring`):
+  `require "monk/storage"` and `configure` (decision 1). The static
+  `config/load.rb` already requires it, after `live`.
+- No `.env` / `.env.test` lines: an unset `STORAGE_URL` already gives
+  `file://storage/<env>` (decision 1), so tests never touch
+  development's files. `env :example, commented: true`: an S3
+  `STORAGE_URL`, and `STORAGE_SECRET` for `file://` on a server.
+  `ignore "/storage/"` goes in `.gitignore` and `.dockerignore`.
+- `templates/storage/app/routes/storage.rb` (`role: :example`), reopening
+  `class App`, with the flow as commented blocks that can be driven with
   `curl`, without any JavaScript:
-  `POST /uploads` (`presigned_put` on `tmp/`), the `curl -X PUT`,
-  `POST /uploads/confirm` (head, sniff, copy, then delete, in the order
-  from decision 5) and `GET /media/*key` (302 to `url`). A comment says
-  that `/media` has no access check and must be replaced by a record
-  lookup in a real app.
-- No migration and no JS are generated. The guide carries them as
-  examples to copy: an `attachments` SQL table (`.up.sql`/`.down.sql`),
-  upload JS with `fetch`, and a `/media/:id` route with an access check.
-  They depend on the app, and monk_talk's (encrypted in the browser) would
-  differ anyway.
-- Tests in `scaffold_test.rb`: the file list, the wiring, the demo routes
-  missing outside development, and the generated app booting and running
-  the demo flow against the file backend.
+  - `# monk:example storage-upload`: `POST /uploads` (`presigned_put` on
+    `tmp/`), then the `curl -X PUT` in a comment;
+  - `# monk:example storage-confirm`: `POST /uploads/confirm` (head,
+    sniff, copy, then delete, in the order from decision 5);
+  - `# monk:example storage-download`: `GET /media/*key` (302 to `url`),
+    with a comment that it has no access check and must become a record
+    lookup in a real app.
+- `templates/storage/test/storage_test.rb` (`role: :test`): the wiring
+  proved against the file backend: a `put`, `head` and `get` of a key,
+  and a signed link that answers 200.
+- `setup_section "storage/setup.md"` (the file backend in development,
+  pointing at the guide for a bucket) and `agents_section
+  "storage/agents.md"` (Where, Main calls, Test, Pitfalls, Examples: keys
+  under `tmp/` until confirmed, copy before delete, no multipart in a
+  worker Ractor).
+- `set_before_production "STORAGE_URL"` (an S3 bucket; `file://` only on
+  one server with a volume) and `"STORAGE_SECRET"` (only with `file://`:
+  signs its links).
+- No `service`: development and tests use `file://`. Checking a real
+  bucket (access, CORS for `PUBLIC_URL`) is the environment check's job
+  on the roadmap, not the generator's.
+- No migration and no JS. The guide carries them as examples to copy: an
+  `attachments` SQL table (`.up.sql`/`.down.sql`), upload JS with
+  `fetch`, and a `/media/:id` route with an access check. They depend on
+  the app, and an app that encrypts in the browser would differ anyway.
+- Tests: `test/generators/storage_test.rb` (the files, env lines, ignore
+  lines, running it twice is a no-op, `--json` output), the three examples
+  added to `examples_test.rb` (uncommented, booted, and the full upload →
+  confirm → download flow run against the file backend), and `storage`
+  added to `combinations_test.rb`.
 
 ### Phase 9: docs
 
