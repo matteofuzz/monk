@@ -12,6 +12,7 @@ require_relative "storage/sig_v4"
 require_relative "storage/backends/file"
 require_relative "storage/backends/s3"
 require_relative "storage/url"
+require_relative "storage/sniff"
 
 module Monk
   # Storing the files users send. Opt-in: require "monk/storage"

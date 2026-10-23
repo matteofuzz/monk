@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 to 5 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 to 6 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -146,23 +146,28 @@ These fill gaps the ADR leaves open. Each can still change in review.
     byte offsets: a `Range:` header on S3, a slice of the file on disk.
     A range that ends past the object gives what's there, and one that
     starts past it gives `""` (S3 answers 416, which the S3 backend maps
-    to `""`), so a confirm route can read the first 16 bytes of any
+    to `""`), so a confirm route can read the first 64 bytes of any
     upload, even an empty one. `head`'s `etag` is the MD5 in hex without
     the quotes S3 puts around it.
-    `Sniff.content_type(bytes)` reads the first 16 bytes and returns one of
+    `Sniff.content_type(bytes)` reads the first 64 bytes (`Sniff::RANGE`,
+    0..63: an Ogg page header is 27 bytes plus its segment table, so
+    `OpusHead` starts at byte 28 and 16 bytes can't see it) and returns
+    one of
     `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `audio/ogg` (an
     `OggS` page with an `OpusHead`), `application/pdf`, or `nil`.
     `Sniff.refuse_svg!(bytes)` raises `UnsafeContentError` if it finds `<svg`
-    or `<?xml` near the start. At confirm the app reads those bytes with
-    `get(key, range: 0..15)`, so the whole file is never downloaded. The
-    type check is defence in depth: the served `Content-Type` is the one
-    the app signed into `presigned_put` from its allowed list. The check
+    or `<?xml`, in any case, in those same 64 bytes (not further, so XMP
+    metadata inside a JPEG or PDF doesn't trip it). At confirm the app
+    reads those bytes with `get(key, range: Sniff::RANGE)`, so the whole
+    file is never downloaded. The type check is defence in depth: the
+    served `Content-Type` is the one the app signed into `presigned_put`
+    from its allowed list. The check
     catches mislabelled plain files. Apps that encrypt in the browser
     (monk_talk) store ciphertext as `application/octet-stream` and skip it.
     Separately, the file backend's `GET /_monk/storage/:token` answers
     `Range` with `206` and `Content-Range`, as a bucket does, because Safari
     won't play `<audio>`/`<video>` without it. ADR 0018 was amended to
-    match on 2026-10-07.
+    match on 2026-10-07, and for the 64-byte read on 2026-10-23.
 13. **Logging.** Each backend call writes one `Monk::Log.info` line
     (`[storage] put key=… bytes=… 23ms`). URLs, signatures and tokens are
     never logged, and `inspect` on a backend redacts its secrets, as
@@ -263,7 +268,10 @@ These fill gaps the ADR leaves open. Each can still change in review.
 ### Phase 6: content sniffing
 
 - `sniff.rb` (decision 12), with a small fixture of first bytes per type,
-  plus SVG and HTML samples.
+  plus SVG and HTML samples. Done: `test/storage_sniff_test.rb` builds
+  the first bytes of each type inline (an Ogg/Opus first page per RFC 7845,
+  also with a longer segment table), and checks a Vorbis stream, XMP past
+  byte 64, and a call from a worker Ractor.
 
 ### Phase 7: verifying the four open items on Hetzner (manual, before the S3 backend ships)
 
