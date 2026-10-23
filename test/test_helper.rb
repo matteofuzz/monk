@@ -5,6 +5,7 @@ require "minitest/autorun"
 require "stringio"
 require "tmpdir"
 require "fileutils"
+require "open3"
 require "monk"
 
 module EnvHelper
@@ -18,6 +19,37 @@ module EnvHelper
 end
 
 Minitest::Test.include(EnvHelper)
+
+# Monk.freeze! (and Monk.boot) keeps the MONK_ENV it saw, so a test that
+# freezes under with_monk_env("development") and doesn't reset Settings
+# would leave Monk.env reading "development" for whichever test runs
+# next. Every test starts from unfrozen Settings instead, reading
+# MONK_ENV (test) live.
+module FreshSettings
+  def before_setup
+    Monk::Settings.reset!
+    super
+  end
+end
+
+Minitest::Test.include(FreshSettings)
+
+# Monk.boot prints its banner, and an app frozen in development echoes
+# each request line, to $stdout; tests swallow both so they don't land in
+# the suite's output. Each returns the block's (or boot's) value.
+module Quietly
+  def quietly
+    result = nil
+    capture_io { result = yield }
+    result
+  end
+
+  def boot_quietly(app)
+    quietly { Monk.boot(app) }
+  end
+end
+
+Minitest::Test.include(Quietly)
 
 # Shared by views_test.rb and assets_test.rb: a throwaway views/ or
 # public/ root on disk, torn down after the block, with the global
@@ -114,6 +146,107 @@ end
 
 Minitest::Test.include(ViewTestHelpers)
 
+# Shared by the generator tests (test/generators/): an app made the way
+# `monk new shop --with ...` makes it, in a temp directory, and its own
+# test suite run in a fresh Ruby on Monk's bundle (the app's Gemfile
+# would fetch monkrb from rubygems.org).
+module GeneratorTestHelpers
+  NOW = Time.utc(2026, 10, 8, 14, 30, 0)
+
+  def with_new_app(*modules, options: {})
+    Dir.mktmpdir("monk-generated") do |tmp|
+      dest = File.join(tmp, "shop")
+      FileUtils.mkdir_p(dest)
+      result = add_modules(dest, :base, *modules, options: options)
+      assert_equal :ok, result.status, result.to_text
+      yield dest, result
+    end
+  end
+
+  def add_modules(dest, *modules, options: {}, now: NOW, dry_run: false)
+    require "monk/generators"
+    Monk::Generator.registry.add(dest, modules, options: options, now: now, dry_run: dry_run)
+  end
+
+  def run_generated_tests(dest, env = {})
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
+    script = %(Dir["test/**/*_test.rb"].each { |file| require File.expand_path(file) })
+    Open3.capture2e(env, RbConfig.ruby, "-rbundler/setup", "-Itest", "-e", script, chdir: dest)
+  end
+
+  def assert_generated_tests_pass(dest, env = {})
+    out, status = run_generated_tests(dest, env)
+    assert status.success?, out
+    assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, out)
+  end
+
+  # A fresh database for one generated app (dropped afterwards), and the
+  # DB_* env pointing at it -- passed to a generated app's processes, it
+  # wins over the app's own .env files. Needs PersistenceTestHelpers.
+  def with_generated_database
+    skip_unless_postgres_available
+    name = "monk_generated_#{Process.pid}_#{rand(1_000_000)}"
+    admin { |conn| conn.exec(%(CREATE DATABASE "#{name}")) }
+    opts = pg_test_opts
+    yield({ "DB_HOST" => opts[:host], "DB_PORT" => opts[:port].to_s, "DB_USER" => opts[:user],
+            "DB_PASSWORD" => opts[:password], "DB_NAME" => name, })
+  ensure
+    admin { |conn| conn.exec(%(DROP DATABASE IF EXISTS "#{name}" WITH (FORCE))) } if name
+  end
+
+  # Runs a generated app's bin/ script, the way a developer runs it.
+  def run_generated_script(dest, script, env = {}, *args)
+    env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
+    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *args, chdir: dest)
+  end
+
+  def generated(dest, path) = File.read(File.join(dest, path))
+
+  def template(path)
+    require "monk/generator"
+    File.read(File.join(Monk::Generator::TEMPLATES_DIR, path))
+  end
+
+  def example_files(dest)
+    Dir.glob("{app,config}/**/*.rb", base: dest).select { |path| generated(dest, path).include?("monk:example") }
+  end
+
+  def example_tags(dest)
+    example_files(dest).flat_map { |path| generated(dest, path).scan(/#\s*monk:example\s+(\S+)/).flatten }.uniq
+  end
+
+  # Inside each block, "# code" becomes "code" and "# # note" stays a
+  # comment, "# note"; the marker lines stay as they are.
+  def uncomment_examples(dest)
+    example_files(dest).each do |path|
+      inside = false
+      lines = generated(dest, path).lines.map do |line|
+        if line.match?(/#\s*monk:example\s/)
+          inside = true
+          line
+        elsif inside && line.strip == "# monk:end"
+          inside = false
+          line
+        elsif inside
+          line.sub(/\A(\s*)# ?/, '\1')
+        else
+          line
+        end
+      end
+      File.write(File.join(dest, path), lines.join)
+    end
+  end
+
+  private
+
+  def admin(&)
+    conn = PG.connect(**pg_test_opts)
+    yield conn
+  ensure
+    conn&.close
+  end
+end
+
 # Shared by tests that need a real Postgres connection (persistence_*_test.rb).
 # Not included globally -- `include PersistenceTestHelpers` where needed.
 module PersistenceTestHelpers
@@ -164,6 +297,27 @@ module PersistenceTestHelpers
 
     conn.exec("DROP TABLE #{table}#{" CASCADE" if cascade}")
   end
+
+  # Drops a backend the way a Postgres restart does (a FATAL, then the
+  # socket closes), from a connection of its own. pg_terminate_backend
+  # returns before the client's socket is sure to be readable, so this
+  # waits until the backend has left pg_stat_activity: a checkout
+  # straight after it could still see a healthy socket, and the test
+  # would flake.
+  def terminate_backend(pid)
+    admin = PG.connect(**pg_test_opts)
+    admin.exec_params("SELECT pg_terminate_backend($1)", [pid])
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until admin.exec_params("SELECT 1 FROM pg_stat_activity WHERE pid = $1", [pid]).ntuples.zero?
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        raise "backend #{pid} still running 5s after pg_terminate_backend"
+      end
+
+      sleep 0.01
+    end
+  ensure
+    admin&.finish
+  end
 end
 
 # Shared by tests that need a real Redis connection
@@ -212,12 +366,20 @@ module WebSocketTestHelpers
   end
 
   def handshake!(socket, extra_headers: {})
+    socket.write(handshake_request(extra_headers: extra_headers))
+    read_response_head(socket)
+  end
+
+  def handshake_request(extra_headers: {})
     request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
       "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
     extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
     request << "\r\n"
-    socket.write(request)
+  end
 
+  # The response's status line and headers, or nil if the server closed
+  # the socket first.
+  def read_response_head(socket)
     response = +""
     until response.end_with?("\r\n\r\n")
       byte = socket.read(1)
@@ -300,6 +462,15 @@ module AuthTestHelpers
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       SQL
+      # As in create_login_requests (auth's template migrations;
+      # test/auth_schema_test.rb checks those).
+      conn.exec(<<~SQL)
+        CREATE TABLE login_requests (
+          email TEXT PRIMARY KEY,
+          requested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      SQL
+      conn.exec("CREATE INDEX sessions_subject ON sessions (subject)")
     end
     Monk::Auth.configure(
       db_name: db_name, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
@@ -308,6 +479,7 @@ module AuthTestHelpers
   end
 
   def drop_auth_tables(conn)
+    drop_table_if_exists(conn, "login_requests")
     drop_table_if_exists(conn, "sessions")
     drop_table_if_exists(conn, "login_tokens")
   end
@@ -327,7 +499,7 @@ module JobsTestHelpers
   end
 
   def drop_jobs_tables(conn)
-    %w[monk_job_payloads monk_jobs monk_processes schema_migrations].each do |table|
+    %w[monk_job_payloads monk_jobs monk_processes monk_recurring_tasks schema_migrations].each do |table|
       drop_table_if_exists(conn, table, cascade: true)
     end
   end

@@ -40,20 +40,64 @@ module Monk
       # under true, and to an anonymous connection that sends an Origin,
       # since only a browser does.
       #
+      # db_pool: (a pool name, docs/history/plan-pg-pool.md) runs those
+      # Monk::Auth.verify calls -- the handshake's and reverify_interval's
+      # -- in that Monk::Persistence::Pg pool instead of in the socket's
+      # own Ractor. Without it, each socket's Ractor opens a connection of
+      # its own on the first verify and holds it while the socket is open:
+      # one Postgres connection per open page. With it, the server holds
+      # the pool's. Requires authenticate:, and the pool started
+      # (start_pools!) before the server.
+      #
       # max_payload_size: (bytes) -- see Connection::DEFAULT_MAX_PAYLOAD_SIZE
       # for what it guards against (gap 5). Unlike ping_interval:/
       # reverify_interval:, always on: this is insurance against a
       # hostile client on a public endpoint, not an opt-in behavior
       # change, so a server that doesn't mention it still gets the
       # default cap rather than no cap at all.
+      #
+      # max_handshakes: caps the connections still in their handshake (the
+      # HTTP upgrade and, with authenticate:, verifying the session). At the
+      # cap the accept loop stops accepting until one finishes, and new
+      # connects wait in the kernel's listen backlog. Without it, a burst
+      # past what the process can verify (a restart's reconnect wave) starts
+      # every handshake at once, fills db_pool:'s queue, and ends with most
+      # of them timing out instead of the rest queueing
+      # (docs/plan-ws-connect-ceiling.md, item 1). Kept well under the
+      # pool's queue (1,000 by default), so a full cap can't overfill it.
+      # Always on, like max_payload_size:.
+      #
+      # handshake_timeout: (seconds) bounds the whole handshake, from
+      # accept to the 101, and Handshake::MAX_REQUEST_SIZE its request; a
+      # client past the deadline is dropped, one past the size gets a 431.
+      # Without them, a socket that connects and sends nothing holds a
+      # max_handshakes: slot forever, so a few hundred of them would shut
+      # the server, and a request that never ends grows without limit
+      # (item 2). Off once the 101 is written: an idle socket is the
+      # handler's business, not the handshake's.
+      #
+      # reuse_port: true lets several processes listen on the one port, and
+      # on Linux the kernel spreads connects across them. Each has its own
+      # heap, so its own GC pauses, over a share of the sockets: on Ruby 4.0
+      # K processes cut what GC costs a connect by about K squared
+      # (item 8). A broadcast reaches all of them through the fan-out.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
+
+      DEFAULT_MAX_HANDSHAKES = 128
+      DEFAULT_HANDSHAKE_TIMEOUT = 10
+
+      # What the handshake's verify returns when it raised instead of
+      # answering (the pool full or timed out, the database down): neither
+      # a subject nor "no session", so the connection gets a 503.
+      VERIFY_FAILED = Object.new.freeze
 
       # The signals #run treats as "stop": Ctrl+C and TERM.
       STOP_SIGNALS = [Signal.list.fetch("INT"), Signal.list.fetch("TERM")].freeze
 
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
-        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
+        reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
+        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, reuse_port: false
       )
         if ping_interval && !ping_interval.positive?
           raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
@@ -70,8 +114,18 @@ module Monk
           raise ArgumentError, "reverify_interval requires authenticate: true or :optional" unless authenticate
         end
 
+        raise ArgumentError, "db_pool requires authenticate: true or :optional" if db_pool && !authenticate
+
         unless max_payload_size.positive?
           raise ArgumentError, "max_payload_size must be positive, got #{max_payload_size.inspect}"
+        end
+
+        unless max_handshakes.is_a?(Integer) && max_handshakes.positive?
+          raise ArgumentError, "max_handshakes must be a positive Integer, got #{max_handshakes.inspect}"
+        end
+
+        unless handshake_timeout.is_a?(Numeric) && handshake_timeout.positive?
+          raise ArgumentError, "handshake_timeout must be positive, got #{handshake_timeout.inspect}"
         end
 
         if authenticate
@@ -91,16 +145,48 @@ module Monk
           Monk.freeze!
         end
 
-        @tcp_server = TCPServer.new(bind, port)
+        # Raises now, not on the first connection, if the pool was never
+        # declared or isn't started in this process.
+        Monk::Persistence::Pg.pool(db_pool) if db_pool
+
+        @tcp_server = reuse_port ? Server.listen_reusing_port(bind, port) : TCPServer.new(bind, port)
         @allowed_origins = allowed_origins ? Ractor.make_shareable(allowed_origins.dup) : nil
         @authenticate = authenticate
         @ping_interval = ping_interval
         @reverify_interval = reverify_interval
         @max_payload_size = max_payload_size
+        @db_pool = db_pool
+        @max_handshakes = max_handshakes
+        @handshake_timeout = handshake_timeout
       end
 
       def port
         @tcp_server.addr[1]
+      end
+
+      # reuse_port:, for several processes on one port (bin/websocket_server's
+      # WS_PROCESSES): SO_REUSEPORT has to be set before the bind, which
+      # TCPServer.new does at once. On Linux the kernel spreads connects
+      # across the processes listening.
+      def self.listen_reusing_port(bind, port)
+        unless defined?(Socket::SO_REUSEPORT)
+          raise ArgumentError, "reuse_port: true needs SO_REUSEPORT, which this platform doesn't have"
+        end
+
+        address = Addrinfo.tcp(bind, port)
+        socket = Socket.new(address.afamily, :STREAM)
+        socket.setsockopt(:SOCKET, :REUSEADDR, true)
+        socket.setsockopt(:SOCKET, :REUSEPORT, true)
+        socket.bind(address)
+        socket.listen(Socket::SOMAXCONN)
+        # A TCPServer on the same descriptor, so accept returns a TCPSocket
+        # as without reuse_port:.
+        socket.autoclose = false
+        TCPServer.for_fd(socket.fileno)
+      rescue StandardError
+        socket&.autoclose = true
+        socket&.close
+        raise
       end
 
       def run(&block)
@@ -114,15 +200,30 @@ module Monk
               "top-level block -- mirrors StateRactor#update's own constraint)"
           end
 
+        # One slot a handshake in flight (max_handshakes:). Each connection
+        # Ractor sends to handshake_done once its handshake is over, however
+        # it ended, and the releaser thread frees a slot for it.
+        slots = Thread::SizedQueue.new(@max_handshakes)
+        handshake_done = Ractor::Port.new
+        releaser = Thread.new do
+          loop do
+            handshake_done.receive
+            slots.pop
+          end
+        end
+
         loop do
+          slots.push(true)
           socket = @tcp_server.accept
           ractor = Ractor.new(
-            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size|
+            shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
+            @db_pool, handshake_done, @handshake_timeout
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done, timeout|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
-              authenticate: authenticate, allowed_origins: origins,
-              ping_interval: ping_interval, reverify_interval: reverify_interval, max_payload_size: max_payload_size
+              authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
+              reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool,
+              handshake_done: done, handshake_timeout: timeout
             )
           end
           ractor.send(socket, move: true)
@@ -144,45 +245,63 @@ module Monk
         # different failure point in this same shutdown -- a live
         # connection's cleanup racing the registry Ractor's teardown.
         @tcp_server.close
+      ensure
+        releaser&.kill
+        handshake_done&.close
       end
 
       # Runs entirely inside the connection's own dedicated Ractor
       # (docs/history/plan-websocket.md Decision 3) -- a class method, not an instance
       # method, since the Server instance itself (holding a live
       # TCPServer) is never Ractor-shareable and can't cross into here.
+      #
+      # handshake_done: is #run's port for max_handshakes:, told once the
+      # handshake is over: the 101 written, or the connection refused or
+      # dropped before it.
       def self.serve(
         socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
-        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE
+        max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil, handshake_done: nil,
+        handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT
       )
-        request = read_handshake_request(socket)
-        return socket.close unless request
+        # A `return` in here (a refused handshake) ends serve, and its
+        # ensure frees the slot.
+        credential, subject = with_deadline(socket, handshake_timeout) do
+          request = read_handshake_request(socket)
+          return unless request
+          return socket.write("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n") if request == :too_large
 
-        headers =
-          begin
-            Handshake.parse_request(request)
-          rescue Monk::WebSocket::HandshakeError
-            return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+          headers =
+            begin
+              Handshake.parse_request(request)
+            rescue Monk::WebSocket::HandshakeError
+              return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+            end
+
+          subject = nil
+          credential = Handshake.credential_from(headers) if authenticate
+          case authenticate
+          when true
+            subject = authenticate!(socket, headers, credential, allowed_origins, db_pool)
+            return unless subject
+          when :optional
+            return unless origin_allowed_for_optional?(socket, headers, credential, allowed_origins)
+
+            subject = identify(credential, db_pool)
+            # Not anonymous: that would quietly sign the user out of their
+            # topics until the next reconnect.
+            return unavailable!(socket, headers) if subject.equal?(VERIFY_FAILED)
           end
 
-        subject = nil
-        case authenticate
-        when true
-          subject = authenticate!(socket, headers, allowed_origins)
-          return unless subject
-        when :optional
-          return unless origin_allowed_for_optional?(socket, headers, allowed_origins)
-
-          subject = identify(headers)
+          socket.write(Handshake.response(headers))
+          [credential, subject]
         end
-
-        socket.write(Handshake.response_for(request))
+        handshake_done = handshake_over(handshake_done)
 
         connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
         connection.start_heartbeat(ping_interval) if ping_interval
-        reverify_thread =
-          if reverify_interval && subject
-            start_reverify(connection, Handshake.credential_from(headers)[:token], reverify_interval)
-          end
+        if reverify_interval && subject
+          reverify_thread = start_reverify(connection, credential[:token], reverify_interval, db_pool)
+        end
         begin
           block.call(connection)
         rescue StandardError
@@ -192,26 +311,73 @@ module Monk
           # not re-raised -- there's no caller left to hand it to once
           # we're inside this connection's own dedicated Ractor.
         end
+      rescue IOError, SystemCallError
+        # The client went away, or was shut out by the deadline, before
+        # the handshake was over: nothing to answer.
       ensure
         # Runs on every exit path -- normal completion, the close
         # handshake, and a crashed handler alike -- so a subscribed
         # connection never leaks a stale registry entry (step 17), a
         # heartbeat thread, or a reverify thread outliving its socket.
+        # A handshake that never reached its 101 still frees its slot.
+        handshake_over(handshake_done)
         reverify_thread&.kill
         connection&.unsubscribe!
         connection&.stop_heartbeat!
         socket.close
+        disconnect_all
       end
+
+      # Runs the block with a watchdog that shuts the socket down once
+      # `seconds` have passed, which ends a read or write blocked on it (a
+      # read returns nil, a write raises). Not IO#timeout=: on Ruby 4.0,
+      # once an IO#timeout has fired in one Ractor, reads in Ractors made
+      # after it can raise IO::TimeoutError on sockets with no timeout set.
+      def self.with_deadline(socket, seconds)
+        watchdog = Thread.new do
+          sleep seconds
+          socket.shutdown(:RDWR)
+        rescue IOError, SystemCallError
+          # Already closed or gone.
+        end
+        yield
+      ensure
+        watchdog&.kill
+      end
+      private_class_method :with_deadline
+
+      # Frees this connection's max_handshakes: slot in #run; returns nil,
+      # so serve can mark it freed. The port is gone once #run has
+      # returned, and then there's no slot to free.
+      def self.handshake_over(handshake_done)
+        handshake_done&.send(true)
+        nil
+      rescue Ractor::ClosedError
+        nil
+      end
+      private_class_method :handshake_over
+
+      # Closes the connections this socket's Ractor opened: its database
+      # connection (verifying the session without db_pool:, or a block
+      # that queries) and a fan-out's publisher (a block that broadcasts).
+      # Left alone, each would stay open until the garbage collector
+      # happened to run, which a mostly idle server may not do for a long
+      # time. The fan-outs are opt-in, so each is closed only if loaded.
+      def self.disconnect_all
+        Monk::Persistence.disconnect_all
+        PgFanout.disconnect_publisher if defined?(PgFanout)
+        RedisFanout.disconnect_publisher if defined?(RedisFanout)
+      end
+      private_class_method :disconnect_all
 
       # docs/history/plan-websocket.md steps 22-23: the Origin allowlist check runs
       # before Monk::Auth.verify, and only for a cookie-derived
       # credential -- a Bearer connection has no Origin header to check
       # by construction (mirrors require_csrf!'s own Bearer exemption in
       # docs/history/plan-auth.md). Returns the verified subject, or nil after writing
-      # the appropriate 403/401 response itself.
-      def self.authenticate!(socket, headers, allowed_origins)
-        credential = Handshake.credential_from(headers)
-
+      # the appropriate 403/401 response itself -- or 503, when verify
+      # couldn't answer (docs/plan-ws-connect-ceiling.md, item 3).
+      def self.authenticate!(socket, headers, credential, allowed_origins, db_pool)
         if credential&.fetch(:via) == :cookie && allowed_origins
           origin = headers["origin"]
           unless origin && allowed_origins.include?(origin)
@@ -220,11 +386,25 @@ module Monk
           end
         end
 
-        subject = credential && Monk::Auth.verify(credential[:token])
+        subject = credential && handshake_verify(credential[:token], db_pool)
+        return unavailable!(socket, headers) if subject.equal?(VERIFY_FAILED)
+
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n") unless subject
         subject
       end
       private_class_method :authenticate!
+
+      # A handshake whose verify couldn't answer: 503, and nil. Browser JS
+      # never sees a failed handshake's status or headers (only onclose,
+      # 1006), so Retry-After is for the other clients, the ones without
+      # an Origin, and jittered, so a wave of them doesn't come back as
+      # one.
+      def self.unavailable!(socket, headers)
+        retry_after = headers["origin"] ? "" : "Retry-After: #{rand(1..10)}\r\n"
+        socket.write("HTTP/1.1 503 Service Unavailable\r\n#{retry_after}\r\n")
+        nil
+      end
+      private_class_method :unavailable!
 
       # authenticate: :optional's Origin check, before anything is verified.
       # A Bearer connection is exempt, as under true. A cookie needs an
@@ -233,26 +413,40 @@ module Monk
       # stops another site's page from opening sockets here on its
       # visitors' behalf; one that sends none (not a browser) gets in.
       # Writes the 403 itself and returns false when refused.
-      def self.origin_allowed_for_optional?(socket, headers, allowed_origins)
+      def self.origin_allowed_for_optional?(socket, headers, credential, allowed_origins)
         return true unless allowed_origins
 
-        credential = Handshake.credential_from(headers)
         return true if credential&.fetch(:via) == :bearer
 
         origin = headers["origin"]
-        allowed = credential ? origin && allowed_origins.include?(origin) : origin.nil? || allowed_origins.include?(origin)
+        # A cookie needs an allowed Origin; without one, only a non-browser
+        # client (no Origin at all) is let in.
+        allowed = origin.nil? ? !credential : allowed_origins.include?(origin)
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n") unless allowed
         allowed
       end
       private_class_method :origin_allowed_for_optional?
 
       # The subject of a valid session, or nil -- no credential, or one
-      # Monk::Auth no longer accepts, both mean anonymous under :optional.
-      def self.identify(headers)
-        credential = Handshake.credential_from(headers)
-        credential && Monk::Auth.verify(credential[:token])
+      # Monk::Auth no longer accepts, both mean anonymous under :optional --
+      # or VERIFY_FAILED.
+      def self.identify(credential, db_pool)
+        credential && handshake_verify(credential[:token], db_pool)
       end
       private_class_method :identify
+
+      # verify, or VERIFY_FAILED with one line on stderr if it raised:
+      # under a burst, a backtrace per refused connection buries the log.
+      # The message's first line only (a PG error adds the query and a
+      # caret), and not Kernel#warn, which -W0 silences.
+      def self.handshake_verify(raw_token, db_pool)
+        verify(raw_token, db_pool)
+      rescue StandardError => e
+        reason = e.message.lines.first&.chomp
+        $stderr.puts "monk-websocket: handshake refused with 503, verify failed: #{e.class}: #{reason}" # rubocop:disable Style/StderrPuts
+        VERIFY_FAILED
+      end
+      private_class_method :handshake_verify
 
       # Sleeps in `interval`-sized steps, re-running Monk::Auth.verify
       # against the same raw credential each time, until it comes back
@@ -263,11 +457,11 @@ module Monk
       # own Thread rather than blocking the handler's own read loop,
       # mirroring Connection#start_heartbeat's shape; killed from #serve's
       # ensure the same way.
-      def self.start_reverify(connection, raw_token, interval)
+      def self.start_reverify(connection, raw_token, interval, db_pool)
         Thread.new do
           loop do
             sleep interval
-            break unless Monk::Auth.verify(raw_token)
+            break unless verify(raw_token, db_pool)
           end
           connection.close(code: 1008, reason: "session no longer valid")
         rescue IOError, Errno::EPIPE, Errno::ECONNRESET
@@ -278,15 +472,26 @@ module Monk
       end
       private_class_method :start_reverify
 
-      def self.read_handshake_request(socket)
-        request = +""
-        until request.end_with?("\r\n\r\n")
-          chunk = socket.read(1)
-          return nil if chunk.nil?
+      # Monk::Auth.verify, here or in the db_pool: pool (Server.new).
+      def self.verify(raw_token, db_pool)
+        return Monk::Auth.verify(raw_token) unless db_pool
 
-          request << chunk
-        end
-        request
+        Monk::Persistence::Pg.pool(db_pool).call(Monk::Auth, :verify, raw_token)
+      end
+      private_class_method :verify
+
+      # The request head, nil if the client went away or was too slow, or
+      # :too_large past Handshake::MAX_REQUEST_SIZE.
+      #
+      # One String, read through the socket's own buffer: Connection's
+      # reads use that buffer after it, so a frame the client sent right
+      # behind its request isn't lost (a readpartial would take it into
+      # the request and drop it). A read(1) loop made a String a byte.
+      def self.read_handshake_request(socket)
+        request = socket.gets("\r\n\r\n", Handshake::MAX_REQUEST_SIZE)
+        return request if request&.end_with?("\r\n\r\n")
+
+        :too_large if request && request.bytesize >= Handshake::MAX_REQUEST_SIZE
       end
       private_class_method :read_handshake_request
     end

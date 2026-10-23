@@ -1,10 +1,16 @@
 module Monk
   module WebSocket
+    # Sent through a registered port instead of a payload: the socket
+    # behind it closes with this code and reason. Registry#close_all sends
+    # it; Connection's and Live::Session's relays act on it.
+    CloseRequest = Data.define(:code, :reason)
+
     # A dedicated Ractor holding the live set of connection handles keyed by
     # an app-assigned channel/subject -- mirrors StateRactor's shape
     # (docs/design/ractor.md): the mutable Hash stays hidden inside this one
-    # Ractor, and every call is a synchronous "ask" via a fresh
-    # Ractor::Port, so registration/broadcast can never race each other.
+    # Ractor, and every call is a synchronous "ask" answered on the
+    # caller's reply port, so registration/broadcast can never race each
+    # other.
     class Registry
       def initialize
         @ractor = Ractor.new do
@@ -19,6 +25,14 @@ module Monk
                 true
               when :unregister
                 keys[key].delete(arg)
+                true
+              when :register_many
+                # key is the Array of keys: a Live subscribe's topics in
+                # one ask, not one each.
+                key.each { |k| keys[k] << arg unless keys[k].include?(arg) }
+                true
+              when :unregister_many
+                key.each { |k| keys[k].delete(arg) }
                 true
               when :broadcast
                 # A port can be closed out from under this loop without
@@ -41,8 +55,25 @@ module Monk
                 true
               when :count
                 keys[key].size
+              when :close_all
+                # Once per port: a Live page holds one port for all its
+                # topics. Entries stay until each connection's own cleanup
+                # unregisters them, as on any other close.
+                ports = keys.values.flatten.uniq
+                ports.each do |port|
+                  port.send(arg)
+                rescue Ractor::ClosedError
+                  nil
+                end
+                ports.size
               end
-            reply_port.send(result)
+            begin
+              reply_port.send(result)
+            rescue Ractor::ClosedError
+              # The caller gave up on this ask (its thread was killed while
+              # it waited) and closed its port: nobody to answer, and no
+              # reason to end the registry for every other caller.
+            end
           end
         end
         freeze
@@ -56,6 +87,16 @@ module Monk
         ask(:unregister, key, port)
       end
 
+      # register for each of keys, in one ask: one message and one reply
+      # instead of one each (docs/plan-ws-connect-ceiling.md, item 5).
+      def register_many(keys, port)
+        ask(:register_many, keys, port)
+      end
+
+      def unregister_many(keys, port)
+        ask(:unregister_many, keys, port)
+      end
+
       def broadcast(key, payload)
         ask(:broadcast, key, payload)
       end
@@ -67,6 +108,14 @@ module Monk
         ask(:count, key, nil)
       end
 
+      # Closes every registered connection's socket with code and reason,
+      # so each client reconnects -- a fanout's subscriber does this after
+      # missing broadcasts, to make every page resync. Returns how many
+      # connections were asked to close.
+      def close_all(code, reason)
+        ask(:close_all, nil, Ractor.make_shareable(CloseRequest.new(code: code, reason: reason.to_s)))
+      end
+
       # Nothing to listen to: every broadcast reaching this registry comes
       # from this process. Here so a WS process calls #listen! the same
       # way whether it holds a Registry or a RedisFanout/PgFanout around
@@ -75,10 +124,20 @@ module Monk
 
       private
 
+      # An ask is synchronous, so a fiber has at most one outstanding: its
+      # reply port is made once and reused (a Port is an allocation and a
+      # message each), taken out of fiber storage while the ask is in
+      # flight. An ask cut short (the thread killed while it waits) closes
+      # the port instead of putting it back, so its late reply can't be
+      # read as the next ask's.
       def ask(op, key, arg)
-        reply_port = Ractor::Port.new
+        reply_port = Thread.current[:monk_registry_reply_port] || Ractor::Port.new
+        Thread.current[:monk_registry_reply_port] = nil
         @ractor.send([op, key, arg, reply_port])
-        reply_port.receive
+        result = reply_port.receive
+        Thread.current[:monk_registry_reply_port] = reply_port
+        reply_port = nil
+        result
       rescue Ractor::ClosedError
         # The registry Ractor itself can be gone by the time this runs --
         # e.g. process-wide shutdown (Ctrl+C) tearing down Ractors in

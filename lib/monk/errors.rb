@@ -31,10 +31,4 @@ module Monk
 
   class TemplateSyntaxError < StandardError
   end
-
-  class ScaffoldExistsError < StandardError
-  end
-
-  class AmbiguousLiveTransportError < StandardError
-  end
 end

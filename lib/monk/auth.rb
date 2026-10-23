@@ -1,5 +1,9 @@
 require "securerandom"
 require "digest"
+# Loaded here, at boot: left to Digest.const_missing it loads on the first
+# hash_token, and a Ractor hashing in parallel can catch it half-defined
+# (test/digest_preload_test.rb).
+require "digest/sha2"
 require "openssl"
 
 require_relative "freeze_hooks"
@@ -15,6 +19,34 @@ module Monk
   # persistence backend the app may not use (docs/design/auth-sessions.md).
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
+
+    # The login-email rate limit (docs/history/plan-auth-housekeeping.md decision
+    # 5): records a request unless one was recorded for the address less
+    # than $2 seconds ago. One statement, so racing requests for one
+    # address let exactly one through; a refused request changes nothing.
+    LOGIN_REQUEST_SQL = <<~SQL.freeze
+      INSERT INTO login_requests (email) VALUES ($1)
+      ON CONFLICT (email) DO UPDATE SET requested_at = now()
+        WHERE login_requests.requested_at < now() - $2::int * interval '1 second'
+      RETURNING 1
+    SQL
+
+    SWEEP_BATCH_SIZE = 10_000
+
+    # sweep!'s statements, one batch each. Tokens and sessions expire by
+    # the app's clock, as redeem and verify check them; login requests by
+    # the database's, as allow_login_request? does.
+    SWEEP_LOGIN_TOKENS_SQL = <<~SQL.freeze
+      DELETE FROM login_tokens WHERE id IN (SELECT id FROM login_tokens WHERE expires_at < $1 LIMIT $2)
+    SQL
+    SWEEP_SESSIONS_SQL = <<~SQL.freeze
+      DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < $1 LIMIT $2)
+    SQL
+    SWEEP_LOGIN_REQUESTS_SQL = <<~SQL.freeze
+      DELETE FROM login_requests WHERE email IN (
+        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second' LIMIT $2
+      )
+    SQL
 
     class << self
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
@@ -34,13 +66,20 @@ module Monk
         freeze_rqrcode!
       end
 
+      # callback_path: is where the app's own callback route redeems a
+      # token (GET "#{callback_path}/:token"). Monk doesn't define that
+      # route, but builds links to it: login_link below, and so
+      # Monk::Auth::SendLoginLink. login_request_interval: is the seconds
+      # allow_login_request? makes an address wait between login emails.
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil
+        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
       )
         config = {
           db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
+          callback_path: checked_callback_path(callback_path),
+          login_request_interval: checked_login_request_interval(login_request_interval),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -81,6 +120,48 @@ module Monk
         raw
       end
 
+      # The login-email rate limit, for the login route to check before it
+      # sends or enqueues the link: true, and recorded, if no link was
+      # requested for this address in the last login_request_interval
+      # seconds; false otherwise. Per address, across every process. The
+      # address is stripped and downcased for the limit only.
+      #
+      #   halt(429) unless Monk::Auth.allow_login_request?(email)
+      def allow_login_request?(email)
+        ensure_configured!
+        unless email.is_a?(String) && !email.strip.empty?
+          raise ArgumentError, "Monk::Auth.allow_login_request? needs an email address, got #{email.inspect}"
+        end
+
+        params = [email.strip.downcase, config[:login_request_interval]]
+        Monk::Persistence::Pg.checkout(config[:db_name]) { |c| c.exec_params(LOGIN_REQUEST_SQL, params).ntuples == 1 }
+      end
+
+      # Test-only: forgets every login request, so the next test can log in
+      # again at once. Refuses unless MONK_ENV is test.
+      def clear_login_requests!
+        unless Monk.env.test?
+          raise Monk::ClearLoginRequestsOutsideTestsError,
+            "Monk::Auth.clear_login_requests! lifts the login-email rate limit for every address, so it only " \
+            "runs with MONK_ENV=test (this is #{Monk.env})"
+        end
+
+        ensure_configured!
+        Monk::Persistence::Pg.checkout(config[:db_name]) { |c| c.exec("DELETE FROM login_requests") }
+        nil
+      end
+
+      # The magic link for a raw token: the app's public_url
+      # (config/settings.rb, a trusted origin -- never request headers like
+      # X-Forwarded-Host, which any direct client can spoof), then
+      # callback_path:, then the token.
+      #
+      #   Monk::Auth.login_link(token) # => "https://app.example/auth/callback/<token>"
+      def login_link(token)
+        ensure_configured!
+        "#{Monk::Settings[:public_url]}#{config[:callback_path]}/#{token}"
+      end
+
       # The single place an app's login-request handler calls to get a
       # magic link to its owner: uses the `deliver:` callable passed to
       # `configure` (e.g. wrapping a mailer or a provider's HTTP API) when
@@ -94,10 +175,8 @@ module Monk
       # that Monk::Mail exists (docs/adr/0012-minimal-built-in-mailer.md):
       # it's usually a one-line Monk::Mail.deliver, but can be any channel.
       #
-      # `link` is the app's own job to build (Monk doesn't own routing, so
-      # it can't know the callback path) -- from a trusted origin, e.g.
-      # Monk::Settings[:public_url], never from request headers like
-      # X-Forwarded-Proto/Host, which any direct client can spoof.
+      # `link` is usually login_link(token), above. An app may build its
+      # own instead, from a trusted origin, never from request headers.
       # `token` is passed through for a deliver: that wants it (an SMS
       # body instead of a link, say); most won't need it.
       def deliver_link(email:, link:, token: nil)
@@ -200,15 +279,28 @@ module Monk
         rows.size
       end
 
+      # Deletes expired login tokens and sessions, and login requests older
+      # than login_request_interval; returns how many of each. At most
+      # batch_size rows per statement, so a large backlog (the first sweep
+      # of an app that never swept) holds no lock for long. Run nightly by
+      # Monk::Auth::Sweep (docs/history/plan-auth-housekeeping.md decision 3).
       # Deliberately not grown onto Model: a `<` comparison is real
       # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
-      def sweep!
+      def sweep!(batch_size: SWEEP_BATCH_SIZE)
         ensure_configured!
+        unless batch_size.is_a?(Integer) && batch_size.positive?
+          raise ArgumentError, "batch_size: must be a positive Integer, got #{batch_size.inspect}"
+        end
+
         Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
           now = Time.now
-          login_tokens_deleted = conn.exec_params("DELETE FROM login_tokens WHERE expires_at < $1", [now]).cmd_tuples
-          sessions_deleted = conn.exec_params("DELETE FROM sessions WHERE expires_at < $1", [now]).cmd_tuples
-          { login_tokens: login_tokens_deleted, sessions: sessions_deleted }
+          {
+            login_tokens: delete_in_batches(conn, SWEEP_LOGIN_TOKENS_SQL, [now], batch_size),
+            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now], batch_size),
+            login_requests: delete_in_batches(
+              conn, SWEEP_LOGIN_REQUESTS_SQL, [config[:login_request_interval]], batch_size,
+            ),
+          }
         end
       end
 
@@ -252,6 +344,37 @@ module Monk
       def ensure_configured!
         raise Monk::AuthNotConfiguredError,
           "Monk::Auth is not configured -- call Monk::Auth.configure first" unless @config
+      end
+
+      # An absolute path, kept without a trailing slash so login_link
+      # adds exactly one before the token.
+      def checked_callback_path(path)
+        unless path.is_a?(String) && path.start_with?("/")
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(callback_path:) must be an absolute path like \"/auth/callback\", got #{path.inspect}"
+        end
+
+        path.chomp("/").freeze
+      end
+
+      # Runs a batched DELETE until one deletes less than a full batch; the
+      # batch size is its last parameter.
+      def delete_in_batches(conn, sql, params, batch_size)
+        total = 0
+        loop do
+          deleted = conn.exec_params(sql, params + [batch_size]).cmd_tuples
+          total += deleted
+          return total if deleted < batch_size
+        end
+      end
+
+      def checked_login_request_interval(seconds)
+        unless seconds.is_a?(Integer) && seconds.positive?
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(login_request_interval:) must be a positive Integer of seconds, got #{seconds.inspect}"
+        end
+
+        seconds
       end
 
       def hash_token(raw)
@@ -299,3 +422,8 @@ module Monk
     Monk.freeze_hooks << self
   end
 end
+
+# Monk::Auth::SendLoginLink, when jobs are loaded too -- either order works
+# (lib/monk/jobs.rb ends the same way, docs/adr/0017).
+require_relative "auth/send_login_link" if Monk.const_defined?(:Jobs)
+require_relative "auth/sweep" if Monk.const_defined?(:Jobs)

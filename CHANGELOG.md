@@ -4,6 +4,302 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.22.2 - 2026-10-22
+
+### Fixed
+
+- **A WebSocket handshake no longer dies with "Digest::Base cannot be
+  directly inherited in Ruby".** `require "digest"` loads
+  `Digest::SHA1` on first use, and a connection Ractor handshaking in
+  parallel with the first one could catch the class defined but not yet
+  set up. Two handshakes at once right after boot (a connect burst)
+  were enough. `Monk::WebSocket` now loads `digest/sha1` when it is
+  required, and `Monk::Auth` (login tokens) and `Monk::Assets`
+  (development ETags) load `digest/sha2` for the same race on
+  `Digest::SHA256` (`docs/plan-digest-preload.md`).
+
+## 0.22.1 - 2026-10-20
+
+### Added
+
+- **Several WebSocket processes on one port.** `Server.new(reuse_port:
+  true)` binds with `SO_REUSEPORT`, and the scaffold's
+  `bin/websocket_server` runs `WS_PROCESSES` processes (1 by default),
+  starting that many copies of itself through the new
+  `Monk::Bin.spawn_processes!` and passing `TERM`/`INT` on. Each has its
+  own heap and its own GC pauses over its share of the sockets, so on
+  Ruby 4.0 K processes take about K² times the connects a second
+  (`docs/guides/websocket.md`, "Several processes"; plan item 8). An
+  existing app copies the new script (`docs/guides/upgrading.md`,
+  0.22.1).
+
+### Fixed
+
+- **A WebSocket connect burst queues instead of collapsing.** The server
+  caps the handshakes in flight (`Server.new(max_handshakes:)`, 128 by
+  default); past the cap, connects wait in the kernel's listen backlog.
+  Before, every accepted socket started its handshake at once, and a
+  burst past what the process could verify (a restart's reconnect wave)
+  filled the `db_pool:` queue and timed most of them out
+  (`docs/plan-ws-connect-ceiling.md`, item 1).
+- **A WebSocket handshake has a deadline and a size limit.** A handshake
+  not over within `handshake_timeout:` (10 s by default) is dropped, and a request head past 16 KiB gets a
+  `431`. Before, a socket that connected and sent nothing held its
+  connection Ractor forever, and a request with no blank line grew
+  without limit (item 2).
+- **A WebSocket handshake whose session check fails is refused with
+  `503`**, and one line on stderr. Before, a `verify` that raised (the
+  `db_pool:` full or timed out, the database down) killed the
+  connection's Ractor with a backtrace and sent no response. Under
+  `authenticate: :optional` it is a `503` too, not an anonymous
+  connection. Clients without an `Origin` also get `Retry-After`
+  (item 3).
+
+### Changed
+
+- **A WebSocket handshake allocates less.** The request is read with one
+  `gets` instead of a String a byte, parsed once instead of twice, and
+  its credential worked out once instead of up to three times. Fewer
+  objects a connect means fewer GCs, which is what limits connects a
+  second once thousands of sockets are open (item 4).
+- **A Live subscribe is one registry ask, not one a topic.**
+  `Registry#register_many(keys, port)` and `#unregister_many` (on
+  `RedisFanout` and `PgFanout` too) take every key at once;
+  `Monk::Live`'s subscribe, unsubscribe and cleanup use them. Each fiber
+  also reuses one reply port for its asks instead of making one an ask,
+  and the registry survives answering an ask whose caller gave up
+  (item 5).
+- **`bin/websocket_server` runs with GC settings for many open sockets.**
+  It starts itself again, once at boot, with
+  `RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8` and
+  `_MAX_RATIO=0.9` (`Monk::Bin::WEBSOCKET_GC_ENV`, through the new
+  `Monk::Bin.boot_with_env!`), unless the environment sets them. On Ruby
+  4.0, with 15K sockets held, 6–30× fewer GCs and p99 to ready at
+  300 connects/s from 6.3 s to 1.2 s, for ~30% more memory. An existing
+  app adds one line (`docs/guides/upgrading.md`, 0.22.1) (item 7).
+  Restarting with the settings carries the warning level (`-W0`) over;
+  other flags given to `ruby` itself aren't (`RUBYOPT` is).
+
+## 0.22.0 - 2026-10-13
+
+### Added
+
+- **Recurring jobs.** `Monk::Jobs.recurring "purge_sessions",
+  PurgeSessions, cron: "0 3 * * *"`, declared in `config/recurring.rb`,
+  is enqueued by `bin/jobs` at each occurrence, once however many job
+  processes run. Five-field cron in UTC, plus `@hourly` to `@yearly`. A
+  new task first runs at its next occurrence, missed occurrences run
+  once, and `skip_if_pending: true` skips a run while the previous one
+  hasn't finished. `Monk::Jobs.run_scheduler!(at:)` runs the schedule in
+  tests. One checkpoint row per task in the new `monk_recurring_tasks`
+  table (ADR 0016, `docs/guides/jobs.md`, "Recurring jobs").
+  `monk add jobs` writes `config/recurring.rb` with a commented example
+  and the table's migration, and the base `config/load.rb` loads
+  `config/recurring.rb` after `app/`. An app that already has jobs:
+  `docs/guides/upgrading.md`, 0.22; until then its tests that call
+  `Monk::Jobs.clear!` fail on the missing table.
+- **A login-email rate limit in `Monk::Auth`.**
+  `Monk::Auth.allow_login_request?(email)` allows one login email per
+  address per `login_request_interval:` (60 seconds), counted in a new
+  `login_requests` table, so across every process. The scaffolded login
+  routes use it instead of the per-process `RateLimiter`.
+  `Monk::Auth.clear_login_requests!` resets it in tests.
+- **Auth cleans up after itself.** `Monk::Auth.sweep!` deletes in batches
+  and covers `login_requests`; the new `Monk::Auth::Sweep` job runs it,
+  and `monk add jobs`'s `config/recurring.rb` schedules it nightly
+  (`monk_auth_sweep`) when auth is installed.
+- **An index on `sessions (subject)`**, in the same new auth migration,
+  `create_login_requests`. An app that already has auth:
+  `docs/guides/upgrading.md`, 0.22, "Auth housekeeping".
+
+## 0.21.1 - 2026-10-09
+
+### Fixed
+
+- **`monk add websocket --transport=postgres` publishes through the
+  `:notify` pool.** `config/websocket.rb` declares
+  `Monk::Persistence::Pg.pool(:notify, size: 1)` and builds
+  `PgFanout.new(..., db_pool: :notify)`, so a process holds one publishing
+  connection however many Ractors publish. Before, every `bin/server`
+  worker opened its own. `AppWebSocket.start!` starts the pool (with
+  Redis it does nothing): `config/load.rb` calls it at the end, which
+  covers `bin/server`, `bin/jobs`, `bin/console` and the tests, and
+  `bin/websocket_server` calls it too. An existing app: replace
+  `config/websocket.rb` with
+  `monk help websocket --file config/websocket.rb --transport=postgres`
+  and add the last lines of `monk help base --file config/load.rb`.
+- **The scaffolded `Dockerfile` builds with `monk add postgres`.** Its
+  builder stage installs `build-essential`: `irb`'s dependencies (`erb`,
+  `io-console`, `prism`) compile native extensions. The image that runs
+  still has no compiler. An existing app: add the `apt-get` line from
+  `monk help base --file Dockerfile`.
+
+## 0.21.0 - 2026-10-09
+
+### Changed (breaking)
+
+- **`monk new` no longer takes module flags.** `--postgres`, `--auth`,
+  `--mail`, `--jobs`, `--redis` and `--live` are a usage error that shows
+  the same command's new form, and nothing is written. Modules are added
+  with `monk add MODULE`, on any app, new or existing, or with
+  `monk new NAME --with a,b` (ADR 0017, `docs/guides/scaffolding.md`).
+
+### Added
+
+- **`monk add`**: one generator per module (`postgres`, `redis`, `mail`,
+  `auth`, `jobs`, `websocket`, `live`). Each adds its dependencies first,
+  creates files and appends lines (never edits or replaces one), and
+  brings its wiring, commented examples of how to use it (tagged
+  `# monk:example`), a test in `test/`, and its sections of `SETUP.md` and
+  `AGENTS.md`. Adding a module twice does nothing. A file the module needs
+  that the app already has with other content stops the command before
+  anything is written; any other is left alone. `monk add --list`,
+  `monk help MODULE [--file PATH]`, `--dry-run`, and `--json` for agents
+  and scripts, with exit codes 0 (done), 1 (usage), 2 (a missing choice)
+  and 3 (a conflict). A missing choice is asked in a terminal, never
+  elsewhere.
+- **Redis and WebSocket are modules of their own.** `monk add redis` is for
+  any use of Redis (a cache, rate limits). `monk add websocket
+  --transport=postgres|redis` writes `config/websocket.rb`, one registry
+  (`AppWebSocket::REGISTRY`) over the chosen transport, and the new
+  `bin/websocket_server`; the transport is inferred when only one is
+  installed. Live uses websocket's registry.
+- **Every app ships its tests** (`Rakefile`, `test/test_helper.rb`,
+  `test/app_test.rb`), an `AGENTS.md` for coding agents and a `CLAUDE.md`
+  importing it; dotenv is in every `Gemfile`.
+- **Module routes live in `app/routes/`**, which `app/app.rb` loads; each
+  file reopens `class App` (amends ADR 0015). `config/load.rb` is the same
+  for every app: it requires each module's config that exists, in a fixed
+  order.
+- `Monk::Auth.configure(callback_path:)` (default `"/auth/callback"`) and
+  `Monk::Auth.login_link(token)`. `Monk::Auth::SendLoginLink`, the job that
+  creates and sends a login link, ships with Monk, once auth and jobs are
+  both loaded. `log_out!` ends the current session and clears its cookies.
+- `Monk::Mail.deliver_later` is defined once `monk/mail` and `monk/jobs`
+  are both loaded, in either order; `require "monk/mail/later"` still
+  works.
+- `<%= monk_head %>` in a layout renders the `<head>` tags of the loaded
+  modules (Live's, once `config/live.rb` has configured it).
+- `Monk::Assets.mount(prefix, dir)` serves a module's files from the gem
+  under `/_monk/`; Monk::Live's browser client is served at
+  `/_monk/live/`, so apps no longer copy it.
+- `Monk::Live::ALLOW_ALL`, a shareable rule block letting everyone in.
+- `Monk::Bin.run(__FILE__) { ... }`: a scaffolded app's `bin/` scripts end
+  with what failed and the command that fixes it (Postgres or Redis not
+  running, a missing database, refused credentials, an unset setting),
+  exit 1, instead of a backtrace.
+
+### Changed
+
+- `monk new`'s `Gemfile` asks for `gem "monkrb", "~> 0.21"`: a new app
+  needs this version's APIs (`monk_head`, `log_out!`, `Monk::Bin`), so an
+  older monkrb installed on the machine can't satisfy it.
+- `JOBS_QUEUES` defaults to `mailers,default` in `bin/jobs`, with or
+  without mail.
+- `monk add postgres` adds `gem "pg", "~> 1.6"`: 1.6+ installs precompiled
+  with its own libpq, so the one `Dockerfile` needs no system packages.
+- `config/persistence.rb` loads `Monk::Persistence::Pg::Model`, so an app
+  with only Postgres can define models.
+- Live's demo is its own files, at `/demo/live`, in development only
+  (`--no-demo` to leave it out); it no longer replaces `app/app.rb` and the
+  home page.
+
+### Fixed
+
+- `Monk::Log` works before Boot. In `bin/console`, which never boots,
+  anything that logged raised on a nil path: `Monk::Mail.deliver` through
+  `log://`, a job's `perform`, `Monk::Log.info`. Before Boot the first
+  write now works out the same `log/<env>.log` path.
+
+## 0.20.0 - 2026-10-05
+
+### Fixed
+
+- A route that raises now logs why. With no `error` handler for the
+  exception, `log/<env>.log` gets `ERROR GET /path raised Class: message`
+  and the first 10 backtrace lines; before, only `GET /path -> 500` was
+  logged, in development too. An exception an `error` handler takes care
+  of logs one `INFO ... (handled)` line.
+- `Monk::Persistence::Pg` recovers from a dropped connection (a Postgres
+  restart, a failover, `pg_terminate_backend`). Before, every request
+  that touched the database answered `500` until the process restarted.
+  `checkout` now checks the connection first, about 1 µs when it's
+  healthy, and reconnects a dead one. A block is never run twice: a drop
+  in the middle of one fails that request, and the next checkout
+  reconnects. While Postgres is down, `checkout` raises
+  `PG::ConnectionBad` at once.
+- `Monk::WebSocket::PgFanout`'s publisher reconnects after a dropped
+  connection. Before, every `Monk::Live.patch`/`batch` in that Ractor
+  raised `PG::ConnectionBad` from then on, and no open page updated. A
+  failed `pg_notify` isn't retried; the client's resync recovers it.
+- `Monk::WebSocket::PgFanout`'s `LISTEN` connection reconnects after a
+  drop, with backoff (500 ms doubling to 30 s). Before, its Ractor ended
+  silently and the WebSocket process never got another process's
+  broadcast again. Once listening again it closes every open socket with
+  `1011`, so each page reconnects and resyncs the broadcasts it missed. A
+  notify that can't be decoded or relayed is logged and skipped instead
+  of ending the listener.
+- `Monk::WebSocket::RedisFanout`'s subscriber resubscribes after Redis
+  drops its connection, the same way `PgFanout`'s `LISTEN` does now:
+  backoff, then every open socket closed with `1011` so pages resync.
+  Before, it ended silently. A message without an origin separator is
+  logged and skipped; it used to reach sockets as `nil`.
+- `Monk::WebSocket::Connection#close` called from a thread other than the
+  handler's (a relay, the `reverify_interval` check) could leave the
+  socket open, so the client never saw the close. It now shuts the
+  socket down; `Server.serve` closes it.
+
+- `Monk::Persistence::Pg` connections and `PgFanout`'s publisher get
+  `connect_timeout: 5` unless the app sets one, so a reconnect to a host
+  that doesn't answer fails instead of waiting indefinitely.
+- A WebSocket socket's own connections are closed when the socket ends:
+  its Postgres connection (`authenticate:` without `db_pool:`, or a
+  handler that queries) and a `PgFanout`/`RedisFanout` publisher (a
+  handler that broadcasts). Before, they stayed open until the garbage
+  collector happened to run, which a mostly idle server may not do for a
+  long time, so closed pages kept counting against Postgres's
+  `max_connections`. New: `Monk::Persistence.disconnect_all` closes every
+  connection the calling Ractor opened, and `PgFanout.disconnect_publisher`
+  / `RedisFanout.disconnect_publisher` its publisher; `Server.serve` calls
+  them as each socket ends.
+- `monk new --postgres` writes `db/migrate/.keep`. The directory was
+  created empty, and git doesn't keep an empty directory, so a fresh
+  clone of the app had no `db/migrate/`.
+- An app scaffolded without `--auth` and without `--live` crashed at boot
+  in `bin/websocket_server` (`authenticate must be false, true or
+  :optional, got nil`). The template now passes `false`; fix an existing
+  app's line to `authenticate = !!(defined?(Monk::Auth) && Monk::Auth.config)`.
+- A `checkout` block that ran a raw `BEGIN` and raised no longer leaves
+  its transaction open for the next checkout in that Ractor: it's rolled
+  back.
+
+### Added
+
+- `monk new --auth` checks WebSocket sessions through a pool:
+  `config/auth.rb` declares `Monk::Persistence::Pg.pool(:auth, size: 4)`,
+  and both `bin/websocket_server` templates start it and pass
+  `db_pool: :auth`. A new app's WebSocket process holds 4 connections
+  however many pages are open, instead of one per open page.
+
+- Connection pools for Ractors that shouldn't each hold a connection
+  (`docs/guides/persistence.md`, "Pools"): `Monk::Persistence::Pg.pool(:auth,
+  size: 4)` declares one, `start_pools!(:auth)` starts it in the process that
+  uses it, and `pool(:auth).call(Contacts, :include?, owner, email)` runs that
+  method in one of its worker Ractors, from any Ractor. Errors keep their
+  class (`rescue PG::UniqueViolation` works), calls time out, a full queue
+  refuses calls, dying workers are replaced, and `call_async` doesn't wait.
+  `Monk.boot` lists running pools.
+- `Monk::WebSocket::Server.new(db_pool:)` checks sessions through a pool:
+  open sockets no longer hold a Postgres connection each (1,000 sockets on
+  4 connections).
+- `Monk::Live.authorize(..., db_pool:)` runs a rule in a pool.
+- `Monk::WebSocket::PgFanout.new(registry, db_pool:)` publishes through a
+  pool of size 1: one publishing connection per process, and
+  `Monk::Live.patch` no longer waits for (or raises because of) Postgres.
+- `Monk::WebSocket::Registry#close_all(code, reason)` closes every
+  registered connection's socket with that code, through a
+  `Monk::WebSocket::CloseRequest` sent to each port.
+
 ## 0.19.0 - 2026-10-01
 
 ### Fixed

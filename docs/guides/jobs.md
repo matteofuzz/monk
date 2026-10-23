@@ -7,8 +7,8 @@ separate job process, `bin/jobs`, on a pool of worker Ractors. Opt-in:
 Redis, no other gem. The design, and the measurements behind it, are in
 [`docs/adr/0013-jobs-narrow-state-table-plus-payloads.md`](../adr/0013-jobs-narrow-state-table-plus-payloads.md).
 
-`monk new my_app --jobs` writes everything below for you (see
-[`scaffolding.md`](scaffolding.md)).
+`monk add jobs` writes everything below for you, and adds `postgres` if the
+app doesn't have it (see [`scaffolding.md`](scaffolding.md)).
 
 ```ruby
 # app/jobs/send_receipt.rb
@@ -72,9 +72,9 @@ Job classes live in `app/jobs/`, and `config/load.rb` loads them after
 so both processes have every job (see [`scaffolding.md`](scaffolding.md),
 "Where code goes").
 
-The queue's three tables come from the migration `monk new --jobs` writes
-(`db/migrate/00000000000002_create_jobs_tables.{up,down}.sql`).
-`bin/setup_db` applies it like any other.
+The queue's three tables come from the migration `monk add jobs` writes
+(`db/migrate/<timestamp>_create_jobs_tables.{up,down}.sql`, versioned when
+it's added). `bin/setup_db` applies it like any other.
 
 ## Defining a job
 
@@ -166,7 +166,9 @@ mailers, other jobs), and never boots the app itself. Then it runs until
   the earlier ones have nothing ready. Within a queue, a lower `priority`
   goes first, then whichever job has been due longest.
 - **A supervisor** in the main Ractor makes scheduled jobs that have come
-  due claimable and restarts any worker that died, once a second. Every
+  due claimable, enqueues recurring jobs that are due (see
+  [Recurring jobs](#recurring-jobs)), and restarts any worker that died,
+  once a second. Every
   15 seconds it also records that this process is alive, and releases the
   jobs of any process that has gone quiet.
 
@@ -268,6 +270,82 @@ The runtime's settings, for a `bin/jobs` of your own
   its own `JOBS_QUEUES` (e.g. one process for `mailers`, another for
   `default,reports`), so a backlog of slow jobs never delays a login email.
 
+## Recurring jobs
+
+A job that runs on a schedule (purge expired sessions every night, send a
+digest every Monday) is declared once, in `config/recurring.rb`, and every
+running `bin/jobs` enqueues it when it's due:
+
+```ruby
+# config/recurring.rb
+Monk::Jobs.recurring "purge_sessions", PurgeSessions, cron: "0 3 * * *"
+Monk::Jobs.recurring "weekly_digest", SendDigest, cron: "0 9 * * 1", args: ["weekly"], skip_if_pending: true
+```
+
+- **The key** (`"purge_sessions"`) is the task's identity in the
+  database: keep it when you rename the job class, and give each task its
+  own. One job class can have several tasks with different `args:`.
+- **Queue, priority and `max_attempts`** come from the job class, as with
+  any `enqueue`. For different ones, schedule a subclass.
+- **Everything is checked when declared**: a job class that isn't a named
+  `Monk::Job`, `args:` that aren't plain JSON values, a cron expression
+  that doesn't parse or never matches (`0 0 30 2 *`), or a key declared
+  twice fails at boot.
+- **`config/recurring.rb` is loaded last** by `config/load.rb`, after
+  `app/`, since each task names a job class. Declaring a task after boot
+  raises `Monk::Jobs::RegistryFrozenError`.
+
+### Cron syntax, in UTC
+
+Five fields: minute (0–59), hour (0–23), day of month (1–31), month
+(1–12), day of week (0–7, both 0 and 7 are Sunday). Each field takes `*`,
+numbers, lists (`1,15`), ranges (`1-5`) and steps on `*` or a range
+(`*/15`, `9-17/2`). Shortcuts: `@hourly`, `@daily`, `@weekly`,
+`@monthly`, `@yearly`. When both day of month and day of week are
+restricted, a day matching either one runs, as in standard cron. No
+seconds, no names (`mon`, `jan`).
+
+**Every time is UTC.** `0 9 * * *` is 09:00 UTC, whatever the server's or
+the user's time zone, and it doesn't move with daylight saving time.
+
+### When it runs, and when it doesn't
+
+- **Only while a `bin/jobs` runs.** Each occurrence is enqueued once,
+  however many job processes run: they agree through one row per task in
+  `monk_recurring_tasks` (ADR 0016). It is enqueued on the supervisor's
+  next tick, so up to a second late, and runs like any other job.
+- **A new task first runs at its next occurrence**, not when it's
+  deployed. Otherwise every deploy that adds a daily task would run it at
+  once.
+- **Missed occurrences run once.** After downtime, a task several
+  occurrences behind runs once, for the latest one, and the log says how
+  many were skipped. If every missed run matters, have the job work out
+  what's missing itself (everything since the last report it wrote, say).
+- **Runs can overlap.** An occurrence is enqueued even if the previous run
+  is still waiting or running. Jobs must be safe to repeat anyway, so
+  that's usually fine. With `skip_if_pending: true`, an occurrence is
+  skipped (and logged) while the previous run hasn't finished. A previous
+  run that failed doesn't block the next.
+- **Changing a task's cron expression** restarts its schedule at the next
+  occurrence of the new one, without running at once. During a rolling
+  deploy, while old and new processes both run, one occurrence can be
+  missed. Changing `args:` or `skip_if_pending:` changes nothing else.
+- **Removing a task** leaves its row in `monk_recurring_tasks`, unused.
+  Declaring the same key again later starts from that row, so it runs its
+  latest occurrence once. Delete the row by hand if you'd rather it
+  didn't.
+
+The log shows each run (`Monk::Jobs recurring purge_sessions: enqueued
+job 42 for 2026-10-12T03:00:00Z`), each skip, and a catch-up as a warning.
+`bin/jobs` won't start if tasks are declared but the
+`monk_recurring_tasks` table is missing, and says which migration to add.
+
+### Adding recurring jobs to an existing app
+
+An app made with `monk add jobs` before Monk 0.22 doesn't have
+`config/recurring.rb` or the table. The steps are in
+[`upgrading.md`](upgrading.md#022).
+
 ## Testing jobs
 
 In tests, jobs run right in the test, on the app's test database. No job
@@ -303,9 +381,31 @@ end
   production. When a test needs to see a job's side effects in the test's
   own Ractor (a test double, say), use `Monk::Jobs.drain!(in_ractor: false)`.
 - **`Monk::Jobs.clear!`** empties the queue between tests, failed jobs
-  included. It refuses to run unless `MONK_ENV=test`
+  and recurring tasks' checkpoints included. It refuses to run unless `MONK_ENV=test`
   (`Monk::Jobs::ClearOutsideTestsError`), since anywhere else it would
   empty a real queue.
+
+### Testing recurring jobs
+
+`drain!` never fires a schedule. `Monk::Jobs.run_scheduler!(at: time)`
+does, once, as if the clock read `time`, and returns what happened to
+each task. As in production, the first call only records where each task
+is; a call at its next occurrence enqueues it:
+
+```ruby
+def test_the_digest_goes_out_on_monday_morning
+  Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 8, 59))
+  assert_equal({ "weekly_digest" => :enqueued }, Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9)))
+
+  assert_equal 1, Monk::Jobs.drain!
+end
+```
+
+Other results are `:initialized`, `:already_handled`, `:skipped_pending`,
+`:reinitialized` and `:not_due`. Like `clear!`, it refuses to run unless
+`MONK_ENV=test`. To check a schedule without a database, each task's cron
+expression answers directly:
+`Monk::Jobs.recurring_tasks.first.cron.next_after(Time.utc(2026, 10, 12))`.
 
 The test database needs the jobs tables: `DB_NAME=my_app_test bin/setup_db`
 applies them along with the rest.
@@ -364,8 +464,9 @@ cleanup everywhere.
 ## What's not here
 
 Deliberately left out of the first version
-([`../history/plan-jobs.md`](../history/plan-jobs.md)): recurring (cron)
-jobs, unique jobs, limits on how many of a kind run at once, pausing a
+([`../history/plan-jobs.md`](../history/plan-jobs.md)): unique jobs, limits on how many of a kind run at once, pausing a
 queue, batches, keeping finished jobs, a dashboard, a Redis backend, and
 more than one job at a time per worker. Finished jobs are deleted; failed
-ones stay until retried or discarded.
+ones stay until retried or discarded. Recurring jobs came in 0.22,
+without time zones, every missed occurrence, or schedules edited at
+runtime ([`../history/plan-scheduled-jobs.md`](../history/plan-scheduled-jobs.md)).

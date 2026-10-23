@@ -118,7 +118,16 @@ module Monk
       end
 
       def handle
-        Ractor.current[:monk_log_handle] ||= File.open(@path, "a")
+        Ractor.current[:monk_log_handle] ||= File.open(@path || path_before_boot, "a")
+      end
+
+      # Before Boot -- bin/console, a script that loads config/load.rb and
+      # never boots -- nothing has frozen the path yet. Worked out here
+      # instead, the way #freeze_registry! does: only the main Ractor runs
+      # before Boot, so reading Monk.env and writing log/ is safe.
+      def path_before_boot
+        FileUtils.mkdir_p(root)
+        File.join(root, "#{Monk.env}.log")
       end
     end
 

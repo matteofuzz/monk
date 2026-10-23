@@ -59,6 +59,11 @@ Gem::Specification.new do |spec|
   # so an app that sends over SMTP declares "net-smtp" in its own Gemfile.
   spec.add_development_dependency "net-smtp", "~> 0.5"
 
+  # Every scaffolded app's Gemfile has it (config/settings.rb and
+  # test/test_helper.rb load .env files with it), so monk's own suite needs
+  # it to run a generated app's tests. Not a runtime dependency of monk.
+  spec.add_development_dependency "dotenv", "~> 3.0"
+
   spec.add_development_dependency "minitest"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "rubocop", "~> 1.90"

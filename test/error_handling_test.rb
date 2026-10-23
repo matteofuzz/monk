@@ -60,4 +60,33 @@ class ErrorHandlingTest < Minitest::Test
     assert_equal "application/json", headers["content-type"]
     assert_equal '{"error":"not found"}', body.join
   end
+
+  def test_unhandled_exception_logs_its_class_message_and_backtrace
+    app = Class.new(Monk::Base) do
+      get("/x") { raise BoomError, "boom" }
+    end
+
+    contents = with_log do |dir|
+      app.call(env_for("GET", "/x"))
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_match(%r{ERROR GET /x raised ErrorHandlingTest::BoomError: boom\n}, contents)
+    assert_match(/^  .*error_handling_test\.rb:\d+/, contents)
+  end
+
+  def test_handled_exception_logs_its_class_and_message_without_a_backtrace
+    app = Class.new(Monk::Base) do
+      get("/x") { raise BoomError, "boom" }
+      error(BoomError) { halt 422, "custom boom" }
+    end
+
+    contents = with_log do |dir|
+      app.call(env_for("GET", "/x"))
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_match(%r{INFO GET /x raised ErrorHandlingTest::BoomError: boom \(handled\)\n}, contents)
+    refute_match(/^  /, contents)
+  end
 end

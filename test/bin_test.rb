@@ -1,0 +1,224 @@
+require_relative "test_helper"
+require "monk/bin"
+require "pg"
+require "redis"
+require "monk/websocket"
+require "open3"
+require "tmpdir"
+
+# Monk::Bin.run, what a scaffolded app's bin/ scripts run their work in
+# (docs/history/plan-scaffold.md decision 29): a service that's down, a missing
+# database or setting ends the script with what failed, which setting, and
+# the commands that fix it, exit 1 -- not a backtrace. Anything else is
+# re-raised as it is.
+class BinTest < Minitest::Test
+  SCRIPT = "/apps/shop/bin/setup_db".freeze
+
+  def test_postgres_not_running
+    message = explain(PG::ConnectionBad.new(<<~MSG))
+      connection to server at "127.0.0.1", port 5999 failed: Connection refused
+      \tIs the server running on that host and accepting TCP/IP connections?
+    MSG
+
+    assert_includes message, "bin/setup_db: can't connect to Postgres at 127.0.0.1:5999 (DB_HOST/DB_PORT in .env)."
+    # The port the app is configured for, so following the command fixes it.
+    assert_includes message, "docker run --rm -d -p 5999:5432 -e POSTGRES_PASSWORD=postgres --name shop_pg postgres:16"
+    assert_includes message, "then run bin/setup_db again"
+  end
+
+  def test_a_missing_database
+    message = explain(PG::ConnectionBad.new(
+      %(connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "shop_test" does not exist\n),
+    ))
+
+    assert_includes message,
+      %(bin/setup_db: database "shop_test" doesn't exist on Postgres at 127.0.0.1:5432 (DB_NAME in .env).)
+    assert_includes message, "createdb -h 127.0.0.1 -p 5432 -U postgres shop_test"
+    refute_includes message, "PGPASSWORD", "never prints the password"
+  end
+
+  def test_wrong_credentials
+    message = explain(PG::ConnectionBad.new(
+      %(connection to server at "127.0.0.1", port 5432 failed: ) +
+      %(FATAL:  password authentication failed for user "postgres"\n),
+    ))
+
+    assert_includes message, %(Postgres at 127.0.0.1:5432 refused user "postgres" (DB_USER/DB_PASSWORD in .env).)
+  end
+
+  def test_redis_not_running_without_printing_its_password
+    message = with_env("REDIS_URL", "redis://:s3cret@127.0.0.1:6999/0") do
+      explain(Redis::CannotConnectError.new("Connection refused - connect(2) for 127.0.0.1:6999"))
+    end
+
+    assert_includes message,
+      "bin/setup_db: can't connect to Redis at redis://:***@127.0.0.1:6999/0 (REDIS_URL in .env)."
+    assert_includes message, "docker run --rm -d -p 6999:6379 --name shop_redis redis:7"
+    refute_includes message, "s3cret"
+  end
+
+  # A fanout that can't open its subscriber connection at boot raises
+  # ListenError, whatever the underlying error was.
+  def test_a_fanout_that_cant_listen
+    redis = Monk::WebSocket::ListenError.new("Monk::WebSocket::RedisFanout#listen! couldn't subscribe: whatever")
+    pg = Monk::WebSocket::ListenError.new(
+      "Monk::WebSocket::PgFanout#listen! couldn't LISTEN: PG::ConnectionBad: connection to server at " \
+      "\"127.0.0.1\", port 5999 failed: Connection refused",
+    )
+
+    assert_includes with_env("REDIS_URL", nil) { explain(redis) }, "can't connect to Redis at redis://localhost:6379/0"
+    assert_includes explain(pg), "can't connect to Postgres at 127.0.0.1:5999"
+  end
+
+  def test_a_missing_setting
+    error = assert_raises(KeyError) { ENV.fetch("MONK_BIN_TEST_UNSET_SECRET") }
+
+    assert_includes explain(error), "bin/setup_db: MONK_BIN_TEST_UNSET_SECRET is not set."
+    assert_includes explain(Monk::MissingSettingError.new(%(required setting :api_key (ENV["API_KEY"]) is not set))),
+      "bin/setup_db: API_KEY is not set."
+  end
+
+  def test_other_errors_are_not_explained
+    assert_nil Monk::Bin.explain(ArgumentError.new("boom"), SCRIPT)
+    assert_nil Monk::Bin.explain(KeyError.new("key not found: :x", receiver: {}, key: :x), SCRIPT)
+  end
+
+  def test_run_prints_the_explanation_to_stderr_and_exits_with_status_one
+    _out, err = capture_io do
+      error = assert_raises(SystemExit) { Monk::Bin.run(SCRIPT) { raise PG::ConnectionBad, "x failed: Connection refused" } }
+      assert_equal 1, error.status
+    end
+
+    assert_includes err, "bin/setup_db: can't connect to Postgres"
+  end
+
+  def test_run_re_raises_what_it_cant_explain
+    assert_raises(ArgumentError) { Monk::Bin.run(SCRIPT) { raise ArgumentError, "boom" } }
+    assert_equal :done, Monk::Bin.run(SCRIPT) { :done }
+  end
+
+  # bin/websocket_server's GC settings take effect only at boot, so the
+  # script starts again with the ones the environment doesn't set.
+  def test_boot_with_env_starts_the_script_again_once_with_what_is_missing
+    Dir.mktmpdir do |dir|
+      script = File.join(dir, "probe")
+      File.write(script, <<~RUBY)
+        $LOAD_PATH.unshift #{File.expand_path("../lib", __dir__).inspect}
+        require "monk/bin"
+        puts "boot"
+        Monk::Bin.boot_with_env!(__FILE__, { "MONK_PROBE_A" => "set", "MONK_PROBE_B" => "set" })
+        puts [ENV["MONK_PROBE_A"], ENV["MONK_PROBE_B"], *ARGV].join(" ")
+      RUBY
+
+      out, status = Open3.capture2({ "MONK_PROBE_A" => nil, "MONK_PROBE_B" => "mine" }, RbConfig.ruby, script, "arg")
+
+      assert status.success?
+      assert_equal "boot\nboot\nset mine arg\n", out
+
+      out, = Open3.capture2({ "MONK_PROBE_A" => "a", "MONK_PROBE_B" => "b" }, RbConfig.ruby, script)
+
+      assert_equal "boot\na b\n", out, "nothing missing, nothing restarted"
+
+      File.write(script, File.read(script).sub("puts [", "puts $VERBOSE.inspect, ["))
+      out, = Open3.capture2({ "MONK_PROBE_A" => nil }, RbConfig.ruby, "-W0", script)
+
+      assert_equal "boot\nboot\nnil\nset set\n", out, "-W0 carried over"
+    end
+  end
+
+  # WS_PROCESSES: the script runs again in each copy; this one waits,
+  # passes TERM on, and exits 0 once they have.
+  def test_spawn_processes_runs_the_rest_in_each_and_passes_term_on
+    with_probe(<<~RUBY) do |stdout, pid|
+      Monk::Bin.spawn_processes!(__FILE__, 2)
+      trap("TERM") { exit 0 }
+      puts Process.pid
+      $stdout.flush
+      sleep
+    RUBY
+      pids = @children = Array.new(2) { Integer(stdout.gets) }
+      Process.kill("TERM", pid)
+
+      assert_equal 0, wait_or_kill(pid).exitstatus
+      assert_equal 2, pids.uniq.size
+      refute_includes pids, pid, "the rest runs in the copies, not this one"
+      pids.each { |child| assert_raises(Errno::ESRCH) { Process.kill(0, child) } }
+    end
+  end
+
+  def test_spawn_processes_stops_the_rest_when_one_ends_on_its_own
+    with_probe(<<~RUBY) do |stdout, pid|
+      Monk::Bin.spawn_processes!(__FILE__, 3)
+      first = begin
+        File.open(ARGV[0], File::CREAT | File::EXCL | File::WRONLY).close
+        true
+      rescue Errno::EEXIST
+        false
+      end
+      puts Process.pid
+      $stdout.flush
+      sleep 0.2
+      exit 3 if first
+      sleep
+    RUBY
+      pids = @children = Array.new(3) { Integer(stdout.gets) }
+
+      assert_equal 3, wait_or_kill(pid).exitstatus, "the one that ended on its own decides the status"
+      pids.each { |child| assert_raises(Errno::ESRCH) { Process.kill(0, child) } }
+    end
+  end
+
+  def test_spawn_processes_with_one_returns_in_this_process
+    assert_nil Monk::Bin.spawn_processes!("unused", 1)
+    assert_raises(ArgumentError) { Monk::Bin.spawn_processes!("unused", 0) }
+  end
+
+  private
+
+  # Runs body as a script that has loaded monk/bin; yields its stdout and
+  # pid while it runs. Whatever a failed test leaves running is killed:
+  # the copies are in their own process groups, so killing the
+  # supervisor doesn't end them.
+  def with_probe(body)
+    Dir.mktmpdir do |dir|
+      script = File.join(dir, "probe")
+      @flag = File.join(dir, "flag")
+      lib = File.expand_path("../lib", __dir__)
+      File.write(script, %($LOAD_PATH.unshift #{lib.inspect}\nrequire "monk/bin"\n#{body}))
+      stdout, writer = IO.pipe
+      pid = Process.spawn(RbConfig.ruby, script, @flag, out: writer, err: File::NULL)
+      writer.close
+      yield stdout, pid
+    ensure
+      stdout&.close
+      wait_or_kill(pid) if pid
+      @children&.each { |child| Process.kill("KILL", child) rescue Errno::ESRCH } # rubocop:disable Style/RescueModifier
+    end
+  end
+
+  # The process's status; a supervisor still running after 5 s is killed
+  # and fails the test.
+  def wait_or_kill(pid)
+    @statuses ||= {}
+    return @statuses[pid] if @statuses.key?(pid)
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until (done = Process.wait2(pid, Process::WNOHANG))
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        Process.kill("KILL", pid)
+        Process.wait(pid)
+        flunk "the probe didn't exit"
+      end
+      sleep 0.02
+    end
+    @statuses[pid] = done.last
+  end
+
+  def explain(error)
+    with_env("DB_HOST", nil) do
+      with_env("DB_PORT", nil) do
+        with_env("DB_USER", nil) { Monk::Bin.explain(error, SCRIPT) }
+      end
+    end
+  end
+end

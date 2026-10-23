@@ -24,6 +24,8 @@ module Monk
     parts << " - auth=on" if defined?(Auth) && Auth.config
     backends = persistence_backends
     parts << " - persistence=#{backends.join(",")}" unless backends.empty?
+    pools = running_pools
+    parts << " - pools=#{pools.join(",")}" unless pools.empty?
     parts << "\n"
 
     $stdout.puts parts.join("\n")
@@ -42,4 +44,12 @@ module Monk
       .filter_map { |hook| "#{hook.name.split("::").last.downcase}:#{hook.names.join(",")}" if hook.names.any? }
   end
   private_class_method :persistence_backends
+
+  # "name(size)" for every pool started in this process, by any backend.
+  def self.running_pools
+    freeze_hooks
+      .select { |hook| hook.is_a?(Module) && hook.singleton_class.include?(Persistence::Registry) }
+      .flat_map { |hook| hook.running_pools.map { |name, size| "#{name}(#{size})" } }
+  end
+  private_class_method :running_pools
 end

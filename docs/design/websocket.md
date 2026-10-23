@@ -403,6 +403,10 @@ looked at two further steps and didn't take them:
   blocked reading it, so the main Ractor can't reach it. Every connection
   would need a channel it also listens on, plus shutdown ordering and
   tests. The gain is a close code a client can tell apart from a crash.
+  (Since `plan-pg-reconnect.md`, a *subscribed* connection has that
+  channel: `Registry#close_all` sends a `CloseRequest` through each
+  registered port, and the connection's relay closes the socket. Unsubscribed
+  connections still have none, and shutdown ordering is still unbuilt.)
 - **Waiting for connections to finish (drain), as HTTP servers do.** A
   WebSocket stays open until the user leaves the page, so the wait would
   always run to its timeout. Only useful together with close frames that

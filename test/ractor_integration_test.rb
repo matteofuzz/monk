@@ -5,7 +5,7 @@ class RactorIntegrationTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/echo/:id") { params[:id] }
     end
-    Monk.boot(app)
+    boot_quietly(app)
 
     ractors = (1..10).map do |i|
       Ractor.new(app, i) do |a, id|
@@ -27,7 +27,7 @@ class RactorIntegrationTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/echo/:id") { |ctx| "#{ctx.params[:id]}:#{ctx.env["PATH_INFO"]}" }
     end
-    Monk.boot(app)
+    boot_quietly(app)
 
     assert Ractor.shareable?(app.routes)
 
@@ -76,7 +76,7 @@ class RactorIntegrationTest < Minitest::Test
   # worker pool exactly the way Assets' @production already did.
   def test_log_request_suppression_holds_under_a_real_worker_pool
     app = Class.new(Monk::Base) { get("/x") { "hi" } }
-    with_monk_env("production") { Monk.boot(app) }
+    with_monk_env("production") { boot_quietly(app) }
 
     results = Array.new(6) do
       Ractor.new(app) do |a|
@@ -102,7 +102,7 @@ class RactorIntegrationTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/x") { params[:token] }
     end
-    Monk.boot(app)
+    boot_quietly(app)
 
     result = Ractor.new(app) do |a|
       _status, _headers, body = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/x", "QUERY_STRING" => "token=abc123")
@@ -126,7 +126,7 @@ class RactorIntegrationTest < Minitest::Test
         get("/echo/:id") { render "echo" }
       end
       app.views(dir)
-      Monk.boot(app)
+      boot_quietly(app)
 
       assert Ractor.shareable?(Monk::Views.registry)
 
@@ -153,7 +153,7 @@ class RactorIntegrationTest < Minitest::Test
 
       app = Class.new(Monk::Base)
       app.assets(dir)
-      Monk.boot(app)
+      boot_quietly(app)
 
       assert Ractor.shareable?(Monk::Assets.manifest)
 
@@ -194,11 +194,13 @@ class RactorIntegrationTest < Minitest::Test
 
       app = Class.new(Monk::Base)
       app.assets(dir)
-      with_monk_env("development") { Monk.boot(app) }
+      with_monk_env("development") { boot_quietly(app) }
 
       refute Monk::Assets.production?, "the test must exercise the disk-reading path"
 
+      # A worker Ractor has its own $stdout, out of capture_io's reach.
       status, content_type, body = Ractor.new(app) do |a|
+        $stdout = StringIO.new
         st, headers, b = a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/app.css")
         [st, headers["content-type"], b.join]
       end.value
@@ -221,7 +223,7 @@ class RactorIntegrationTest < Minitest::Test
         app = Class.new(Monk::Base) do
           get("/x") { settings[:monk_test_greeting] }
         end
-        Monk.boot(app)
+        boot_quietly(app)
 
         results = Array.new(8) do
           Ractor.new(app) do |a|
@@ -244,7 +246,7 @@ class RactorIntegrationTest < Minitest::Test
         app = Class.new(Monk::Base) do
           get("/x") { json(staging: Monk.env.staging?, production: Monk.env.production?) }
         end
-        Monk.boot(app)
+        boot_quietly(app)
 
         results = Array.new(8) do
           Ractor.new(app) do |a|

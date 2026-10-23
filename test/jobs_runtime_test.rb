@@ -63,10 +63,13 @@ module JobsRuntimeJobs
     def self.perform = raise(Fatal, "the worker Ractor goes down with this")
   end
 
-  # Runs to the end, then (first time only) kills its own database
-  # connection -- the worker's -- so the finish that follows fails the
-  # way it would if the database went away right after the job ran.
-  class LosesItsConnection < Monk::Job
+  # Runs to the end, then (first time only) leaves the worker's
+  # connection unable to write, so the finish that follows fails the way
+  # it would if the database went away right after the job ran. Killing
+  # the backend no longer does it: checkout reconnects a dropped
+  # connection (plan-pg-reconnect.md). A read-only session does, and the
+  # worker that replaces the dead one opens a fresh session.
+  class CantFinish < Monk::Job
     def self.perform
       first_run = Monk::Persistence::Pg.checkout(DB) do |conn|
         conn.exec("SELECT count(*) FROM jobs_runtime_results WHERE value = 'ran'").getvalue(0, 0).zero?
@@ -74,9 +77,7 @@ module JobsRuntimeJobs
       JobsRuntimeJobs.record("ran")
       return unless first_run
 
-      Monk::Persistence::Pg.checkout(DB) { |conn| conn.exec("SELECT pg_terminate_backend(pg_backend_pid())") }
-    rescue PG::Error
-      nil
+      Monk::Persistence::Pg.checkout(DB) { |conn| conn.exec("SET default_transaction_read_only = on") }
     end
   end
 end
@@ -230,7 +231,7 @@ class JobsRuntimeTest < Minitest::Test
   # dies, and the supervisor releases the job it was holding rather than
   # leaving it running inside a live process that nothing would prune.
   def test_a_job_held_by_a_worker_that_died_is_released_and_run_again
-    JobsRuntimeJobs::LosesItsConnection.enqueue
+    JobsRuntimeJobs::CantFinish.enqueue
 
     start_runtime(workers: 1)
 
@@ -305,6 +306,88 @@ class JobsRuntimeTest < Minitest::Test
     assert_equal "available", job_row(DB_NAME, id)["state"], "the late finish mustn't delete a released job"
   end
 
+  # --- recurring tasks (docs/history/plan-scheduled-jobs.md Phase 4) ---
+
+  # The checkpoint is set a few minutes back, as if the process had been
+  # down: the first tick fires the latest occurrence.
+  def test_a_recurring_task_due_is_enqueued_and_run
+    Monk::Jobs.recurring "every_minute", JobsRuntimeJobs::Record, cron: "* * * * *", args: ["recurring"]
+    set_checkpoint("every_minute", "* * * * *", minutes_ago: 5)
+
+    log = with_log do |dir|
+      start_runtime
+      wait_until { results.include?("recurring") }
+      stop_runtime
+      File.read(File.join(dir, "test.log"))
+    end
+
+    assert_match(/started: 2 workers on default, 1 recurring task \(pid/, log)
+  end
+
+  # Decision 9: tasks declared but no table is a deploy mistake, reported
+  # once at start rather than every second by the supervisor.
+  def test_with_tasks_declared_it_wont_start_without_the_recurring_table
+    Monk::Jobs.recurring "every_minute", JobsRuntimeJobs::Record, cron: "* * * * *", args: ["recurring"]
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("DROP TABLE monk_recurring_tasks") }
+
+    error = assert_raises(Monk::Jobs::MissingRecurringTableError) do
+      Monk::Jobs::Runtime.new(**FAST).run(trap_signals: false)
+    end
+
+    assert_match(/monk_recurring_tasks/, error.message)
+    assert_match(%r{monk help jobs --file db/migrate/x_create_recurring_tables\.up\.sql}, error.message)
+    assert_equal 0, count_rows(DB_NAME, "monk_processes")
+  end
+
+  # An app that declares no tasks doesn't need the table.
+  def test_without_tasks_it_runs_without_the_recurring_table
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("DROP TABLE monk_recurring_tasks") }
+    JobsRuntimeJobs::Record.enqueue("no schedule")
+
+    start_runtime
+
+    wait_until { results.include?("no schedule") }
+  end
+
+  # A view the scheduler's statement can't write to stands in for a
+  # database error in the scheduler step: logged, retried each tick, and
+  # the heartbeat carries on meanwhile, so other processes don't take this
+  # one for dead. The test talks to the database on its own connection:
+  # the supervisor, on a thread here, shares this Ractor's and resets it
+  # after every error.
+  def test_a_scheduler_error_is_logged_and_retried_without_stopping_heartbeats
+    Monk::Jobs.recurring "every_minute", JobsRuntimeJobs::Record, cron: "* * * * *", args: ["recurring"]
+    set_checkpoint("every_minute", "* * * * *", minutes_ago: 5)
+    own = PG.connect(**pg_test_opts)
+    own.exec("ALTER TABLE monk_recurring_tasks RENAME TO monk_recurring_tasks_real")
+    own.exec("CREATE VIEW monk_recurring_tasks AS SELECT DISTINCT * FROM monk_recurring_tasks_real")
+
+    log = with_log do |dir|
+      path = File.join(dir, "test.log")
+      start_runtime
+      wait_until { File.exist?(path) && File.read(path).include?("Monk::Jobs scheduler:") }
+      heartbeat = -> { own.exec("SELECT max(last_heartbeat_at)::text FROM monk_processes").getvalue(0, 0) }
+      first_beat = heartbeat.call
+      wait_until { heartbeat.call != first_beat }
+
+      own.exec("DROP VIEW monk_recurring_tasks")
+      own.exec("ALTER TABLE monk_recurring_tasks_real RENAME TO monk_recurring_tasks")
+      wait_until { own.exec("SELECT 1 FROM jobs_runtime_results WHERE value = 'recurring'").ntuples.positive? }
+      File.read(path)
+    ensure
+      stop_runtime
+    end
+
+    assert_match(/ERROR Monk::Jobs scheduler: .*cannot insert into view/, log)
+  ensure
+    # Only left behind when the test failed before swapping them back.
+    if own&.exec("SELECT to_regclass('monk_recurring_tasks_real')")&.getvalue(0, 0)
+      own.exec("DROP VIEW monk_recurring_tasks")
+      own.exec("DROP TABLE monk_recurring_tasks_real")
+    end
+    own&.finish
+  end
+
   def test_invalid_settings_are_rejected
     assert_raises(ArgumentError) { Monk::Jobs::Runtime.new(workers: 0) }
     assert_raises(ArgumentError) { Monk::Jobs::Runtime.new(queues: []) }
@@ -326,6 +409,15 @@ class JobsRuntimeTest < Minitest::Test
     @runtime.stop
     @runtime_thread.join(10) or flunk("the runtime didn't stop")
     @runtime = nil
+  end
+
+  def set_checkpoint(key, cron, minutes_ago:)
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      conn.exec_params(<<~SQL, [key, cron, minutes_ago])
+        INSERT INTO monk_recurring_tasks (key, cron, last_occurrence_at)
+        VALUES ($1, $2, date_trunc('minute', now()) - $3::int * interval '1 minute')
+      SQL
+    end
   end
 
   def results

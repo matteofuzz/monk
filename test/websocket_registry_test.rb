@@ -54,6 +54,45 @@ class WebSocketRegistryTest < Minitest::Test
     port&.close
   end
 
+  # docs/plan-ws-connect-ceiling.md item 5: a Live subscribe's topics in one
+  # ask.
+  def test_register_many_and_unregister_many_cover_every_key_in_one_ask
+    registry = Monk::WebSocket::Registry.new
+    port = Ractor::Port.new
+
+    registry.register_many(%i[room1 room2 room1], port)
+    assert_equal [1, 1], [registry.count(:room1), registry.count(:room2)]
+
+    registry.broadcast(:room2, "hi")
+    assert_equal "hi", port.receive
+
+    registry.unregister_many(%i[room1 room2], port)
+    assert_equal [0, 0], [registry.count(:room1), registry.count(:room2)]
+  ensure
+    port&.close
+  end
+
+  def test_asks_from_one_thread_reuse_its_reply_port
+    registry = Monk::WebSocket::Registry.new
+    registry.count(:room1)
+    reply_port = Thread.current[:monk_registry_reply_port]
+    registry.count(:room1)
+
+    assert_kind_of Ractor::Port, reply_port
+    assert_same reply_port, Thread.current[:monk_registry_reply_port]
+  end
+
+  # An ask whose caller gave up closes its reply port; answering it mustn't
+  # end the registry for everyone else.
+  def test_a_closed_reply_port_does_not_end_the_registry
+    registry = Monk::WebSocket::Registry.new
+    closed = Ractor::Port.new
+    closed.close
+    registry.instance_variable_get(:@ractor).send([:count, :room1, nil, closed])
+
+    assert_equal 0, registry.count(:room1)
+  end
+
   # Simulates the race gap 2 of docs/history/chat-gap-analysis.md describes: a
   # port closed out from under the registry without ever going through
   # #unregister (e.g. the owning connection Ractor died before its own

@@ -53,10 +53,36 @@ checks the credential once, at connect time. `max_payload_size:` (bytes,
 whose declared length exceeds it before ever reading that many bytes off
 the wire, and applies the same cap to a fragmented message's reassembled
 total — a public endpoint shouldn't trust a claimed length, or let many
-small frames add up past it. A reverse proxy in front routes `/ws` to
+small frames add up past it. `max_handshakes:` (128 by default, also
+always on) caps the connections still in their handshake, the HTTP
+upgrade and the session check: at the cap the server stops accepting
+until one finishes, and new connects wait in the kernel's listen
+backlog, so a burst past what the process can verify (every page
+reconnecting after a restart) queues instead of timing out all at once.
+A slot can't be held forever: a handshake not over within
+`handshake_timeout:` (10 s by default, the session check included) is
+dropped, and a request head past 16 KiB gets a `431`.
+`reuse_port: true` lets several processes listen on the same port
+([Several processes](#several-processes)).
+A reverse proxy in front routes `/ws` to
 this process and everything else to Kino, on the **same host** — see
 [`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
 phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/history/plan-websocket.md`.
+
+`db_pool:` (a pool name) checks sessions through that
+[`Monk::Persistence::Pg` pool](persistence.md#pools) instead of in each
+socket's Ractor: the handshake's check, `:optional`'s, and every
+`reverify_interval:` check. Without it, each socket's Ractor opens a
+Postgres connection on its first check and keeps it while the page stays
+open, one connection per open page; it's closed when the socket ends. With it, the server holds only the
+pool's: measured, 1,000 open sockets on a pool of 4 held 4 connections.
+It requires `authenticate:`, and the pool started before the server
+(`Server.new` checks):
+
+```ruby
+Monk::Persistence::Pg.start_pools!(:auth)
+server = Monk::WebSocket::Server.new(port: 9293, authenticate: :optional, db_pool: :auth)
+```
 
 `authenticate:` has three modes:
 
@@ -65,6 +91,13 @@ phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/hi
 | `false` (default) | anonymous: identity is never checked | anonymous |
 | `true` | its subject | refused, `401` |
 | `:optional` | its subject | anonymous (`connection.subject` is `nil`) |
+
+In either mode, a check that can't answer (the pool full or timed out,
+the database down) refuses the connection with `503` and one line on
+stderr; under `:optional` it isn't let in as anonymous, which would
+quietly sign the user out of their topics. A client without an `Origin`
+(not a browser) also gets `Retry-After`. A browser can't read a failed
+handshake's status, so it retries on `monk_live.js`'s own backoff.
 
 `:optional` is for an app where visitors and logged-in users share pages:
 the handler decides what an anonymous connection may do. Under
@@ -80,6 +113,51 @@ have a session; one that loses it is closed, and a browser reconnects as
 anonymous. Anonymous sockets cost the server a Ractor each, like any
 other, and anyone can open them: an app whose live pages are all private
 should keep `true`, which refuses them at the door.
+
+## In a Monk app: `monk add websocket`
+
+`monk add websocket --transport=postgres|redis` sets all of this up
+([`scaffolding.md`](scaffolding.md)):
+
+- **`config/websocket.rb`** builds the app's one registry,
+  `AppWebSocket::REGISTRY`, over the transport: a `PgFanout` publishing
+  through the `:notify` pool (size 1, one connection per process, on the
+  `:primary` database), or a `RedisFanout` at `Monk::Settings[:redis_url]`.
+  Every process loads it; `bin/server` and `bin/jobs` only publish through
+  it. `AppWebSocket::TRANSPORT` says which. `AppWebSocket.start!` opens
+  the transport (starts the `:notify` pool; nothing with Redis):
+  `config/load.rb` calls it at the end, so every process that loads the
+  app can publish, and `bin/websocket_server` calls it too.
+- **`bin/websocket_server`** loads it, plus `config/auth.rb` and
+  `config/live.rb` if the app has them, and runs Live's handler with live,
+  or else the app's `AppSockets::HANDLER` from `app/sockets/` (the
+  `websocket-chat` example there is the chat above). With neither, it says
+  so and exits. It's the only process that calls `listen!`. With auth it
+  authenticates sockets, through the `:auth` pool: `:optional` with live,
+  whose rules decide what visitors get, and `true` otherwise.
+- **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
+  configure it, and **`WS_PROCESSES`** (1) how many server processes it
+  runs on that port ([Several processes](#several-processes)).
+- **GC settings**: `bin/websocket_server` keeps Ruby's heap 60–90% free
+  (`RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8`,
+  `_MAX_RATIO=0.9`, `Monk::Bin::WEBSOCKET_GC_ENV`). Ruby reads these only
+  at boot, so the script starts itself again with the ones the
+  environment doesn't set; a value you set wins. On Ruby 4.0 each new
+  connection's Ractor takes a page of the heap, a GC runs once the free
+  pages are gone, and every GC stops and marks every open socket. At 15K
+  sockets held, these run 6–30× fewer GCs, for ~30% more memory
+  (`docs/plan-ws-connect-ceiling.md`). On 4.1 they were measured to change
+  nothing.
+
+**Switching transports** is three steps:
+
+1. If the other one isn't installed, add it: `monk add redis` or
+   `monk add postgres`.
+2. Replace `config/websocket.rb` with Monk's version for the other
+   transport, then carry over anything you changed in it:
+   `monk help websocket --file config/websocket.rb --transport=redis > config/websocket.rb`
+   (or `--transport=postgres`).
+3. Restart `bin/server`, `bin/websocket_server` and `bin/jobs`.
 
 ## Stopping and restarting
 
@@ -97,12 +175,56 @@ same as a crash or a network blip.
 > Graceful close frames and draining are an open question
 > ([`design/websocket.md`](../design/websocket.md), "Stopping the server").
 
+## Several processes
+
+One process holding many sockets is limited by GC: on Ruby 4.0 every GC
+stops and marks every open socket, so the connects a second it can take
+fall as the sockets it holds grow, about **k / held**. Measured on 4 cores
+with Live and the GC settings above, k is 4–5 million: ~800 connects/s at
+5K sockets held, ~300/s at 15K, ~180/s at 25K. That matters most after a
+restart, when every page reconnects at once: refilling n sockets takes
+at least n² / 2k seconds, ~70 s for 25K.
+
+`WS_PROCESSES=K` runs K server processes on `WS_PORT`
+(`Server.new(reuse_port: true)`, `SO_REUSEPORT`); on Linux the kernel
+spreads connects across them. Each has its own heap and its own GC
+pauses over its share of the sockets, so K processes take about **K² × k
+/ held** connects a second in all: 2 processes at 25K, ~700/s; 4, ~2,900/s.
+
+- **When**: past ~5K sockets in one process, or when a restart's
+  reconnect wave has to be back within seconds. Up to one process a
+  core; past that they share cores, and the gain stops.
+- **What it costs**: each process holds its own Postgres connections:
+  `:auth`'s 4, plus `LISTEN` and `:notify`'s with the Postgres
+  transport. Count K times that against `max_connections`.
+- **Broadcasts** reach every process through the transport, as they
+  already do between `bin/server` and `bin/websocket_server`. With a
+  plain in-process `Registry` (no fanout), each process would only reach
+  its own sockets.
+- **Stopping**: `bin/websocket_server` starts K copies of itself and
+  waits on them. `TERM` or Ctrl-C reaches all of them, and it exits 0
+  once they have. If one ends on its own (a crash, a service down at
+  boot), it stops the others and exits with that one's status, so
+  whatever restarts it restarts them all.
+- **Containers**: `WS_PROCESSES` is for one host or container. Replicas
+  of the WebSocket service (Compose, Kubernetes, a platform's instance
+  count) each have their own network and port, so they don't need it:
+  the proxy in front spreads connects across them. Each replica is then
+  a process with its own heap, the same gain.
+- **On macOS**, `SO_REUSEPORT` lets the processes share the port but
+  doesn't spread connects evenly; it's for Linux.
+
+The k above is from a Mac running Linux in Docker; the benchmark's VM
+will restate it.
+
 ## Cross-process fan-out — `Monk::WebSocket::RedisFanout`
 
 A `Registry` only reaches connections held by its own process. Once a
 WebSocket server is scaled to more than one process (or host),
 `Monk::WebSocket::RedisFanout` wraps a `Registry` behind the identical
-`#register`/`#unregister`/`#count`/`#broadcast`/`#listen!` interface, so swapping which
+`#register`/`#unregister`/`#register_many`/`#unregister_many`/`#count`/`#broadcast`/`#listen!`
+interface (the `_many` pair takes an Array of keys in one ask, which is how
+`Monk::Live` subscribes a page's topics), so swapping which
 object a connection holds is the only change an app makes:
 
 ```ruby
@@ -121,11 +243,11 @@ in the process that holds the sockets (the scaffolded `bin/websocket_server`
 does it before `server.run`). It returns when the subscription is in
 effect, and raises `Monk::WebSocket::ListenError` if Redis can't be
 reached. A process that only broadcasts never calls it, so it opens no
-subscriber connection. `#register` on a fanout that isn't listening raises
+subscriber connection. `#register` (or `#register_many`) on a fanout that isn't listening raises
 `Monk::WebSocket::NotListeningError`. A plain `Registry` has `#listen!` too,
 as a no-op, so the same line works whichever one `REGISTRY` holds. Opt-in at the
 `require` line: `require "monk/websocket"` alone never loads this, and it
-needs the `redis` gem (`--redis`, below, adds it for a scaffolded app).
+needs the `redis` gem (`monk add redis` adds it to an app).
 
 `Monk::WebSocket::PgFanout` implements the identical interface over Postgres
 `LISTEN`/`NOTIFY` instead — for an app that already runs Postgres and would

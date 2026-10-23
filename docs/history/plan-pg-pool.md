@@ -1,0 +1,459 @@
+# Connection pools for short-lived Ractors (`Pg.pool`) — implementation plan
+
+> **Historical document.** It records how this was planned or built at the time and may describe things that have since changed or shipped. For how Monk works today, see [`docs/guides/`](../guides/).
+
+Status: complete 2026-10-02, shipped in monkrb 0.20.0 on 2026-10-05.
+Designed 2026-10-02, revised after review the same day. Comes after
+[`plan-pg-reconnect.md`](plan-pg-reconnect.md): pool workers use the
+ordinary `checkout`, so they need its reconnect fix, and its rollback of a
+transaction left open (that plan's decision 8), since a worker serves
+unrelated callers on one connection.
+
+## The problem
+
+`Monk::Persistence` gives each Ractor one connection, opened on its first
+`checkout` and kept for the Ractor's life. That is right for long-lived
+Ractors that run many queries: kino's workers, `Monk::Jobs`'s workers.
+
+It is wrong for short-lived ones. `Monk::WebSocket::Server` runs every
+socket in its own Ractor (`server.rb`, `#run`), and authenticating the
+socket (`Monk::Auth.verify`, one `SELECT` on `sessions`) opens a
+connection there. The socket then never touches the database again, but
+it holds that connection for as long as it is open.
+
+Measured on monk_talk's `bin/websocket_server` (2026-10-01, monkrb 0.19.0,
+Postgres 16), with authenticated sockets:
+
+| | Postgres connections |
+|---|---|
+| idle, after `listen!` | 1 (`LISTEN`) |
+| 20 sockets open | 21 |
+| 5 to 40 s after closing all 20 | 21: not released until the garbage collector finalizes them |
+
+One connection per open page. With Postgres's default `max_connections`
+(100) and the app's other processes, an app stops accepting sockets at
+about 75 open pages. monk_talk's target is 15-25K concurrent sockets.
+The full analysis is in monk_talk's `doc/database-connections.md`.
+
+### Why not close the connection after authenticating
+
+Opening a connection per handshake fixes the holding: measured, connect +
+query + close is 13.6 ms against 0.35 ms on a held connection. But a
+WebSocket server restart (every deploy) makes every page reconnect within
+about half a second. At 25K pages that is ~680 connections opening at
+once. It works up to roughly 2-3K open pages. It also doesn't cover Live
+rules that query the database at each subscribe (monk_talk's V1 groups).
+
+### Why not a classic pool
+
+A thread pool lends connection objects to threads. Ractors can't do that.
+On Ruby 4.0.6 with pg 1.6.3:
+
+```
+Ractor#send(conn, move: true) → Ractor::Error: can not move PG::Connection object
+Ractor.make_shareable(conn)   → Ractor::Error: can not make shareable object for #<PG::Connection ...>
+```
+
+So the work goes to the connection instead: a few Ractors own the
+connections, and other Ractors send them calls through ports.
+
+## Verified before designing (2026-10-01/02)
+
+| Question | Result |
+|---|---|
+| Can a pool Ractor run a transaction for another Ractor? | yes: a proc defined in a module body, sent through a port, ran `conn.transaction` in the pool |
+| Can a proc that captures a local variable cross? | no: `Ractor::IsolationError`. A proc at a script's top level can't either (`self` is `main`). This is why calls name a method instead of carrying a block. |
+| Do queries in different pool workers run in parallel? | yes: 4 × `pg_sleep(0.3)` through 4 workers took 306 ms; 8 took 613 ms (4 at a time) |
+| What does the hop through a port cost? | nothing measurable: 0.30 ms on a held connection vs 0.26 ms through a pool |
+| Can a caller wait with a timeout? | `Port#receive` takes no timeout; `Ractor.select(reply, timer_port)` works |
+| Does a port keep one sender's order? | yes: 4 senders × 10,000 numbered messages, 0 out of order per sender |
+| Does an ordinary exception cross? | yes, copied whole: class, own instance variables, `cause` |
+| Does a `PG::Error` cross? | no: it holds `@connection` and `@result`, set by pg's C code. `Ractor::Error: can not copy PG::Connection object` |
+| Does `dup` of a raised `PG::Error` keep what matters? | yes: class, message, backtrace, `cause`. Editing the copy leaves the original untouched. |
+| After clearing `@connection` and replacing `@result` with a stand-in, does it cross? | yes: arrives as `PG::UniqueViolation`, `result.error_field(PG_DIAG_CONSTRAINT_NAME)` works, and `rescue PG::UniqueViolation` matches |
+| Does the backtrace survive a port? | **no**: an exception sent through a port arrives with an empty backtrace (one returned as a Ractor's final value keeps it). `set_backtrace(e.backtrace)` before sending keeps it. |
+
+## Decisions
+
+1. **Worker Ractors plus a dispatcher** (kino's shape). Each worker is an
+   ordinary Ractor with its own connection, opened by the ordinary
+   `checkout`. `checkout`, transactions and the reconnect fix work in a
+   worker exactly as anywhere else. The dispatcher exists because a port
+   can only be read by the Ractor that created it, so workers can't share
+   an inbox. The alternative was one Ractor running N threads with a
+   connection each. It was rejected because it would need a second way for
+   `checkout` to find a connection, and it runs all Ruby work on one core.
+2. **A call names a method; it doesn't carry a block.** The caller sends
+   the receiver (a module or class, always shareable), the method name and
+   the arguments. A worker calls `receiver.public_send(name, *args, **kwargs)`.
+   The method's own `checkout` gets the worker's connection. Models don't
+   change and don't know where they run:
+
+   ```ruby
+   Contacts.include?(owner, email)                                                  # here, on this Ractor's connection
+   Monk::Persistence::Pg.pool(:auth).call(Contacts, :include?, owner, email)        # in the pool
+   ```
+3. **Two methods.**
+   - `call(receiver, name, *args, **kwargs)` waits for the result, up to
+     the pool's `timeout`. It returns the method's value or re-raises its
+     exception.
+   - `call_async(receiver, name, *args, **kwargs)` waits only for the
+     dispatcher to accept the call, a few microseconds. It raises if the
+     call can't be accepted: queue full, pool not started, dispatcher dead.
+     A failure while the call runs is logged with `Monk::Log.error`,
+     since nobody is waiting for it.
+
+   Everything after the method name belongs to the target method.
+   `call` and `call_async` take no options of their own, so they never
+   steal a keyword argument from the target method.
+4. **Named pools, declared in config, started where they're used.**
+
+   ```ruby
+   # config/persistence.rb (every process loads it)
+   Monk::Persistence::Pg.register(:primary, host: ..., dbname: ...)
+   Monk::Persistence::Pg.pool(:auth, size: 4, timeout: 2)
+   Monk::Persistence::Pg.pool(:notify, size: 1)
+
+   # only in the process that uses them
+   Monk::Persistence::Pg.start_pools!(:auth)
+   ```
+
+   - `pool(name, db: :primary, size: 4, timeout: 5, queue: 1000)` with
+     arguments declares a pool. Nothing connects yet.
+   - `start_pools!(*names)` starts them, in the main Ractor only.
+   - `pool(name)` with no other arguments returns the started pool's
+     handle: a frozen value holding the name, the options and the
+     dispatcher's inbox port. It can be read from any Ractor and kept in
+     a constant.
+   - Pool names are separate from database names, so one database can
+     have several pools (`:auth` in parallel, `:notify` in order).
+   - Monk's own options take the name, as `db_name:` does:
+     `Server.new(db_pool: :auth)`, `Live.authorize(..., db_pool: :auth)`.
+   - Running handles are published by replacing a frozen Hash from the
+     main Ractor (`@running = Ractor.make_shareable(@running.merge(...))`),
+     so `start_pools!` works before or after `Monk.freeze!`.
+   - Declared options are read from workers and callers, so
+     `freeze_registry!` makes them shareable along with `@configs`: the
+     same trap an unfrozen `@configs` already hit.
+5. **Connect at start.** `start_pools!` returns once every worker has its
+   connection, and raises if Postgres is unreachable, the same promise
+   `Monk::Live.listen!` makes. Processes that don't start a pool hold no
+   pool connections.
+6. **Order comes from size.** A pool of `size: 1` runs calls one at a
+   time: one sender's calls in the order it made them, different senders'
+   calls in the order they reach the dispatcher. A pool larger than 1 runs
+   calls in parallel, in no particular order. No `ordered:` flag; the
+   guide states the rule. Where Monk itself depends on order (the
+   `PgFanout` publisher, phase 8), it requires a pool of size 1 and raises
+   otherwise.
+7. **Errors keep their class.**
+   - An exception that can be copied is sent as is.
+   - When the copy fails (a `PG::Error`): `dup` it, set `@connection` to
+     `nil`, and replace `@result` with a frozen stand-in. The stand-in
+     holds the diagnostic fields (SQLSTATE, schema, table, column,
+     constraint, detail, hint) and answers `error_field(code)`. The same
+     treatment applies to its `cause`.
+   - The backtrace is set as strings before sending (a port drops it
+     otherwise). On the caller's side it becomes the worker's frames, a
+     marker line, then the caller's frames.
+   - `rescue PG::UniqueViolation` works the same in a direct call and a
+     pool call. What a pool call loses is only `e.connection`, which is
+     useless across Ractors anyway, and `e.result` being a real
+     `PG::Result`.
+   - The stand-in answers `error_field`, plus the read-only methods that
+     need no connection and that apps use on an error's result
+     (`error_message`, `result_status`/`res_status`). Anything else
+     raises `NoMethodError`, and the guide says so.
+   - Wrapping errors in a pool error class (as `Ractor::RemoteError` does)
+     was rejected: `rescue PG::UniqueViolation` would silently stop
+     matching when a call moves into a pool.
+8. **Return values are copied.** They must be data: strings, numbers,
+   arrays, hashes, frozen `Data` values. A value that can't be copied
+   (a `PG::Result`) becomes an error that names the method: "`Contacts.list`
+   returned a `PG::Result`, which can't leave the pool: return rows as
+   data". Large results cost a copy; a pool is for small results.
+9. **Stalls fail fast and leave no backlog.**
+   - **Timeout** (`timeout:`, default 5 s, the same as `checkout`'s): a
+     `call` raises `Monk::PersistenceTimeoutError` when it passes.
+   - **Calls nobody waits for are skipped.** Each `call` carries a
+     deadline. When a worker frees up, the dispatcher discards queued
+     calls past their deadline instead of running them. `call_async` has
+     no deadline and always runs.
+   - **Queue limit** (`queue:`, default 1000 per pool): when that many
+     calls are waiting, `call` and `call_async` raise
+     `Monk::PoolFullError` at once. Normally 4 workers clear
+     1000 calls in under 0.1 s, so a full queue means a stalled database,
+     not a busy one.
+10. **A call made from inside a pool worker runs inline**, on the
+    worker's own connection, instead of queueing on its own pool. A full
+    pool waiting on itself would never finish. Inline, it has the same
+    limit as a direct call: if its `checkout` targets the database of a
+    `checkout` block still open around it, it times out after 5 s, because
+    `checkout` isn't reentrant (`persistence-evolutions.md`, item 3). The
+    guide mentions it.
+
+## How it works
+
+```
+caller Ractor ──[receiver, name, args, kwargs, reply port, deadline]──▶ dispatcher
+                                                                           │ idle worker? hand it over
+                                                                           │ none? queue (≤ queue:) or reply :full
+                                                                           ▼
+                                                                   worker Ractor (own connection)
+                                                                     receiver.public_send(name, ...)
+caller ◀────────────── [:ok, value] or [:error, exception] ─────────── reply port
+                                                                     then tells the dispatcher it's idle
+```
+
+- **The dispatcher** owns the inbox port, the queue and the list of idle
+  workers. It replies `:full` itself, and acknowledges `call_async` calls.
+- **Timeouts are the dispatcher's job.** A ticker (as in
+  `Monk::Jobs::Runtime`) lets it reply `:timeout` to a caller whose
+  deadline passed, whether its call is queued or running. A caller just
+  waits on its reply port, with no timer thread per call. Each call has
+  its own reply port, so a late answer can't reach a later call.
+- **Late answers.** After a `:timeout`, the worker still finishes and
+  replies to a port nobody reads. The caller closes its reply port once
+  it has an answer, whichever came first, and the worker rescues
+  `Ractor::ClosedError` when replying, so a late answer is dropped instead
+  of left waiting in the port.
+- **Workers** loop: receive a call, run it, reply, report idle. A
+  worker's connection follows the ordinary per-Ractor rules, including
+  `plan-pg-reconnect.md`'s check and reset.
+- **A worker that dies** (a bug, not an exception from the called method,
+  which is caught) is noticed through `Ractor#monitor`, logged, and
+  replaced. Its in-flight caller gets its timeout.
+
+## Phases
+
+Small red → green slices against a real Postgres, as in the other plans.
+
+1. **Declaration.** (Done. The errors follow the existing top-level
+   persistence errors: `Monk::UnknownPoolError` (never declared) and
+   `Monk::PoolNotStartedError`; phase 4's is `Monk::PoolFullError`.
+   `pool_config(name)` returns a declaration's frozen `Pool::Config`.
+   Declaring a name twice or passing an unknown option raises. Since
+   `pool(:auth)` with no options is a lookup, the "never declared" error
+   shows how to declare one, so a config line with all defaults written
+   as `pool(:auth)` fails at boot with a clear message.) `pool(name, ...)` validates its options (positive
+   `size`, `timeout`, `queue`; `db:` must be registered) and stores them.
+   `pool(:missing)` raises "never declared". `pool(:declared)` before
+   `start_pools!` raises "declared but not started in this process".
+   After `Monk.freeze!`, a worker Ractor can read a pool's options.
+   `reset!` clears pools.
+2. **Start and `call`.** (Done. `start_pools!` freezes the registry
+   first: a worker's `checkout` reads the registered databases from
+   another Ractor, which needs them frozen. So every `register` and pool
+   declaration has to come before `start_pools!`, which boot order
+   already gives (config, then start). A failed start raises
+   `Monk::PoolStartError` and leaves nothing running. `reset!` stops
+   running pools and closes their connections; a worker closes its own
+   with the new `disconnect_all`. Until phase 3, an error or value that
+   can't leave the pool reaches the caller as a `RuntimeError` naming
+   it, so a worker never dies of one. A test also pins down that calls
+   run in parallel across workers.) `start_pools!` spawns the dispatcher and workers,
+   waits for their connections, and raises if Postgres is unreachable (a
+   port nothing listens on). `call` with positional and keyword arguments
+   returns the value. A connection count shows `size` connections, however
+   many caller Ractors call.
+3. **Errors and return values.** (Done. The Pg-specific part is a backend
+   hook, `make_portable(error)`, so `pool.rb` stays backend-agnostic;
+   `Pg.make_portable` swaps `@result` for a frozen `Pg::ErrorResult`
+   answering `error_field`/`result_error_field`, `error_message`/
+   `result_error_message`, `result_status` and `res_status`. Exception has
+   no `cause=`, so each copy's cause is set by raising it with `cause:`,
+   which keeps the backtrace already set; `cause: nil` doesn't clear a
+   cause, so a chain longer than 5 ends in a `RuntimeError` summary
+   instead of being cut. Measured: copying a `PG::Result` raises
+   `TypeError` ("allocator undefined"), not `Ractor::Error`, and a worker
+   that let it escape ended with its caller waiting forever, so every
+   failure to copy is caught and answered. The value error is
+   `Monk::PoolReturnError`.) Ordinary exceptions arrive whole. A
+   `PG::UniqueViolation` arrives with its class, message, `cause`,
+   `error_field` and a backtrace showing both sides. A `PG::Result` return
+   value raises the named error. The stand-in's `error_message` works;
+   other `PG::Result` methods raise `NoMethodError`.
+4. **Timeouts and the queue.** (Done. The dispatcher is now a small
+   class whose instance lives in its Ractor, with the idle workers, the
+   queue, and the running calls. Its ticker wakes it every `timeout / 10`
+   seconds, clamped to 10–100 ms; a deadline can be overrun by up to one
+   tick. A running call whose caller timed out keeps its worker busy
+   until it finishes, and is answered only once.) With every worker stuck on `pg_sleep`: a
+   `call` raises after `timeout`; a queued call whose caller gave up is
+   never run (a counter in the method stays unchanged); with `queue: 2`,
+   the third waiting call raises `PoolFullError`. A call that times out
+   while running: its worker's late reply to the closed port doesn't
+   crash the worker, and the worker serves the next call.
+5. **`call_async`.** (Done. An async call is a call with no deadline:
+   the dispatcher answers `:accepted` on its port as soon as it's queued,
+   and the ticker never expires it. The worker skips delivering its
+   result and logs a failure, with the first 10 backtrace lines, through
+   a logger that can't end the worker.) It returns once accepted, raises when the queue is
+   full or the pool isn't started, and logs a failure inside the method.
+   With `size: 1`, a sender's calls run in its order (numbered writes read
+   back in sequence).
+6. **Inside a worker, and a dying worker.** (Done, with three changes
+   from the plan. The dispatcher, not the main Ractor, starts the
+   workers and watches each with `Ractor#monitor` (it delivers `:exited`
+   or `:aborted`, even for a Ractor already ended), so it can replace one
+   at once; a replacement that can't connect retries with backoff, 0.5 s
+   doubling to 30 s, while calls wait in the queue. A dead worker's
+   caller gets `Monk::PoolWorkerDiedError` at once, not its timeout:
+   sooner, and it says the call may or may not have finished. Only `call`
+   runs inline inside its own pool's worker; `call_async` never waits,
+   so it can't deadlock, and still queues. A worker that dies tells the
+   dispatcher why before it ends, and the log line carries it, instead
+   of a thread report on stderr.) A method that calls its own
+   pool runs inline. A worker killed mid-call is replaced, and the pool
+   keeps serving.
+7. **`Monk::WebSocket::Server.new(db_pool:)`.** (Done. Measured
+   2026-10-02 on Postgres 16, authenticated sockets: 20 open sockets
+   held 20 connections without `db_pool:` and 2 with a pool of 2; 1,000
+   sockets opened in 1.6 s, one after another, every one verified, on 4
+   connections with a pool of 4. `db_pool:` needs `authenticate:` and a
+   pool already started; `Server.new` checks both, so a missing
+   `start_pools!` fails at boot, not at the first connection. The
+   handshake check, the `:optional` identify, and every reverify all go
+   through one `Server.verify`.) Authentication runs
+   `Monk::Auth.verify` in the pool (and the `reverify_interval` checks
+   too). The monk_talk measurement repeated: with 20, then 1,000 open
+   sockets, the server holds `size` connections plus `LISTEN`. Socket
+   Ractors open none.
+8. **`Monk::Live.authorize(..., db_pool:)`.** (Done. The pool calls
+   `Policy.check(block, subject, topic)` with the rule's own block as an
+   argument: a shareable proc crosses a port by reference. Pool failures
+   (not started in this process, timed out, full, a worker died, the
+   pool stopped) still deny, failing closed, but are logged with the
+   topic, the rule and the pool, since silently denying every
+   subscription for a missing `start_pools!` would be hard to find; a
+   rule's own exceptions still deny silently, as before. Measured: 10
+   sockets checking a database rule share a pool of 2's connections.) A rule's body runs in the
+   pool. Rules are already shareable procs, so nothing new is asked of
+   apps.
+9. **The `PgFanout` publisher through a pool of size 1.** (Done, with
+   `call_async`: size 1 only matters for async calls, since a blocking
+   `call` keeps one sender's publishes in order at any size, so the
+   plan's size rule implied async. The consequence, decided here: with
+   `db_pool:`, a failed `pg_notify` is logged, not raised, so
+   `Live.patch` no longer raises when Postgres is down (it did, failing
+   a request whose write had succeeded); the page catches up at its next
+   resync. An oversized payload and a full queue still raise. `pg_opts:`
+   keeps the old behaviour. With `db_pool:` only, `#listen!` connects
+   with the pool's database's options, through a new
+   `Registry#connection_options`.) It replaces one
+   publisher connection per Ractor that pushes. A pool larger than 1
+   raises at configuration, naming the ordering rule. This needs a
+   constructor change: `PgFanout.new(registry, pg_opts:)` takes raw
+   connection options, while a pool's `db:` is a registered database
+   name. Add `PgFanout.new(registry, db_pool: :notify)`, and keep
+   `pg_opts:` for the per-Ractor publisher; passing both raises.
+10. **Docs.** (Done. The boot line reads ` - pools=auth(4),notify(1)`,
+    from a new `Registry#running_pools`.)
+    - `docs/guides/persistence.md`: a "Pools" section covering when to use
+      one (short-lived Ractors, work that shouldn't wait), the rules
+      (receiver and method name, data in and out, no caller context,
+      timeouts don't undo writes, order only at size 1), and the options.
+    - `docs/guides/websocket.md` and `live.md`: `db_pool:`.
+    - The boot line lists running pools.
+    - CHANGELOG.
+11. **Load.** (Done 2026-10-05: Ruby 4.0.6, Postgres 16, an 8-core Mac
+    with load average about 4; medians of 5 runs. A first run under heavy
+    outside load (load average 260–430) gave the same shape with noisier
+    numbers. The script stays out of the repo; it read the dispatcher's
+    queue length through a probe prepended onto `Pool::Dispatcher`.
+
+    The pool alone, 64 caller Ractors × 100 `Monk::Auth.verify` calls:
+
+    | size | calls/s | p50 | p99 | peak queue |
+    |---|---|---|---|---|
+    | 1 | 3,186 | 19.5 ms | 44.3 ms | 64 |
+    | 2 | 4,165 | 13.7 ms | 33.1 ms | 63 |
+    | 4 | 5,495 | 9.0 ms | 25.1 ms | 62 |
+    | 8 | 6,568 | 8.9 ms | 17.8 ms | 59 |
+
+    A reconnect storm, N authenticated sockets opened at once by 64
+    client threads against `Server.new(db_pool:)`:
+
+    | N | size 2 settle | size 4 settle | size 8 settle | failures | peak queue |
+    |---|---|---|---|---|---|
+    | 500 | 347 ms | 331 ms | 338 ms | 0 | ≤ 56 |
+    | 1,000 | 740 ms | 712 ms | 691 ms | 0 | ≤ 59 |
+    | 2,000 | 1,622 ms | 1,501 ms | 1,486 ms | 0 | ≤ 62 |
+
+    What it decides:
+    - **Default `size: 4` stays.** In a storm, the case pools exist for,
+      size changes settle time by under 10%: sockets settle at about
+      1,350/s, bounded by accepting a socket and starting its Ractor, not
+      by the database. Each extra worker holds a connection for nothing
+      there. A steady, high rate of pool calls does gain from more: 8
+      workers serve about 20% more than 4. The guide says so.
+    - **One dispatcher keeps up**, with a ceiling. One worker serves about
+      3,200 calls/s (0.3 ms a call, as measured before designing); 8 reach
+      only 2× that, about 6,500 calls/s, most likely the single
+      dispatcher, though on one machine the 64 callers and Postgres share
+      the same 8 cores. The queue never held more than the calls in
+      flight (64 callers, 64 deep), far below the default `queue: 1000`.
+    - Decision 9's "4 workers clear 1000 calls in under 0.1 s" was an
+      estimate; measured, about 0.18 s at 5,500 calls/s.
+    - Not measured: monk_talk's 25K sockets. At 1,350/s, all reconnecting
+      at once would take about 19 s, bounded by accept and Ractor
+      start-up; their 25K verifies through one pool would take about 4 s.
+      `monk_live.js`'s jitter spreads reconnects anyway.
+
+    Found while running it:
+    - A first harness ran out of ephemeral ports (16,384 on macOS, each
+      closed socket holding one for 30 s in `TIME_WAIT`), which showed up
+      as 421 failed handshakes and a pool that couldn't connect. The
+      harness now waits for ports between rounds; not a Monk problem.
+    - A pool call made before `Monk.freeze!` fails with
+      `Ractor::IsolationError` when the method reads boot-frozen config
+      (`Monk::Auth`'s here): `start_pools!` freezes only the persistence
+      registry. Normal boot order hides it. See the open questions.
+    - Once, in the first storm under heavy load, one socket's handshake
+      failed inside `Digest::SHA1.digest` ("Digest::Base cannot be
+      directly inherited") in `Handshake.accept_key`. It didn't recur in
+      the 45 storms of the quiet run, nor in 40 fresh processes of 256
+      Ractors digesting at once. See the open questions.) A reconnect storm: N authenticated sockets reconnecting
+    together against a pool of 4, measuring how long they take to settle
+    and the peak queue length. That decides the default `size` and
+    whether one dispatcher keeps up. Also the publisher: a single size-1
+    lane at ~0.3 ms per `pg_notify` tops out near 3K notifies/s per
+    process, for every `Live.patch` of every web worker. Measure it under
+    load; if it falls short, that's the case for "order per key" below.
+
+## Open questions
+
+- **A caller whose dispatcher has died.** Decided in phase 6: the
+  dispatcher is never restarted, because every handle holds its inbox and
+  may be kept in a constant, so a new dispatcher would leave those
+  handles pointing at a closed port. Instead it survives a failure
+  handling any one message (logged, and it carries on), and if it ends
+  anyway its `ensure` stops the workers and answers every caller still
+  waiting `:stopped`; a call after that hits the closed inbox. Both raise
+  `Monk::PoolStoppedError`. `reset!` takes the same path, which is how
+  it's tested.
+- **`start_pools!` and the rest of boot's freezing.** Workers run app
+  methods that read config `Monk.freeze!` seals (`Monk::Auth`'s, models'
+  table names). `start_pools!` freezes only the persistence registry, so a
+  pool call made before `Monk.boot`/`Server.new` fails with
+  `Ractor::IsolationError`. Options: `start_pools!` calls `Monk.freeze!`
+  (everything must then be configured before it), or the guide says to
+  start pools after boot.
+- **The first-burst `Digest` failure** (phase 11). If it's Ruby's lazy
+  load of `Digest::SHA1` racing across Ractors, `require "digest/sha1"`
+  at the top of `handshake.rb` would close it. Unconfirmed: it happened
+  once and didn't reproduce.
+- **Per-call options.** Options are set per pool. If a real case needs a
+  different timeout for one call, add `pool(:auth).with(timeout: 10)`,
+  which returns a new handle, rather than options on `call`.
+- **Order per key.** `call_async(..., key: topic)` could send calls with
+  the same key to the same worker: ordered per key, parallel across keys.
+  That would let the publisher pool grow past size 1. Only if phase 11
+  shows a single lane can't keep up.
+- **A generic owner primitive.** The same shape (a few Ractors own a
+  client, others send them calls) fits the Redis publisher, reused SMTP
+  connections for `Monk::Mail`, and kept-alive HTTPS for `Monk::Storage`.
+  If a second case is built, extract the dispatcher from `Pg` rather than
+  copying it.
+- **Reentrant `checkout`** (`persistence-evolutions.md`, item 3) is
+  related but separate. The pool doesn't need it.

@@ -84,7 +84,7 @@ class ResourcesTest < Minitest::Test
   def test_resources_routes_survive_freeze_and_dispatch_correctly_from_real_worker_ractors
     controller = build_controller
     app = Class.new(Monk::Base) { resources("widgets", controller, :index, :show) }
-    Monk.boot(app)
+    boot_quietly(app)
 
     assert Ractor.shareable?(app.routes)
 

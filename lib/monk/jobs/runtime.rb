@@ -1,6 +1,7 @@
 require "socket"
 require_relative "../jobs"
 require_relative "worker"
+require_relative "scheduler"
 
 module Monk
   module Jobs
@@ -53,6 +54,9 @@ module Monk
       def run(trap_signals: true)
         Monk.freeze!
         @adapter = Monk::Jobs.adapter
+        tasks = Monk::Jobs.recurring_tasks
+        check_recurring_table!(tasks)
+        @scheduler = Scheduler.new(@adapter, tasks)
         @hostname = Socket.gethostname
         @pid = Process.pid
         @process_id = @adapter.register_process(hostname: @hostname, pid: @pid)
@@ -65,7 +69,8 @@ module Monk
         @holding_port = Ractor::Port.new
         @worker_count.times { |index| spawn_worker(index) }
         Monk::Log.info(
-          "Monk::Jobs process #{@process_id} started: #{@worker_count} workers on #{@queues.join(", ")} (pid #{@pid})",
+          "Monk::Jobs process #{@process_id} started: #{@worker_count} workers on #{@queues.join(", ")}, " \
+          "#{tasks.size} recurring task#{"s" unless tasks.size == 1} (pid #{@pid})",
         )
 
         ticker, timer = start_ticker
@@ -104,10 +109,19 @@ module Monk
         end
       end
 
+      # The scheduler runs after the rest and under its own rescue, so an
+      # error that only it hits can't stop the heartbeat: other processes
+      # would take this one for dead.
+      def tick(last_heartbeat)
+        last_heartbeat = housekeeping(last_heartbeat)
+        schedule
+        last_heartbeat
+      end
+
       # A database error here (Postgres restarting, a dropped connection)
       # mustn't end the process: it's logged, this Ractor's connection is
       # reset, and the next tick tries again.
-      def tick(last_heartbeat)
+      def housekeeping(last_heartbeat)
         release_dead_workers_jobs
         @adapter.stage_due
         return last_heartbeat if monotonic - last_heartbeat < @heartbeat_interval
@@ -118,6 +132,28 @@ module Monk
         Monk::Log.error("Monk::Jobs supervisor: #{Monk::Jobs.describe_error(e)}; reconnecting")
         reconnect
         last_heartbeat
+      end
+
+      # Recurring tasks (docs/history/plan-scheduled-jobs.md decision 1). An
+      # occurrence that errors isn't marked handled, so the next tick asks
+      # again.
+      def schedule
+        @scheduler.run
+      rescue StandardError => e
+        Monk::Log.error("Monk::Jobs scheduler: #{Monk::Jobs.describe_error(e)}; reconnecting")
+        reconnect
+      end
+
+      # Decision 9: a missing table is a deploy mistake, said once here
+      # rather than every second by the scheduler.
+      def check_recurring_table!(tasks)
+        return if tasks.empty? || @adapter.recurring_table?
+
+        raise MissingRecurringTableError,
+          "#{tasks.size} recurring task(s) declared (#{tasks.map(&:key).join(", ")}) but the database has no " \
+          "monk_recurring_tasks table. Add Monk's migration under a new timestamp in db/migrate/ " \
+          "(monk help jobs --file db/migrate/x_create_recurring_tables.up.sql, and .down.sql), then bin/migrate. " \
+          "The Monk 0.22 upgrade guide has the full steps"
       end
 
       # A job stays on the list until its release has gone through (or found

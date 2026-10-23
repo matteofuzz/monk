@@ -3,6 +3,9 @@
 require_relative "../monk"
 require_relative "jobs/errors"
 require_relative "jobs/args"
+require_relative "jobs/cron"
+require_relative "jobs/recurring_task"
+require_relative "jobs/scheduler"
 require "json"
 
 module Monk
@@ -53,7 +56,7 @@ module Monk
       #
       # SendReceipt.enqueue(order_id) is the same call.
       def enqueue(job_class, *args, wait: nil, at: nil, conn: nil)
-        check_enqueueable!(job_class)
+        check_enqueueable!(job_class, "Monk::Jobs.enqueue")
         Args.check!(args)
         check_schedule!(wait, at)
 
@@ -61,6 +64,51 @@ module Monk
           job_class: job_class.name, queue: job_class.queue, priority: job_class.priority,
           max_attempts: job_class.max_attempts, args: JSON.generate(args), wait: wait, at: at, conn: conn,
         )
+      end
+
+      # A job enqueued on a schedule by bin/jobs, typically in
+      # config/recurring.rb (loaded after app/jobs/, so the class exists):
+      #
+      #   Monk::Jobs.recurring "purge_sessions", PurgeExpiredSessions, cron: "0 3 * * *"
+      #   Monk::Jobs.recurring "weekly_digest", SendDigest, cron: "0 9 * * 1",
+      #     args: ["weekly"], skip_if_pending: true
+      #
+      # The key is the task's identity in monk_recurring_tasks, so renaming
+      # the job class keeps its place in the schedule. cron: is UTC (Cron).
+      # skip_if_pending: true skips an occurrence while the job enqueued for
+      # the previous one hasn't finished. Everything is checked here, so a
+      # mistake fails at boot (docs/history/plan-scheduled-jobs.md decision 2).
+      def recurring(key, job_class, cron:, args: [], skip_if_pending: false)
+        if @recurring_registry
+          raise RegistryFrozenError,
+            "Monk::Jobs.recurring(#{key.inspect}) after the job registry is frozen -- declare recurring " \
+            "tasks while the app loads (config/recurring.rb), before Monk.boot or bin/jobs starts"
+        end
+        unless key.is_a?(String) && !key.empty?
+          raise ArgumentError, "a recurring task's key must be a non-empty String, got #{key.inspect}"
+        end
+        if recurring_list.any? { |task| task.key == key }
+          raise ArgumentError, "recurring task #{key.inspect} is already declared"
+        end
+
+        check_enqueueable!(job_class, "Monk::Jobs.recurring")
+        Args.check!(args)
+        unless [true, false].include?(skip_if_pending)
+          raise ArgumentError, "skip_if_pending: must be true or false, got #{skip_if_pending.inspect}"
+        end
+
+        task = RecurringTask.new(
+          key: key.dup.freeze, job_class: job_class, cron: Cron.parse(cron),
+          args: Ractor.make_shareable(Marshal.load(Marshal.dump(args))), skip_if_pending: skip_if_pending,
+        )
+        recurring_list << task
+        task
+      end
+
+      # The declared recurring tasks, in declaration order. Once the
+      # registry is frozen, a shareable Array any Ractor can read.
+      def recurring_tasks
+        @recurring_registry || recurring_list.dup.freeze
       end
 
       # Called by Monk::Job.inherited, in the main Ractor as the app's job
@@ -94,6 +142,7 @@ module Monk
       # without a name a job can never be found again once enqueued.
       def freeze_registry!
         @registry = Ractor.make_shareable(classes.filter_map { |job| [job.name, job] if job.name }.to_h)
+        @recurring_registry = Ractor.make_shareable(recurring_list.dup)
       end
 
       # A failed job back to available, with its attempts reset; true if it
@@ -150,9 +199,32 @@ module Monk
         ran
       end
 
+      # Runs one scheduler pass as if the clock read `at`, for an app's
+      # tests of its recurring tasks; returns key => result (:initialized,
+      # :enqueued, ...). `at` stands in for the database clock as well, so
+      # it only runs with MONK_ENV=test. The first pass sets a task's
+      # checkpoint without enqueueing, as a deploy would:
+      #
+      #   Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 8, 59))
+      #   Monk::Jobs.run_scheduler!(at: Time.utc(2026, 10, 12, 9)) # => {"weekly_digest" => :enqueued}
+      #   Monk::Jobs.drain!
+      #
+      # Calls Monk.freeze! first, as bin/jobs does.
+      def run_scheduler!(at: Time.now)
+        unless Monk.env.test?
+          raise RunSchedulerOutsideTestsError,
+            "Monk::Jobs.run_scheduler! fires schedules at a made-up time, so it only runs with MONK_ENV=test " \
+            "(this is #{Monk.env})"
+        end
+
+        Monk.freeze!
+        Scheduler.new(adapter, recurring_tasks).run(at, clock: at)
+      end
+
       # Empties the queue: every job, failed ones included, and every job
-      # process row. For an app's tests, between one test and the next --
-      # and so it refuses to run unless MONK_ENV is test.
+      # process row, and every recurring task's checkpoint. For an app's
+      # tests, between one test and the next -- and so it refuses to run
+      # unless MONK_ENV is test.
       def clear!
         unless Monk.env.test?
           raise ClearOutsideTestsError,
@@ -162,12 +234,14 @@ module Monk
         adapter.clear!
       end
 
-      # Test-only: unfreezes the registry and forgets the configuration.
-      # Recorded classes stay recorded, the same way a Ruby class can't be
-      # undefined.
+      # Test-only: unfreezes the registry and forgets the configuration and
+      # the recurring tasks. Recorded classes stay recorded, the same way a
+      # Ruby class can't be undefined.
       def reset!
         @registry = nil
         @adapter = nil
+        @recurring_list = nil
+        @recurring_registry = nil
       end
 
       private
@@ -199,9 +273,9 @@ module Monk
         raise e.cause, cause: nil
       end
 
-      def check_enqueueable!(job_class)
+      def check_enqueueable!(job_class, caller_name)
         unless job_class.is_a?(Class) && job_class < Monk::Job
-          raise ArgumentError, "Monk::Jobs.enqueue needs a Monk::Job subclass, got #{job_class.inspect}"
+          raise ArgumentError, "#{caller_name} needs a Monk::Job subclass, got #{job_class.inspect}"
         end
         return if job_class.name
 
@@ -220,6 +294,10 @@ module Monk
       def classes
         @classes ||= []
       end
+
+      def recurring_list
+        @recurring_list ||= []
+      end
     end
 
     Monk.freeze_hooks << self
@@ -227,3 +305,11 @@ module Monk
 end
 
 require_relative "jobs/job"
+
+# What jobs provide together with another module, when that module is
+# loaded too -- either order works (lib/monk/mail.rb and lib/monk/auth.rb
+# end the same way), so an app's config files never require these
+# themselves (docs/adr/0017).
+require_relative "mail/deliver_later" if Monk.const_defined?(:Mail)
+require_relative "auth/send_login_link" if Monk.const_defined?(:Auth)
+require_relative "auth/sweep" if Monk.const_defined?(:Auth)

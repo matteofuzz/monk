@@ -119,7 +119,7 @@ class AssetsTest < Minitest::Test
       app = with_monk_env("development") { boot_app }
 
       %w[/../../etc/passwd /css/../../../etc/passwd].each do |path|
-        status, _headers, _body = app.call(env_for("GET", path))
+        status, = quietly { app.call(env_for("GET", path)) }
 
         assert_equal 404, status, "expected #{path} not to be served"
       end
@@ -145,7 +145,7 @@ class AssetsTest < Minitest::Test
 
       write_file(dir, "css/app.css", "body{color:red}\n")
 
-      _status, headers, body = app.call(env_for("GET", "/css/app.css"))
+      _status, headers, body = quietly { app.call(env_for("GET", "/css/app.css")) }
 
       assert_equal "body{color:red}\n", body.join
       assert_equal "no-cache", headers["cache-control"]
@@ -168,7 +168,7 @@ class AssetsTest < Minitest::Test
     with_assets("css/app.css" => CSS) do
       app = Class.new(Monk::Base) { error(404) { json(error: "not found") } }
       app.assets(false)
-      Monk.boot(app)
+      boot_quietly(app)
 
       status, _headers, _body = app.call(env_for("GET", "/css/app.css"))
 
@@ -200,7 +200,7 @@ class AssetsTest < Minitest::Test
     root = Monk::Assets.root
     app = Class.new(Monk::Base, &block)
     app.assets(root)
-    Monk.boot(app)
+    boot_quietly(app)
     app
   end
 end

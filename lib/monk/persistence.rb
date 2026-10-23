@@ -1,4 +1,5 @@
 require_relative "freeze_hooks"
+require_relative "persistence/pool"
 
 module Monk
   # Backend-agnostic persistence. Concrete backends (e.g.
@@ -8,6 +9,16 @@ module Monk
   # can seal every backend actually in use without needing to know their
   # names.
   module Persistence
+    # Closes every connection this Ractor opened, in every backend. A
+    # Ractor that ends leaves its connections to the garbage collector,
+    # which may not run for a long time; one that opened any calls this
+    # as it finishes (Monk::WebSocket::Server.serve, for a socket's).
+    def self.disconnect_all
+      # A copy: each backend's disconnect_all removes its own key.
+      backends = Ractor.current[:monk_persistence]&.keys || []
+      backends.each(&:disconnect_all)
+    end
+
     # Shared by every backend module: per-Ractor connection lifecycle, a
     # registry of named configs, and boot-time shareability sealing. A
     # backend `extend`s this and implements #connect(**opts) /
@@ -27,6 +38,14 @@ module Monk
         configs[name] = opts
       end
 
+      # The options a database was registered with, for something that
+      # opens its own connection to it (PgFanout's LISTEN).
+      def connection_options(name)
+        configs.fetch(name) do
+          raise Monk::UnknownPersistenceError, "no database registered as #{name.inspect}"
+        end
+      end
+
       # Registered connection names (e.g. :primary) -- Monk.boot's log
       # line reads this to report which backends an app actually uses.
       def names
@@ -35,6 +54,76 @@ module Monk
 
       def [](name)
         entry(name).conn
+      end
+
+      # With options, declares a named pool (docs/history/plan-pg-pool.md):
+      # `size` worker Ractors, each with its own connection to the
+      # registered database `db`, that run calls sent from any other
+      # Ractor. Nothing connects until #start_pools! runs, in the process
+      # that uses it. Every process loads the declarations
+      # (config/persistence.rb), next to #register.
+      #
+      # Without options, returns the started pool, from any Ractor.
+      # Raises if it was never declared, or declared but not started in
+      # this process.
+      def pool(name, **options)
+        return declare_pool(name, **options) unless options.empty?
+
+        handle = @running && @running[name]
+        return handle if handle
+
+        pool_config(name)
+        raise Monk::PoolNotStartedError,
+          "pool #{name.inspect} is declared but not started in this process -- call " \
+          "#{self}.start_pools!(#{name.inspect}) at boot in the process that uses it"
+      end
+
+      # Starts declared pools in this process: each pool's dispatcher and
+      # `size` workers, each worker with its own connection. Returns once
+      # every worker has connected; raises Monk::PoolStartError if any
+      # can't, and starts nothing for that pool. Main Ractor only, at boot,
+      # after every register and pool declaration: it freezes the
+      # registry, since the workers read it. A pool already started is
+      # left alone.
+      def start_pools!(*names)
+        unless Ractor.current == Ractor.main
+          raise ArgumentError, "#{self}.start_pools! runs in the main Ractor, at boot"
+        end
+
+        freeze_registry!
+        names.each { |name| start_pool(name) unless @running&.key?(name) }
+        self
+      end
+
+      # Hook: makes a copy of an exception fit to leave a pool's worker for
+      # another Ractor, by dropping what can't be copied. A backend whose
+      # errors carry nothing like that keeps this default.
+      def make_portable(_error) = nil
+
+      # This Ractor's own connections to this backend, closed and
+      # forgotten. A pool worker runs it as it stops; the next checkout in
+      # this Ractor reconnects.
+      def disconnect_all
+        Ractor.current[:monk_persistence]&.delete(self)&.each_value do |e|
+          disconnect(e.conn)
+        rescue StandardError
+          nil
+        end
+      end
+
+      # The pools started in this process, name => size (Monk.boot's line).
+      def running_pools
+        (@running || {}).transform_values { |handle| handle.config.size }
+      end
+
+      # A declared pool's options (a frozen Pool::Config).
+      def pool_config(name)
+        pools.fetch(name) do
+          raise Monk::UnknownPoolError,
+            "pool #{name.inspect} was never declared -- declare it once at boot with " \
+            "#{self}.pool(#{name.inspect}, size: #{Pool::DEFAULTS[:size]}); " \
+            "pool(#{name.inspect}) with no options only looks one up"
+        end
       end
 
       def checkout(name, timeout: DEFAULT_CHECKOUT_TIMEOUT)
@@ -46,9 +135,18 @@ module Monk
             "(checkout held longer than #{timeout}s)"
         end
 
+        # Checked here, before the block, and never by re-running it: Monk
+        # can't tell whether a failed block's writes reached the server,
+        # so a drop in the middle of a block fails that block, and the
+        # next checkout finds the connection dead and revives it. A
+        # revive that can't reach the server raises from here.
+        revive(e.conn) unless alive?(e.conn)
         yield e.conn
       ensure
-        e.slot << true if token
+        if token
+          release(e.conn)
+          e.slot << true
+        end
       end
 
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks.
@@ -61,17 +159,16 @@ module Monk
       # the value (not the module) fixes it, the same way it did there.
       def freeze_registry!
         @configs = Ractor.make_shareable(configs)
+        @pools = Ractor.make_shareable(pools)
       end
 
       # Test-only: drops all registered configs and this Ractor's cached
       # connections. Not part of the app-facing API.
       def reset!
-        Ractor.current[:monk_persistence]&.each_value do |e|
-          disconnect(e.conn)
-        rescue StandardError
-        end
-        Ractor.current[:monk_persistence] = {}
+        stop_pools
+        disconnect_all
         @configs = {}
+        @pools = {}
       end
 
       private
@@ -80,8 +177,87 @@ module Monk
         @configs ||= {}
       end
 
+      def pools
+        @pools ||= {}
+      end
+
+      # The started pools' dispatchers and inboxes, which only this (the
+      # main) Ractor uses: to stop them. Kept apart from @running, the
+      # frozen handles every Ractor reads.
+      def pool_ractors
+        @pool_ractors ||= {}
+      end
+
+      def start_pool(name)
+        ready = Ractor::Port.new
+        dispatcher = Ractor.new(self, pool_config(name), ready, name: "monk-pool-#{name}") do |backend, config, r|
+          Monk::Persistence::Pool::Dispatcher.run(backend, config, r)
+        end
+        status, value = ready.receive
+        unless status == :ok
+          dispatcher.join
+          raise Monk::PoolStartError, "pool #{name.inspect} couldn't connect its workers: #{value}"
+        end
+
+        pool_ractors[name] = { dispatcher: dispatcher, inbox: value }
+        handle = Pool::Handle.new(config: pool_config(name), inbox: value)
+        @running = Ractor.make_shareable((@running || {}).merge(name => handle))
+      ensure
+        ready&.close
+      end
+
+      # Test-only path (reset!). The dispatcher stops its workers, each
+      # finishing the call in hand, and answers every caller still waiting.
+      def stop_pools
+        pool_ractors.each_key { |name| stop_pool(name) }
+        @running = nil
+      end
+
+      def stop_pool(name)
+        stopping = pool_ractors.delete(name)
+        return unless stopping
+
+        send_stop(stopping[:inbox], [:stop])
+        stopping[:dispatcher].join
+      end
+
+      def send_stop(port, message)
+        port.send(message)
+      rescue Ractor::ClosedError
+        nil # already ended
+      end
+
+      def declare_pool(name, **options)
+        unknown = options.keys - Pool::DEFAULTS.keys
+        raise ArgumentError, "unknown pool option(s) #{unknown.join(", ")} for #{name.inspect}" if unknown.any?
+        raise ArgumentError, "pool #{name.inspect} is already declared" if pools.key?(name)
+
+        config = Pool::Config.new(name: name, **Pool::DEFAULTS, **options)
+        validate_pool!(config)
+        pools[name] = Ractor.make_shareable(config)
+      end
+
+      def validate_pool!(config)
+        unless configs.key?(config.db)
+          raise Monk::UnknownPersistenceError,
+            "pool #{config.name.inspect} uses db: #{config.db.inspect}, but no database is registered as " \
+            "#{config.db.inspect} -- call #{self}.register(#{config.db.inspect}, ...) before declaring the pool"
+        end
+
+        { size: Integer, queue: Integer, timeout: Numeric }.each do |option, type|
+          value = config.public_send(option)
+          next if value.is_a?(type) && value.positive?
+
+          raise ArgumentError,
+            "pool #{config.name.inspect}: #{option}: must be a positive #{type}, got #{value.inspect}"
+        end
+      end
+
+      # This Ractor's connections, by backend, then by name: so
+      # Persistence.disconnect_all can find every backend this Ractor
+      # used, from any Ractor.
       def ractor_local
-        Ractor.current[:monk_persistence] ||= {}
+        (Ractor.current[:monk_persistence] ||= {})[self] ||= {}
       end
 
       def entry(name)
@@ -108,6 +284,19 @@ module Monk
       def disconnect(conn)
         raise NotImplementedError, "#{self} must implement #disconnect(conn)"
       end
+
+      # Optional hooks around #checkout's block. A backend that can't tell
+      # a dead connection from a live one keeps these defaults.
+
+      # Whether conn can take a query. Cheap: runs before every checkout.
+      def alive?(_conn) = true
+
+      # Reconnects a connection #alive? said was dead; raises if it can't.
+      def revive(_conn) = nil
+
+      # Runs after every checkout's block, however it ended. Must not
+      # raise: it runs in an ensure, and would hide the block's exception.
+      def release(_conn) = nil
     end
   end
 end

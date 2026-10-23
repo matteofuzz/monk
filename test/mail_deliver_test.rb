@@ -90,7 +90,7 @@ class MailDeliverTest < Minitest::Test
             "sent"
           end
         end
-        Monk.boot(app)
+        boot_quietly(app)
 
         result = Ractor.new(app) do |a|
           code, _headers, chunks = a.call({ "REQUEST_METHOD" => "POST", "PATH_INFO" => "/login/ann" })

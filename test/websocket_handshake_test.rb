@@ -25,6 +25,21 @@ class WebSocketHandshakeTest < Minitest::Test
     assert_equal "server.example.com", headers["host"]
   end
 
+  def test_parse_request_keeps_a_colon_inside_a_value_and_skips_lines_without_one
+    request = VALID_REQUEST.sub("Host: server.example.com", "Host:  server.example.com:8080 \r\nno colon here")
+    headers = Monk::WebSocket::Handshake.parse_request(request)
+
+    assert_equal "server.example.com:8080", headers["host"]
+    refute headers.key?("no colon here")
+    refute headers.key?("get /chat http/1.1"), "the request line isn't a header"
+  end
+
+  def test_the_last_session_token_cookie_wins
+    headers = { "cookie" => "session_token=first; csrf_token=x; session_token=last" }
+
+    assert_equal({ token: "last", via: :cookie }, Monk::WebSocket::Handshake.credential_from(headers))
+  end
+
   def test_parse_request_raises_on_missing_upgrade_header
     request = VALID_REQUEST.sub("Upgrade: websocket\r\n", "")
 

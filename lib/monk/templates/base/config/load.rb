@@ -3,6 +3,14 @@
 # it never boots the app itself (that's config.ru's Monk.boot).
 require_relative "settings"
 
+# Each Monk module's config, if this app has it (`monk add <module>` writes
+# it), in Monk's fixed order: a module's config may rely on the ones
+# before it. Nothing to edit here when a module is added.
+%w[persistence redis auth mail jobs websocket live storage].each do |name|
+  path = File.expand_path("#{name}.rb", __dir__)
+  require path if File.exist?(path)
+end
+
 # The app's code, one directory per role, in the order they call each
 # other: presenters read models, helpers, mailers and broadcasts use both,
 # and jobs call all of them. Everything is loaded here, before Monk.boot
@@ -16,3 +24,14 @@ require_relative "settings"
 %w[models presenters helpers mailers broadcasts jobs].each do |role|
   Dir[File.expand_path("../app/#{role}/**/*.rb", __dir__)].sort.each { |file| require file }
 end
+
+# With jobs (monk add jobs), the schedules of recurring jobs. Last, because
+# each one names a job class from app/jobs/.
+recurring = File.expand_path("recurring.rb", __dir__)
+require recurring if File.exist?(recurring)
+
+# With websocket (monk add websocket), every process that loads this file
+# can broadcast (bin/server, bin/jobs, bin/console, the tests), so its
+# transport is started here, once everything above has declared its
+# databases.
+AppWebSocket.start! if defined?(AppWebSocket)

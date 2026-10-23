@@ -116,4 +116,46 @@ class WebSocketRegistryLifecycleTest < Minitest::Test
     room1_b&.close
     room2&.close
   end
+
+  # plan-pg-reconnect.md, phase 5: a fanout's subscriber that missed
+  # broadcasts closes every open socket so its client reconnects and
+  # resyncs. One CloseRequest per port, however many keys it's under (a
+  # Live page holds one port for all its topics).
+  def test_close_all_sends_one_close_request_to_each_registered_port
+    registry = Monk::WebSocket::Registry.new
+    one_key = Ractor::Port.new
+    two_keys = Ractor::Port.new
+    registry.register(:room1, one_key)
+    registry.register(:room1, two_keys)
+    registry.register(:room2, two_keys)
+
+    registry.close_all(1011, "missed broadcasts")
+
+    expected = Monk::WebSocket::CloseRequest.new(code: 1011, reason: "missed broadcasts")
+    assert_equal expected, one_key.receive
+    assert_equal expected, two_keys.receive
+    registry.broadcast(:room2, "after")
+    assert_equal "after", two_keys.receive, "a port got a second CloseRequest"
+  ensure
+    one_key&.close
+    two_keys&.close
+  end
+
+  def test_a_subscribed_connection_closes_its_socket_with_the_requested_code
+    registry = Monk::WebSocket::Registry.new
+    server = start_server(&self.class.subscribe_then_wait_for_disconnect(registry))
+    socket = TCPSocket.new("127.0.0.1", server.port)
+    handshake!(socket)
+    wait_until { registry.count(KEY) == 1 }
+
+    registry.close_all(1011, "missed broadcasts")
+
+    frame = read_raw_frame(socket)
+    assert_equal 0x8, frame[:opcode]
+    assert_equal "#{[1011].pack("n")}missed broadcasts", frame[:payload]
+    assert_nil socket.read(1), "expected the socket to be closed"
+    wait_until { registry.count(KEY).zero? }
+  ensure
+    socket&.close
+  end
 end

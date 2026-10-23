@@ -17,6 +17,19 @@ module Monk
 
         raw(%(data-live-topic="#{names.join(" ")}"))
       end
+
+      # For the layout's <%= monk_head %>: where the client opens its
+      # WebSocket (live_ws_url, which config/live.rb declares) and the
+      # client runtime itself. Nothing until Live is configured, i.e. until
+      # config/live.rb has run.
+      def head_tags
+        return super unless Monk::Live.registry
+
+        super + [
+          %(<meta name="monk-live-url" content="#{h(settings[:live_ws_url])}">),
+          %(<script type="module" src="#{h(asset_path("#{Live::CLIENT_PATH}/monk_live.js"))}"></script>),
+        ]
+      end
     end
   end
 end

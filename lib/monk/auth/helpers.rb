@@ -42,6 +42,17 @@ module Monk
         add_response_cookie("csrf_token", "", http_only: false, max_age: 0)
       end
 
+      # Ends the current session: revokes it, whether its token came as a
+      # Bearer header or the session cookie, and clears the cookies -- with
+      # or without a session to end. On a cookie-authenticated route, call
+      # require_csrf! first.
+      def log_out!
+        token = bearer_token || session_cookie_token
+        Monk::Auth.revoke(token) if token
+        clear_session_cookie
+        nil
+      end
+
       private
 
       def bearer_token

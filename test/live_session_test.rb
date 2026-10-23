@@ -234,6 +234,21 @@ class LiveSessionTest < Minitest::Test
     assert_equal 0, @registry.count(:"t:1"), "the session did not clean up after closing"
   end
 
+  # plan-pg-reconnect.md, phase 5: the fanout's subscriber missed
+  # broadcasts, so the page must reconnect and resync.
+  def test_a_close_request_closes_the_connection_with_its_code_and_cleans_up
+    Monk::Live.authorize("t:*", &ALLOW)
+    connection, thread = start_session("7", with_thread: true)
+    connection.send_message(op: "subscribe", topics: %w[t:1 t:2])
+    next_json(connection)
+
+    @registry.close_all(1011, "missed broadcasts")
+    thread.join(3)
+
+    assert_equal [1011, "missed broadcasts"], connection.closed_with
+    assert_equal [0, 0], [@registry.count(:"t:1"), @registry.count(:"t:2")]
+  end
+
   def test_the_real_handler_relays_non_ascii_fragments_over_a_socket
     Monk::Live.configure(registry: @registry)
     Monk::Live.authorize("public:*", anonymous: true, &ALLOW)

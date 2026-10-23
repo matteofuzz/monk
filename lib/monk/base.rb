@@ -12,6 +12,11 @@ module Monk
     EMPTY_ARRAY = [].freeze
     private_constant :EMPTY_ARRAY
 
+    # How much of an unhandled exception's backtrace #log_exception
+    # writes -- the same depth Monk::Jobs keeps for a failed job.
+    BACKTRACE_LINES = 10
+    private_constant :BACKTRACE_LINES
+
     # Action name -> path suffix (appended to the resource path) and verb(s)
     # it dispatches on, for #resources. :update registers both PATCH and PUT --
     # PATCH is the canonical partial-update verb, PUT accepted too since
@@ -162,6 +167,7 @@ module Monk
             [200, context.headers, [body]]
           rescue StandardError => e
             handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
+            log_exception(env, e, handled: !handler.nil?)
             if handler
               context.status = 500
               body = context.instance_exec(context, &handler.last)
@@ -170,6 +176,20 @@ module Monk
               [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
             end
           end
+        end
+      end
+
+      # The request line alone ("GET /x -> 500") says nothing about why.
+      # Unhandled: an error, with the first backtrace lines. Handled by an
+      # `error` block: the app chose the response, so one info line --
+      # an error(NotFound) { halt 404 } shouldn't fill the log with ERRORs.
+      def log_exception(env, error, handled:)
+        line = "#{env["REQUEST_METHOD"]} #{env["PATH_INFO"]} raised #{error.class}: #{error.message}"
+        if handled
+          Monk::Log.info("#{line} (handled)")
+        else
+          trace = Array(error.backtrace).first(BACKTRACE_LINES).map { |frame| "\n  #{frame}" }
+          Monk::Log.error("#{line}#{trace.join}")
         end
       end
 
