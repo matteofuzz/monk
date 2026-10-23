@@ -1,6 +1,10 @@
 require_relative "freeze_hooks"
 require_relative "environment"
+require_relative "log"
 require_relative "storage/errors"
+require_relative "storage/key"
+require_relative "storage/input"
+require_relative "storage/object"
 require_relative "storage/backends/file"
 require_relative "storage/backends/s3"
 require_relative "storage/url"
@@ -38,6 +42,48 @@ module Monk
 
       attr_reader :config
 
+      # "tmp/1f0c...": a random key under prefix. Uploads go under tmp/
+      # until the app confirms them.
+      def generate_key(prefix:)
+        Key.generate(prefix: prefix)
+      end
+
+      # The API, the same on every backend (docs/plan-storage.md decision 3),
+      # each call logged as one line without URLs or secrets.
+
+      # Returns the key. body is a String, or an IO that responds to size,
+      # read and rewind.
+      def put(key, body, content_type: Input::DEFAULT_CONTENT_TYPE)
+        logged("put", key) { [backend.put(key, body, content_type: content_type), "bytes=#{body.size}"] }
+      end
+
+      # The bytes, as a frozen binary String; range: 0..15 reads only the
+      # first 16. A missing key raises NotFoundError.
+      def get(key, range: nil)
+        logged("get", key) do
+          bytes = backend.get(key, range: range)
+          [bytes, "bytes=#{bytes.bytesize}"]
+        end
+      end
+
+      # A Storage::Object, or nil when the key is missing.
+      def head(key)
+        logged("head", key) do
+          object = backend.head(key)
+          [object, object ? "bytes=#{object.byte_size}" : "missing"]
+        end
+      end
+
+      # Idempotent: deleting a missing key is not an error.
+      def delete(key)
+        logged("delete", key) { [backend.delete(key), nil] }
+      end
+
+      # Returns to. A missing from raises NotFoundError.
+      def copy(from, to)
+        logged("copy", from) { [backend.copy(from, to), "to=#{to}"] }
+      end
+
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module, same as Monk::Mail.freeze_registry! --
       # an unfrozen config Hash can't be read from a worker Ractor at all.
@@ -51,6 +97,21 @@ module Monk
       end
 
       private
+
+      def backend
+        raise NotConfiguredError, "call Monk::Storage.configure(url:) before using Monk::Storage" unless config
+
+        config[:backend]
+      end
+
+      # The block returns [result, detail for the log line].
+      def logged(operation, key)
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        result, detail = yield
+        elapsed = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
+        Monk::Log.info("[storage] #{operation} key=#{key}#{" #{detail}" if detail} #{elapsed}ms")
+        result
+      end
 
       def backend_for(url)
         return URL.parse(url) unless url.nil? || url.empty?

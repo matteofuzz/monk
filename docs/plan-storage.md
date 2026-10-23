@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phase 1 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 and 2 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -20,6 +20,7 @@ lib/monk/storage.rb                 # configure, the API (delegates to the backe
 lib/monk/storage/errors.rb
 lib/monk/storage/url.rb             # STORAGE_URL -> backend value, redacted errors (like Mail::URL)
 lib/monk/storage/key.rb             # generate / validate!
+lib/monk/storage/input.rb           # content type, body and range checks both backends share
 lib/monk/storage/object.rb          # Data: key, byte_size, content_type, etag (head's result)
 lib/monk/storage/upload.rb          # Data: url, headers (presigned_put's result)
 lib/monk/storage/sniff.rb           # magic bytes -> content type; SVG refusal
@@ -82,8 +83,12 @@ These fill gaps the ADR leaves open. Each can still change in review.
    the copy comes before the delete. A helper can be added later without
    breaking anything, if apps keep writing the same lines.
 6. **The file backend stores metadata next to the bytes.** Objects go in
-   `<root>/objects/<key>` and metadata (content type, size, MD5 for
-   `etag`) in `<root>/meta/<key>.json`. Writes go to a temporary file
+   `<root>/objects/<key>~` and metadata (content type, size, MD5 for
+   `etag`) in `<root>/meta/<key>~.json`. The `~`, which no key contains,
+   keeps a key's file apart from the directory of a longer key: a bucket
+   has both `a` and `a/b`, and on disk `a` would otherwise be a file
+   where `a/b` needs a directory. An object exists once its metadata
+   does, so a put that died between the two renames isn't one. Writes go to a temporary file
    followed by `File.rename`, so a reader never sees half an object.
    `root` is expanded to an absolute path in `configure`, so worker
    Ractors don't depend on the current directory.
@@ -134,6 +139,11 @@ These fill gaps the ADR leaves open. Each can still change in review.
     files from jobs).
 12. **`get(key, range: nil)` and `Sniff`.** `range:` is a Ruby `Range` of
     byte offsets: a `Range:` header on S3, a slice of the file on disk.
+    A range that ends past the object gives what's there, and one that
+    starts past it gives `""` (S3 answers 416, which the S3 backend maps
+    to `""`), so a confirm route can read the first 16 bytes of any
+    upload, even an empty one. `head`'s `etag` is the MD5 in hex without
+    the quotes S3 puts around it.
     `Sniff.content_type(bytes)` reads the first 16 bytes and returns one of
     `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `audio/ogg` (an
     `OggS` page with an `OpusHead`), `application/pdf`, or `nil`.
