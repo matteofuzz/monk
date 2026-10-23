@@ -95,6 +95,48 @@ module Monk
           raise RequestError, "file storage copy #{from} -> #{to} failed: #{e.class}: #{e.message}"
         end
 
+        # A signed download link, the same for every call within one
+        # cache_window, so the browser's cache works: valid until the end
+        # of the window plus expires_in (docs/plan-storage.md decision 9).
+        def url(key, expires_in:, cache_window:, now: Time.now.to_i)
+          Key.validate!(key)
+          Input.link_times!(expires_in: expires_in, cache_window: cache_window)
+          window_start = now - (now % cache_window)
+          link({ m: "GET", k: key, e: window_start + cache_window + expires_in })
+        end
+
+        # A signed upload link for a browser, with the length and content
+        # type inside it.
+        def presigned_put(key, content_type:, byte_size:, expires_in:, now: Time.now.to_i)
+          Key.validate!(key)
+          Input.content_type!(content_type)
+          Input.byte_size!(byte_size)
+          Input.link_times!(expires_in: expires_in, cache_window: 1)
+          url = link({ m: "PUT", k: key, e: now + expires_in, l: byte_size, t: content_type })
+          Upload.new(url: url, headers: { "Content-Type" => content_type, "Content-Length" => byte_size.to_s }.freeze)
+        end
+
+        # The /_monk/storage PUT: stores input (rack.input, read once) as
+        # key, if it holds exactly byte_size bytes. Returns the MD5, or nil
+        # when the length is wrong, and then stores nothing.
+        def receive(key, input, content_type:, byte_size:)
+          object = path_for("objects", key, "~")
+          meta = path_for("meta", key, "~.json")
+
+          md5 = write_atomically(object) do |out|
+            digest, size = copy_at_most(input, out, byte_size)
+            return nil unless size == byte_size
+
+            digest
+          end
+          write_atomically(meta) do |out|
+            out.write(JSON.generate(content_type: content_type, byte_size: byte_size, etag: md5))
+          end
+          md5
+        rescue SystemCallError, IOError => e
+          raise RequestError, "file storage upload #{key} failed: #{e.class}: #{e.message}"
+        end
+
         # Never print the secret -- a backend ends up in logs and exception
         # messages more easily than anyone intends (same as Mail's SMTP).
         def inspect
@@ -157,6 +199,23 @@ module Monk
           result
         ensure
           ::FileUtils.rm_f(temporary) if temporary && ::File.exist?(temporary)
+        end
+
+        def link(payload)
+          "#{ROUTE_PREFIX}#{Token.sign(payload, secret)}"
+        end
+
+        # Reads at most limit + 1 bytes, enough to tell a body that's too
+        # long. Returns [md5 hex, bytes read].
+        def copy_at_most(input, out, limit)
+          md5 = Digest::MD5.new
+          size = 0
+          while size <= limit && (chunk = input.read([Input::CHUNK_BYTES, limit + 1 - size].min))
+            out.write(chunk)
+            md5 << chunk
+            size += chunk.bytesize
+          end
+          [md5.hexdigest, size]
         end
 
         # Returns [md5 hex, bytes written].

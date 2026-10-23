@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 and 2 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1, 2 and 3 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -28,6 +28,7 @@ lib/monk/storage/backends/file.rb   # Data: root, secret
 lib/monk/storage/backends/s3.rb     # Data: bucket, endpoint, region, access_key, secret_key, path_style, tls
 lib/monk/storage/sig_v4.rb          # header signing + query presigning, pure functions
 lib/monk/storage/token.rb           # file backend's HMAC tokens for /_monk/storage/:token
+lib/monk/storage/routes.rb          # PUT/GET /_monk/storage/:token, called by Storage.response(env)
 lib/monk/generators/storage.rb      # monk add storage
 lib/monk/templates/storage/...
 docs/guides/storage.md
@@ -116,12 +117,16 @@ These fill gaps the ADR leaves open. Each can still change in review.
    `X-Content-Type-Options: nosniff`, and `GET` serves the stored content
    type with `Cache-Control: private, max-age=<seconds until expiry>`.
 9. **`cache_window` signing.** `t0 = now - (now % cache_window)`. S3 signs
-   with `X-Amz-Date = t0` and `X-Amz-Expires = (now - t0) + expires_in`,
+   with `X-Amz-Date = t0` and `X-Amz-Expires = cache_window + expires_in`,
    so every link is valid for at least `expires_in`, and every call within
-   one window returns the same URL. The file backend puts the same
-   `expires_at` (`t0 + cache_window + expires_in`, rounded the same way) in
-   its token. Defaults: `cache_window: 3600`, `expires_in: 3600`.
-   `configure` and `url` raise if the total can reach SigV4's 7-day limit.
+   one window returns the same URL. (The first draft had `X-Amz-Expires =
+   (now - t0) + expires_in`, which expires at `now + expires_in` and so
+   changes every second.) The file backend puts the same `expires_at`,
+   `t0 + cache_window + expires_in`, in its token. Defaults:
+   `cache_window: 3600`, `expires_in: 3600`, set in `configure`, which
+   like `url` raises if `cache_window + expires_in` is over SigV4's 7-day
+   limit. `presigned_put` has no window (each upload is its own link) and
+   defaults to `expires_in: 600`.
 10. **SigV4 is pure and tested against AWS's published vectors** (the
     `get-vanilla`, `post-x-www-form-urlencoded` and presigned-URL examples
     from the AWS SigV4 test suite and the S3 docs). It takes `now:` as an

@@ -5,6 +5,9 @@ require_relative "storage/errors"
 require_relative "storage/key"
 require_relative "storage/input"
 require_relative "storage/object"
+require_relative "storage/upload"
+require_relative "storage/token"
+require_relative "storage/routes"
 require_relative "storage/backends/file"
 require_relative "storage/backends/s3"
 require_relative "storage/url"
@@ -20,6 +23,12 @@ module Monk
     # STORAGE_SECRET is unset. Fixed, so a link built by bin/jobs also
     # works in the web process.
     DEVELOPMENT_SECRET = "monk-storage-development-secret".freeze
+    # url's defaults: links valid for at least an hour, the same URL for
+    # a whole hour (docs/plan-storage.md decision 9).
+    CACHE_WINDOW = 3600
+    EXPIRES_IN = 3600
+    # presigned_put's default: an upload starts within minutes of asking.
+    UPLOAD_EXPIRES_IN = 600
 
     class << self
       # Typically, in config/storage.rb:
@@ -32,12 +41,15 @@ module Monk
       # hosts whose disk is replaced on deploy, a silent fallback to local
       # files would lose every upload. secret: signs the file backend's
       # links, and is required with file:// outside development and test.
-      # An S3 backend doesn't use it.
-      def configure(url:, secret: nil)
+      # An S3 backend doesn't use it. expires_in: and cache_window: are
+      # url's defaults, and together stay within the 7 days a signed S3
+      # link allows.
+      def configure(url:, secret: nil, expires_in: EXPIRES_IN, cache_window: CACHE_WINDOW)
+        Input.link_times!(expires_in: expires_in, cache_window: cache_window)
         backend = backend_for(url)
         backend = backend.with(secret: secret_for(secret)) if backend.is_a?(Backends::File)
 
-        @config = { backend: backend }
+        @config = { backend: backend, expires_in: expires_in, cache_window: cache_window }
       end
 
       attr_reader :config
@@ -84,6 +96,32 @@ module Monk
         logged("copy", from) { [backend.copy(from, to), "to=#{to}"] }
       end
 
+      # A signed download link for key, the String to redirect to (302)
+      # from the app's own route, after checking the viewer may see it.
+      # The same URL for every call within one cache_window, so the
+      # browser's cache works; valid at least expires_in seconds.
+      def url(key, expires_in: config_value(:expires_in), cache_window: config_value(:cache_window))
+        logged("url", key) { [backend.url(key, expires_in: expires_in, cache_window: cache_window), nil] }
+      end
+
+      # A signed upload link for a browser: an Upload with the url to PUT
+      # the file to and the headers to send. content_type: and byte_size:
+      # are inside the signature, so the bucket refuses any other. key
+      # goes under tmp/ until the app confirms it.
+      def presigned_put(key, content_type:, byte_size:, expires_in: UPLOAD_EXPIRES_IN)
+        logged("presigned_put", key) do
+          [backend.presigned_put(key, content_type: content_type, byte_size: byte_size, expires_in: expires_in),
+           "bytes=#{byte_size}",]
+        end
+      end
+
+      # Called from Base#dispatch, after Monk::Assets.response: the file
+      # backend's /_monk/storage routes, or nil for any other request
+      # (and always nil with an S3 backend, or before configure).
+      def response(env)
+        Routes.response(env, config[:backend]) if config
+      end
+
       # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
       # the value, not the module, same as Monk::Mail.freeze_registry! --
       # an unfrozen config Hash can't be read from a worker Ractor at all.
@@ -102,6 +140,11 @@ module Monk
         raise NotConfiguredError, "call Monk::Storage.configure(url:) before using Monk::Storage" unless config
 
         config[:backend]
+      end
+
+      def config_value(name)
+        backend
+        config[name]
       end
 
       # The block returns [result, detail for the log line].

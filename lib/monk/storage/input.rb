@@ -5,6 +5,10 @@ module Monk
     module Input
       DEFAULT_CONTENT_TYPE = "application/octet-stream".freeze
       CHUNK_BYTES = 64 * 1024
+      # SigV4's longest signed link: 7 days. A url is valid until the end
+      # of its cache window plus expires_in, so the two together stay
+      # under it.
+      MAX_LINK_SECONDS = 7 * 24 * 3600
       # type/subtype with optional parameters, and nothing that could end a
       # header line.
       CONTENT_TYPE = %r{\A[a-z0-9][a-z0-9!\#$&^_.+-]*/[a-z0-9][a-z0-9!\#$&^_.+-]*(;[ \t]*[ -~]*)?\z}i
@@ -26,6 +30,25 @@ module Monk
         raise ArgumentError,
           "a stored body is a String or an IO that responds to size, read and rewind (File, Tempfile, " \
           "StringIO), not #{body.class}; write a pipe to a Tempfile first"
+      end
+
+      def link_times!(expires_in:, cache_window:)
+        { expires_in: expires_in, cache_window: cache_window }.each do |name, value|
+          next if value.is_a?(Integer) && value.positive?
+
+          raise ArgumentError, "#{name}: is a number of seconds above 0, not #{value.inspect}"
+        end
+        return if expires_in + cache_window <= MAX_LINK_SECONDS
+
+        raise ArgumentError,
+          "expires_in: #{expires_in} + cache_window: #{cache_window} is more than 7 days (#{MAX_LINK_SECONDS}), " \
+          "the longest a signed S3 link can be valid"
+      end
+
+      def byte_size!(value)
+        return value if value.is_a?(Integer) && !value.negative?
+
+        raise ArgumentError, "byte_size: is the upload's length in bytes, not #{value.inspect}"
       end
 
       # A Range of byte offsets -> [first, last], last nil for "to the end".
