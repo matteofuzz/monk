@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 to 6 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 to 6 and 8 done 2026-10-23.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -342,6 +342,11 @@ as live routes, because ADR 0017 gives only `live` a demo, and a live
   added to `examples_test.rb` (uncommented, booted, and the full upload →
   confirm → download flow run against the file backend), and `storage`
   added to `combinations_test.rb`.
+- Done. Two things came up. `bin/console` comes only with `postgres`, so
+  storage's SETUP.md gives a `bundle exec ruby -r ./config/load` one-liner
+  instead (mail's and redis's sections still name `bin/console`). And
+  `docs/guides/scaffolding.md` gained storage's row and entry here rather
+  than in Phase 9, since it describes each generator.
 
 ### Phase 9: docs
 
