@@ -14,7 +14,7 @@ class GeneratorsExamplesTest < Minitest::Test
   # because with live bin/websocket_server runs live's handler, never the
   # chat example's -- and that way each transport is used by one.
   SUITES = {
-    without_live: [%i[postgres redis mail auth jobs websocket], { transport: "redis" }],
+    without_live: [%i[postgres redis mail auth jobs websocket storage], { transport: "redis" }],
     with_live: [%i[live], { transport: "postgres" }],
   }.freeze
 
@@ -127,6 +127,51 @@ class GeneratorsExamplesTest < Minitest::Test
         Process.kill("TERM", pid) && Process.wait(pid) if pid
       end
     RUBY
+    "storage-upload" => <<~'RUBY',
+      def test_storage_upload
+        assert_equal 422, request("POST", "/uploads", content_type: "image/svg+xml", byte_size: 10).first
+        assert_equal 422, request("POST", "/uploads", content_type: "image/png", byte_size: 0).first
+
+        upload = storage_upload(PNG)
+
+        assert_match %r{\Atmp/[0-9a-f]{32}\z}, upload["key"]
+        assert_equal ["image/png", PNG.bytesize], [Monk::Storage.head(upload["key"]).content_type,
+                                                   Monk::Storage.head(upload["key"]).byte_size]
+      end
+    RUBY
+    "storage-confirm" => <<~'RUBY',
+      def test_storage_confirm
+        key = storage_upload(PNG)["key"]
+        status, body = request("POST", "/uploads/confirm", key: key)
+
+        assert_equal 200, status
+        media_key = JSON.parse(body)["key"]
+        assert_equal key.sub("tmp/", "media/"), media_key
+        assert_nil Monk::Storage.head(key), "the tmp/ file is deleted after the copy"
+        assert_equal PNG, Monk::Storage.get(media_key)
+
+        not_a_png = storage_upload("<svg onload=alert(1)>".b)["key"]
+        assert_equal 422, request("POST", "/uploads/confirm", key: not_a_png).first
+        assert_nil Monk::Storage.head(not_a_png), "a refused upload is deleted"
+        assert_equal 422, request("POST", "/uploads/confirm", key: "media/../secret").first
+        assert_equal 404, request("POST", "/uploads/confirm", key: "tmp/#{"0" * 32}").first
+      end
+    RUBY
+    "storage-download" => <<~'RUBY',
+      def test_storage_download
+        key = storage_upload(PNG)["key"]
+        media_key = JSON.parse(request("POST", "/uploads/confirm", key: key)[1])["key"]
+
+        status, _body, headers = request("GET", "/#{media_key}")
+        assert_equal 302, status
+        status, body, headers = request("GET", headers["location"])
+
+        assert_equal 200, status
+        assert_equal "image/png", headers["content-type"]
+        assert_equal PNG, body.b
+        assert_equal 404, request("GET", "/media/not-a-key").first
+      end
+    RUBY
     "live-rule" => <<~RUBY,
       def test_live_rule
         assert Monk::Live.authorized?("7", "contacts:7")
@@ -187,6 +232,22 @@ class GeneratorsExamplesTest < Minitest::Test
     def ws_read(socket)
       _opcode, length = socket.read(2).bytes
       socket.read(length & 0x7f)
+    end
+
+    PNG = "\x89PNG\r\n\x1A\n\x00\x00\x00\rIHDR".b.freeze
+
+    # storage-upload's route, then the browser's PUT to the link it signed
+    # (a /_monk/storage path with the file backend). Returns its JSON.
+    def storage_upload(bytes, content_type: "image/png")
+      status, body = request("POST", "/uploads", content_type: content_type, byte_size: bytes.bytesize)
+      raise "POST /uploads: #{status} #{body}" unless status == 200
+
+      upload = JSON.parse(body)
+      put = Rack::MockRequest.env_for(upload["url"], method: "PUT", input: bytes, "CONTENT_TYPE" => content_type)
+      status, = APP.call(put)
+      raise "PUT #{upload["url"]}: #{status}" unless status == 200
+
+      upload
     end
 
     # Monk reads params from the query string and JSON bodies. Returns

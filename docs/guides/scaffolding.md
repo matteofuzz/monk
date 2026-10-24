@@ -40,6 +40,7 @@ modules it needs, first:
 | `jobs` | background jobs on Postgres, run by `bin/jobs` | `postgres` |
 | `websocket` | the WebSocket server process | `postgres` or `redis` |
 | `live` | HTML pushed to open pages | `websocket` |
+| `storage` | files users send: local files in development, an S3 bucket in production | — |
 
 - **What it prints:** the files created (`+`), the lines appended (`~`),
   the files it left alone (`!`), the values to set before production, and
@@ -107,6 +108,13 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   `live-rule` example), the `live-broadcast` example, the demo; a test that
   an update reaches a subscribed socket. The layout's `<%= monk_head %>`
   loads the browser client, which Monk serves from the gem.
+- **storage:** `config/storage.rb` (`STORAGE_URL`, unset in development
+  and test: files under `storage/<env>`, ignored by git), and the
+  `storage-upload`, `storage-confirm` and `storage-download` examples in
+  `app/routes/storage.rb`, driven with `curl`; a test that stores a file,
+  reads it back and fetches its signed link. No migration and no
+  JavaScript: the uploads table and the browser code depend on the app,
+  and `docs/guides/storage.md` has them to copy.
 
 ## Examples
 
@@ -138,7 +146,7 @@ config.ru              # require_relative "config/load"; require_relative "app/a
 config/
   settings.rb          # the app's settings; loads .env
   load.rb              # every module's config that exists, then app/ by role
-  persistence.rb redis.rb auth.rb mail.rb jobs.rb websocket.rb live.rb   # one per module added
+  persistence.rb redis.rb auth.rb mail.rb jobs.rb websocket.rb live.rb storage.rb   # one per module added
 app/
   app.rb               # class App < Monk::Base, its base routes; loads app/routes/*.rb
   routes/              # more routes, one file per module or feature, each reopening class App
@@ -146,6 +154,7 @@ app/
   views/               # layouts/, and mail/, live/, auth/ as modules add templates
   sockets/             # with websocket: socket handlers, when the app doesn't use live
 db/migrate/  public/  bin/  test/
+storage/               # with storage: development's and test's files (ignored by git)
 SETUP.md  AGENTS.md  CLAUDE.md
 ```
 
