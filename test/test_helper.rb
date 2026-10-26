@@ -388,7 +388,8 @@ module StorageTestHelpers
   end
 
   # A request on the bucket itself (create, list), which the backend's API
-  # has no call for. Path-style, signed with the Phase 4 signer.
+  # has no call for. Addressed as the backend is, signed with the Phase 4
+  # signer, over TLS unless the endpoint is http:// (floci).
   def bucket_request(backend, method, path, query: {})
     host = backend.path_style ? backend.endpoint : "#{backend.bucket}.#{backend.endpoint}"
     full = backend.path_style ? "/#{backend.bucket}#{path.delete_suffix("/")}" : path
@@ -397,7 +398,8 @@ module StorageTestHelpers
     signed.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: full, query: query, headers: signed,
       payload_hash: Monk::Storage::SigV4::EMPTY_PAYLOAD, credentials: credentials, now: Time.now.to_i,))
     target = query.empty? ? full : "#{full}?#{Monk::Storage::SigV4.canonical_query(query)}"
-    Net::HTTP.start(host.sub(/:\d+\z/, ""), host[/:(\d+)\z/, 1].to_i, open_timeout: 2, read_timeout: 10) do |http|
+    port = host[/:(\d+)\z/, 1]&.to_i || (backend.tls ? 443 : 80)
+    Net::HTTP.start(host.sub(/:\d+\z/, ""), port, use_ssl: backend.tls, open_timeout: 5, read_timeout: 10) do |http|
       http.request(Net::HTTPGenericRequest.new(method, false, true, target, signed))
     end
   end

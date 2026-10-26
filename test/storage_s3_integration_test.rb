@@ -22,7 +22,9 @@ class StorageS3IntegrationTest < Minitest::Test
     uri = URI(url)
     request = Net::HTTPGenericRequest.new(method, !body.nil?, method != "HEAD", uri.request_uri, headers)
     request.body = body if body
-    Net::HTTP.start(uri.host, uri.port, read_timeout: 10) { |http| http.request(request) }
+    Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", read_timeout: 10) do |http|
+      http.request(request)
+    end
   end
 
   def upload(key, body, content_type: "image/png", byte_size: body.bytesize)
@@ -94,11 +96,12 @@ class StorageS3IntegrationTest < Minitest::Test
       Monk::Storage.copy(key, final)
       Monk::Storage.delete(key)
       [Monk::Storage.get(final), Monk::Storage.get(final, range: 0..3), Monk::Storage.head(final).content_type,
-       Monk::Storage.head(key), Monk::Storage.url(final).start_with?("http://"),
+       Monk::Storage.head(key), URI(Monk::Storage.url(final)).scheme,
        Monk::Storage.presigned_put("tmp/next", content_type: "text/plain", byte_size: 1).headers,]
     end.value
 
-    assert_equal ["from a worker", "from", "text/plain", nil, true,
+    # https on a real bucket, http on floci.
+    assert_equal ["from a worker", "from", "text/plain", nil, backend.tls ? "https" : "http",
                   { "Content-Type" => "text/plain", "Content-Length" => "1" },], result
   ensure
     Monk::Storage.reset!

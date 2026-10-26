@@ -1,6 +1,6 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 to 6 and 8 done 2026-10-23.
+Status: draft 2026-10-07. Phases 1 to 6 and 8 done 2026-10-23, Phase 7 done 2026-10-26.
 Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
@@ -276,7 +276,8 @@ These fill gaps the ADR leaves open. Each can still change in review.
 ### Phase 7: verifying the four open items on Hetzner (manual, before the S3 backend ships)
 
 Run by you on a staging Hetzner project: `MONK_TEST_STORAGE_URL=s3://…fsn1…`
-and the Phase 5 integration test, plus one script per item:
+and the Phase 5 integration test for items 1 and 4, and
+`STORAGE_CHECK_URL=s3://… bin/storage_check` for items 2 and 3:
 
 1. A presigned PUT with a longer body, then with another content type:
    both refused.
@@ -285,6 +286,18 @@ and the Phase 5 integration test, plus one script per item:
 3. Apply the guide's lifecycle XML using `<Filter><Prefix>`, and fall back
    to the top-level `<Prefix>`. Write down which one is accepted.
 4. `copy` with region `fsn1`, once virtual-hosted and once path-style.
+
+Results so far (2026-10-26, bucket `monk-storage-check-test-1` in
+`fsn1`): the integration test passed against it with the bucket in the
+host name and with `path_style=1`, so items 1 and 4 pass. Items 2 and 3
+passed with `bin/storage_check` (CORS: the rule accepted, a preflight
+from the app's origin allowed, one from another refused, the upload
+answering with `Access-Control-Allow-Origin`; lifecycle: both forms
+accepted, so the guide uses `<Filter><Prefix>`). No fallback is needed. Running it on Hetzner found three bugs in the tests
+that floci, served over `http://`, couldn't show: `bucket_request` used
+port 0 and no TLS for an endpoint without a port, the test's stand-in
+browser never used TLS, and the worker-Ractor test expected an `http://`
+link.
 
 The results go into the ADR's Open items, and the guide uses only what
 passed. A failure moves to the fallback the ADR names for that item, and
