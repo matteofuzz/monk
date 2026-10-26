@@ -18,7 +18,23 @@ An app made with the release named in a section needs none of its steps.
 
 In the `Gemfile`, `gem "monkrb", "~> 0.23", require: "monk"` (what a new
 app gets; `"~> 0.22"` would also install 0.23, but not require it), then
-`bundle update monkrb`. Nothing in an existing app needs to change.
+`bundle update monkrb`.
+
+### `MONK_ENV` in production (every app)
+
+Unset, `MONK_ENV` means development, and a deployed app runs that way
+without an error: mail printed instead of sent, magic links logged, demo
+routes on. Make sure every deployed process has `MONK_ENV=production` (or
+`staging`). A new app's `Dockerfile` sets it; in an existing one, add this
+line before `EXPOSE 9292`, or set it in the platform's env:
+
+```dockerfile
+ENV MONK_ENV=production
+```
+
+`bin/server` now warns when it listens beyond the machine with
+`MONK_ENV` unset. To get the warning, copy the file from
+`monk help base --file bin/server`; it changes nothing else.
 
 ### File storage, if the app wants it
 

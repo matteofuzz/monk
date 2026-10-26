@@ -2,4 +2,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Bound beyond this machine (the Dockerfile's --bind 0.0.0.0) with MONK_ENV
+# unset: almost certainly deployed, and running as development. A warning,
+# not an error, so a container run locally on purpose still starts.
+bind="" previous=""
+for arg in "$@"; do
+  case "$previous" in -b | --bind) bind="$arg" ;; esac
+  case "$arg" in --bind=*) bind="${arg#--bind=}" ;; esac
+  previous="$arg"
+done
+case "$bind" in
+  "" | 127.* | localhost | ::1) ;;
+  *)
+    if [[ -z "${MONK_ENV:-}" ]] && ! grep -qs '^MONK_ENV=' .env; then
+      echo "bin/server: warning: listening on $bind with MONK_ENV unset, so this runs as development:" \
+        "mail is printed instead of sent, magic links are logged, auth cookies aren't Secure, demo routes" \
+        "are on. Set MONK_ENV=production (or staging) where the app is deployed." >&2
+    fi
+    ;;
+esac
+
 exec bundle exec kino -p "${PORT:-9292}" "$@" config.ru

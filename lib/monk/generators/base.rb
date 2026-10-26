@@ -15,5 +15,6 @@ Monk::Generator.define(:base) do
 
   setup_section "base/setup.md"
   agents_section "base/agents.md"
+  set_before_production "MONK_ENV", "production or staging; unset = development (the Dockerfile sets production)"
   next_step "bin/server", note: "http://localhost:9292"
 end

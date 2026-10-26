@@ -35,6 +35,17 @@ in `lib/monk/version.rb`.
 
 ### Changed
 
+- **A new app runs as production in its Docker image.** The scaffolded
+  `Dockerfile` sets `MONK_ENV=production`, which a platform's env can
+  override (`staging`). Unset, `MONK_ENV` means development, and a deploy
+  that forgot it ran that way without an error: mail printed instead of
+  sent, magic links logged, auth cookies without `Secure`, demo routes on,
+  storage links signed with a public value. `bin/server` now warns when it
+  listens beyond the machine (`--bind 0.0.0.0`) with `MONK_ENV` unset,
+  `monk new` lists `MONK_ENV` among the values to set before production,
+  and `docs/guides/deploying.md` sets it in every platform's example
+  (Render's start command is now `bin/server`, so the warning applies
+  there too). The deploy guide also gains storage's row.
 - **A new app's `Gemfile` asks for `monkrb ~> 0.23`.**
 - `docs/framework-comparison.md` is recomputed for 0.23.0, and
   `docs/roadmap.md` moves storage up to 0.23 (it was planned as 0.26).

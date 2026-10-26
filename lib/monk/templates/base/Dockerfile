@@ -29,5 +29,10 @@ COPY . .
 # `bin/websocket_server` as the command instead of publishing another
 # port from this Dockerfile -- see docs/guides/deploying.md. Every other
 # process in bin/ (bin/jobs, say) is the same: this image, that command.
+# Production unless the platform says otherwise (MONK_ENV=staging in its
+# env, say). Unset, Monk runs as development: mail printed instead of
+# sent, magic links logged, demo routes on, a public storage secret.
+ENV MONK_ENV=production
+
 EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]
