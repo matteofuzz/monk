@@ -102,7 +102,7 @@ _Avoid_: Cron, dispatcher, stager (that moves due scheduled jobs)
 
 
 **Monk module**:
-A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
+A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `storage`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
 _Avoid_: Feature, plugin, flag (`monk new` had flags before ADR 0017)
 
 **Generator**:
@@ -116,3 +116,28 @@ _Avoid_: Sample, snippet, demo
 **Transport**:
 What carries a broadcast between `bin/server`, `bin/jobs` and `bin/websocket_server`, which are always separate processes: Postgres `LISTEN`/`NOTIFY` (`PgFanout`) or Redis (`RedisFanout`), chosen once per app in `config/websocket.rb`. Live has none of its own: it uses websocket's.
 _Avoid_: Fanout (the object that uses a transport), backend, adapter
+
+
+**Storage**:
+`Monk::Storage`: an opt-in module (`require "monk/storage"`) that stores the files users send as bytes under a key, in an S3-compatible bucket or, in development and test, on the local disk (the file backend). One `STORAGE_URL` picks the backend. It keeps no record of a file: filename, owner and size live in the app's own table.
+_Avoid_: Attachments, Active Storage, uploads (one way files arrive), blob
+
+**Key**:
+The name of one stored object (`media/1f0c…`): lowercase segments joined by `/`, made by `generate_key` from a prefix and 128 random bits, never from a user's filename or the file's contents. The same key means the same object on every backend.
+_Avoid_: Path, filename, blob id
+
+**Upload** (`tmp/` upload):
+A file a browser PUT straight to the bucket through a `presigned_put` link, under a key in `tmp/`, before the app has checked it. It becomes the app's file only at confirm; one never confirmed is deleted by the bucket's lifecycle rule after a day.
+_Avoid_: Attachment (the app's record of a confirmed file), pending file
+
+**Confirm**:
+The app's own route, called by the browser after an upload, and the only signal that one happened: it `head`s the `tmp/` object, checks its first bytes with `Sniff`, `copy`s it to its final key, `delete`s the `tmp/` copy (in that order), and records it. Monk has no helper for it, since S3 has no rename.
+_Avoid_: Promote, move, finalize
+
+**Signed link**:
+A URL to one object that works without credentials until it expires: `url(key)` for a download (GET), `presigned_put` for an upload (PUT, with the type and length inside the signature). SigV4 on S3; an HMAC token at `/_monk/storage/<token>` with the file backend. Never written into a page: a page links to the app's route, which checks access and redirects to one.
+_Avoid_: Presigned URL (fine for S3, but the file backend's isn't one), public URL, temporary URL
+
+**Cache window**:
+The period (an hour by default) `url` rounds its signing time down to, so every link for a key within it is the same URL and the browser's cache works. A link is valid until the end of its window plus `expires_in`, at most 7 days in all.
+_Avoid_: TTL, expiry (that's `expires_in`)

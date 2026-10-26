@@ -4,6 +4,52 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.23.0 - 2026-10-26
+
+### Added
+
+- **File storage, `Monk::Storage`** (`require "monk/storage"`, ADR 0018,
+  `docs/guides/storage.md`). Files are stored by key in any S3-compatible
+  bucket (Hetzner, Cloudflare R2, Backblaze B2, AWS, MinIO), chosen by
+  one `STORAGE_URL`, and on the local disk in development and test.
+  `put`, `get` (with `range:`), `head`, `delete`, `copy`, signed download
+  links (`url`, the same URL within an hour so browsers cache it) and
+  browser uploads (`presigned_put`, with the type and length inside the
+  signature), all from any worker Ractor. SigV4 is Monk's own, with no
+  gem. Uploads go from the browser straight to the bucket and downloads
+  redirect to it, so no worker Ractor waits on the bytes. The file
+  backend behaves like a bucket, signed links and refusals included, at
+  `/_monk/storage`. `Monk::Storage::Sniff` tells PNG, JPEG, GIF, WebP,
+  Ogg/Opus and PDF from a file's first 64 bytes, and refuses SVG.
+  Checked on Hetzner Object Storage: the signed upload limits, CORS for
+  browser uploads, the lifecycle rule that expires `tmp/`, and `copy`
+  with both addressing styles (`bin/storage_check`).
+- **`monk add storage`**: `config/storage.rb`, the upload, confirm and
+  download flow as commented examples in `app/routes/storage.rb` (driven
+  with `curl`), and a test. No migration and no JavaScript: the guide
+  has an uploads table and the browser code to copy. An existing app
+  gets it the same way (`docs/guides/upgrading.md`, 0.23).
+- **`bin/storage_check`**, in the monk repository: checks a real bucket's
+  CORS rule for browser uploads and its `tmp/` lifecycle rule, then
+  removes both.
+
+### Changed
+
+- **A new app runs as production in its Docker image.** The scaffolded
+  `Dockerfile` sets `MONK_ENV=production`, which a platform's env can
+  override (`staging`). Unset, `MONK_ENV` means development, and a deploy
+  that forgot it ran that way without an error: mail printed instead of
+  sent, magic links logged, auth cookies without `Secure`, demo routes on,
+  storage links signed with a public value. `bin/server` now warns when it
+  listens beyond the machine (`--bind 0.0.0.0`) with `MONK_ENV` unset,
+  `monk new` lists `MONK_ENV` among the values to set before production,
+  and `docs/guides/deploying.md` sets it in every platform's example
+  (Render's start command is now `bin/server`, so the warning applies
+  there too). The deploy guide also gains storage's row.
+- **A new app's `Gemfile` asks for `monkrb ~> 0.23`.**
+- `docs/framework-comparison.md` is recomputed for 0.23.0, and
+  `docs/roadmap.md` moves storage up to 0.23 (it was planned as 0.26).
+
 ## 0.22.2 - 2026-10-22
 
 ### Fixed

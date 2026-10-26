@@ -14,6 +14,39 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.23
+
+In the `Gemfile`, `gem "monkrb", "~> 0.23", require: "monk"` (what a new
+app gets; `"~> 0.22"` would also install 0.23, but not require it), then
+`bundle update monkrb`.
+
+### `MONK_ENV` in production (every app)
+
+Unset, `MONK_ENV` means development, and a deployed app runs that way
+without an error: mail printed instead of sent, magic links logged, demo
+routes on. Make sure every deployed process has `MONK_ENV=production` (or
+`staging`). A new app's `Dockerfile` sets it; in an existing one, add this
+line before `EXPOSE 9292`, or set it in the platform's env:
+
+```dockerfile
+ENV MONK_ENV=production
+```
+
+`bin/server` now warns when it listens beyond the machine with
+`MONK_ENV` unset. To get the warning, copy the file from
+`monk help base --file bin/server`; it changes nothing else.
+
+### File storage, if the app wants it
+
+`Monk::Storage` is new. `monk add storage` adds it to an existing app the
+same way as to a new one: `config/storage.rb`, the commented upload,
+confirm and download examples in `app/routes/storage.rb`,
+`test/storage_test.rb`, `/storage/` in `.gitignore` and `.dockerignore`,
+and its sections of `SETUP.md` and `AGENTS.md`. It only creates files and
+appends lines, so nothing the app already has is touched. Then
+[`storage.md`](storage.md) for the bucket, its CORS and lifecycle rules,
+and an uploads table to copy.
+
 ## 0.22.2
 
 `bundle update monkrb`. Nothing in the app changes.

@@ -27,7 +27,7 @@ modules it adds.
 
 | Module | Processes | Services | Env vars | Gems |
 |---|---|---|---|---|
-| (base) | `bin/server` | none | `PUBLIC_URL` (see below) | none |
+| (base) | `bin/server` | none | `MONK_ENV`, `PUBLIC_URL` (see below) | none |
 | `postgres` | one-off `bin/setup_db` on each deploy (applies migrations) | Postgres | `DB_*` | `pg` |
 | `redis` | — | Redis | `REDIS_URL` | `redis` |
 | `mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp` |
@@ -35,6 +35,18 @@ modules it adds.
 | `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
 | `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
 | `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
+| `storage` | — | an S3-compatible bucket, with a CORS rule for `PUBLIC_URL` and a `tmp/` lifecycle rule (see [`storage.md`](storage.md)) | `STORAGE_URL`; `STORAGE_SECRET` only with `file://` | — |
+
+`MONK_ENV` is `production` (or `staging`) wherever the app is deployed.
+Unset, it means `development`, and the app runs that way without an
+error: mail is printed instead of sent, magic links are logged, auth
+cookies aren't `Secure`, demo routes are on, and storage signs its links
+with a public value. The scaffolded `Dockerfile` sets
+`MONK_ENV=production`, and the platform's own env can override it (as
+the VPS case below does with `staging`). Without the Dockerfile (Render's
+native buildpack), set it in the platform's env vars. `bin/server` warns
+when it listens beyond the machine (`--bind 0.0.0.0`) with `MONK_ENV`
+unset.
 
 `PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
 own origin. Its default, `http://localhost:9292`, is only harmless without
@@ -108,12 +120,14 @@ cd my_app && bundle install
 2. **New Web Service**, pointed at the repo:
    - Environment: `Ruby`
    - Build command: `bundle install`
-   - Start command: `bundle exec kino -p "$PORT" --bind 0.0.0.0 config.ru`
-     (Render injects `PORT`; Kino needs `--bind 0.0.0.0` to be reachable —
-     it defaults to localhost)
-   - Env vars: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` —
-     filled in from the Postgres instance's Info page. `config/persistence.rb`
-     reads exactly these five vars, not a `DATABASE_URL`.
+   - Start command: `bin/server --bind 0.0.0.0` (Render injects `PORT`,
+     which `bin/server` passes to Kino; `--bind 0.0.0.0` makes it
+     reachable, since Kino defaults to localhost)
+   - Env vars: `MONK_ENV=production` (the buildpack doesn't use the
+     Dockerfile, which sets it), `PUBLIC_URL`, and `DB_HOST`, `DB_PORT`,
+     `DB_USER`, `DB_PASSWORD`, `DB_NAME` — filled in from the Postgres
+     instance's Info page. `config/persistence.rb` reads exactly these five
+     vars, not a `DATABASE_URL`.
 
 **Migrations**
 
@@ -155,9 +169,15 @@ WORKDIR /app
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY . .
 
+ENV MONK_ENV=production
+
 EXPOSE 9292
 CMD ["bin/server", "--bind", "0.0.0.0"]
 ```
+
+`MONK_ENV=production` is the default for every process this image runs
+(`bin/server`, `bin/jobs`, `bin/setup_db`); `fly secrets set
+MONK_ENV=staging` overrides it for a staging app.
 
 `build-essential` is only in the build stage: `monk add postgres` adds
 `irb` (for `bin/console`), and its dependencies (`erb`, `io-console`,

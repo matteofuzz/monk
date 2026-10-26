@@ -147,4 +147,40 @@ class GeneratorsBaseTest < Minitest::Test
       assert_equal "config/jobs app/jobs config/recurring ", out
     end
   end
+
+  # Bound beyond the machine with MONK_ENV unset, the app would run as
+  # development: bin/server warns, and still starts.
+  def test_bin_server_warns_when_listening_publicly_without_monk_env
+    with_new_app do |dest|
+      assert_includes server_stderr(dest, %w[--bind 0.0.0.0]), "MONK_ENV unset"
+      assert_includes server_stderr(dest, %w[-b 10.0.0.5]), "listening on 10.0.0.5"
+      assert_includes server_stderr(dest, %w[--bind=0.0.0.0]), "MONK_ENV unset"
+      assert_empty server_stderr(dest, %w[--bind 0.0.0.0], "MONK_ENV" => "production")
+      assert_empty server_stderr(dest, [])
+      assert_empty server_stderr(dest, %w[--bind 127.0.0.1])
+      File.write(File.join(dest, ".env"), "MONK_ENV=staging\n")
+      assert_empty server_stderr(dest, %w[--bind 0.0.0.0])
+    end
+  end
+
+  def test_the_dockerfile_runs_in_production
+    assert_includes template("base/Dockerfile"), "ENV MONK_ENV=production\n"
+  end
+
+  private
+
+  # bin/server's stderr, with a stand-in `bundle` that records it was
+  # called instead of starting kino.
+  def server_stderr(dest, args, env = {})
+    Dir.mktmpdir do |fake|
+      File.write(File.join(fake, "bundle"), "#!/bin/sh\necho started >&2\n")
+      File.chmod(0o755, File.join(fake, "bundle"))
+      env = { "PATH" => "#{fake}:#{ENV.fetch("PATH")}", "MONK_ENV" => nil }.merge(env)
+      _out, err, status = Open3.capture3(env, File.join(dest, "bin/server"), *args, chdir: dest)
+
+      assert status.success?, err
+      assert_includes err, "started", "bin/server still starts"
+      err.sub("started\n", "")
+    end
+  end
 end

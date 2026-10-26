@@ -1,6 +1,6 @@
 source "https://rubygems.org"
 
-gem "monkrb", "~> 0.22", require: "monk"
+gem "monkrb", "~> 0.23", require: "monk"
 gem "rackup"
 gem "webrick"
 gem "kino"

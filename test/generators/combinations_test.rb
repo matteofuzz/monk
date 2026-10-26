@@ -9,7 +9,7 @@ class GeneratorsCombinationsTest < Minitest::Test
   include PersistenceTestHelpers
   include RedisTestHelpers
 
-  MODULES = %i[postgres redis mail auth jobs websocket live].freeze
+  MODULES = %i[postgres redis mail auth jobs websocket live storage].freeze
   # websocket and live need a transport; Postgres, so a pair adds it.
   OPTIONS = { transport: "postgres" }.freeze
 

@@ -55,6 +55,16 @@ class DigestPreloadTest < Minitest::Test
     assert_equal "0 ", race("monk/assets", "SHA256")
   end
 
+  # The file backend hashes each put from worker Ractors (its etag).
+  def test_storage_file_backend_digest_is_ready_before_any_ractor
+    assert_equal "0 ", race("monk/storage", "MD5")
+  end
+
+  # The S3 backend's SigV4 hashes every request it signs.
+  def test_storage_sig_v4_digest_is_ready_before_any_ractor
+    assert_equal "0 ", race("monk/storage", "SHA256")
+  end
+
   private
 
   def race(feature, digest_class)

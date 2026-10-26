@@ -1,0 +1,177 @@
+#!/usr/bin/env ruby
+# Checks a real bucket for the two settings Monk::Storage needs and can't
+# test with an emulator: the CORS rule that lets browsers PUT uploads, and
+# the lifecycle rule that expires tmp/ (docs/history/plan-storage.md Phase 7,
+# ADR 0018's open items 2 and 3).
+#
+#   STORAGE_CHECK_URL='s3://KEY:SECRET@bucket?endpoint=fsn1.your-objectstorage.com&region=fsn1' \
+#     bin/storage_check [cors|lifecycle|all]
+#
+# ORIGIN is the app's origin to allow (default https://app.example.test).
+# Each check applies its rule, tests it, prints what the bucket answered,
+# then removes the rule again: use a bucket meant for testing.
+require "bundler/setup"
+require "base64"
+require "net/http"
+require "monk/storage"
+
+class StorageCheck
+  ORIGIN = ENV.fetch("ORIGIN", "https://app.example.test")
+  OTHER_ORIGIN = "https://other.example.test".freeze
+
+  # What a browser upload needs: a preflight for PUT with a Content-Type
+  # header (Content-Length is set by the browser, never preflighted), and
+  # the ETag readable by the page's JS.
+  CORS = <<~XML.freeze
+    <CORSConfiguration>
+      <CORSRule>
+        <AllowedOrigin>#{ORIGIN}</AllowedOrigin>
+        <AllowedMethod>PUT</AllowedMethod>
+        <AllowedHeader>content-type</AllowedHeader>
+        <ExposeHeader>ETag</ExposeHeader>
+        <MaxAgeSeconds>3600</MaxAgeSeconds>
+      </CORSRule>
+    </CORSConfiguration>
+  XML
+
+  # The same rule, written two ways: the current one, with <Filter>, and
+  # the older top-level <Prefix> that Hetzner's own example uses.
+  LIFECYCLE = {
+    "<Filter><Prefix>" => "<Filter><Prefix>tmp/</Prefix></Filter>",
+    "top-level <Prefix>" => "<Prefix>tmp/</Prefix>",
+  }.transform_values do |prefix|
+    <<~XML
+      <LifecycleConfiguration>
+        <Rule>
+          <ID>monk-expire-tmp</ID>
+          #{prefix}
+          <Status>Enabled</Status>
+          <Expiration><Days>1</Days></Expiration>
+          <AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>
+        </Rule>
+      </LifecycleConfiguration>
+    XML
+  end.freeze
+
+  def initialize(url)
+    @backend = Monk::Storage::URL.parse(url)
+    @failures = 0
+  end
+
+  def passes?(which)
+    cors if %w[cors all].include?(which)
+    lifecycle if %w[lifecycle all].include?(which)
+    puts(@failures.zero? ? "\nAll checks passed." : "\n#{@failures} check(s) failed.")
+    @failures.zero?
+  end
+
+  private
+
+  # Item 2: the rule is accepted, a preflight from ORIGIN is allowed and one
+  # from another origin isn't, and the real PUT carries the CORS headers.
+  def cors
+    heading "CORS (open item 2), allowing #{ORIGIN}"
+    response = bucket("PUT", "cors", CORS)
+    return unless check("the bucket accepts the CORS rule", response, response.is_a?(Net::HTTPSuccess))
+
+    allowed = preflight(ORIGIN)
+    check("a preflight from #{ORIGIN} is allowed", allowed,
+      allowed.is_a?(Net::HTTPSuccess) && allowed["access-control-allow-origin"] == ORIGIN &&
+        allowed["access-control-allow-methods"].to_s.include?("PUT"),)
+    refused = preflight(OTHER_ORIGIN)
+    check("a preflight from #{OTHER_ORIGIN} is refused", refused,
+      !refused.is_a?(Net::HTTPSuccess) || refused["access-control-allow-origin"].nil?,)
+
+    upload = @backend.presigned_put("tmp/cors-check", content_type: "text/plain", byte_size: 2, expires_in: 600)
+    put = send_request("PUT", URI(upload.url), upload.headers.merge("Origin" => ORIGIN), "ok")
+    check("the upload itself answers with Access-Control-Allow-Origin", put,
+      put.is_a?(Net::HTTPSuccess) && put["access-control-allow-origin"] == ORIGIN,)
+  ensure
+    clean_up { @backend.delete("tmp/cors-check") }
+    clean_up { bucket("DELETE", "cors") }
+  end
+
+  # Best effort: a cleanup that fails (a wrong secret) mustn't hide the
+  # result above it.
+  def clean_up
+    yield
+  rescue Monk::Storage::RequestError, SystemCallError, Net::OpenTimeout => e
+    puts "  (cleanup failed: #{e.message[0, 120]})"
+  end
+
+  # Item 3: which of the two ways of writing the rule the bucket accepts,
+  # and what it stores.
+  def lifecycle
+    heading "Lifecycle rule expiring tmp/ (open item 3): one of the two forms is enough"
+    accepted = LIFECYCLE.select do |form, xml|
+      response = bucket("PUT", "lifecycle", xml)
+      next false unless report("the bucket accepts the rule written with #{form}", response,
+        response.is_a?(Net::HTTPSuccess),)
+
+      stored = bucket("GET", "lifecycle")
+      puts "        stored: #{stored.body.to_s.gsub(/\s+/, " ").strip}"
+      bucket("DELETE", "lifecycle")
+      true
+    end
+    @failures += 1 if accepted.empty?
+    puts "  => the guide uses: #{accepted.empty? ? "neither (a cleanup job is needed)" : accepted.keys.first}"
+  end
+
+  def preflight(origin)
+    uri = URI("#{base_url}/#{object_path("tmp/cors-check")}")
+    send_request("OPTIONS", uri, "Origin" => origin, "Access-Control-Request-Method" => "PUT",
+      "Access-Control-Request-Headers" => "content-type",)
+  end
+
+  # A request on the bucket's ?cors or ?lifecycle, signed with SigV4.
+  # PutBucketCors and PutBucketLifecycle need Content-MD5.
+  def bucket(method, subresource, body = nil)
+    path = @backend.path_style ? "/#{@backend.bucket}/" : "/"
+    payload = body.to_s
+    headers = { "host" => host, "x-amz-content-sha256" => Digest::SHA256.hexdigest(payload) }
+    if body
+      headers.merge!("content-md5" => Base64.strict_encode64(Digest::MD5.digest(payload)),
+        "content-type" => "application/xml",)
+    end
+    headers.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: path, query: { subresource => "" },
+      headers: headers, payload_hash: headers["x-amz-content-sha256"], credentials: credentials,
+      now: Time.now.to_i,))
+    send_request(method, URI("#{scheme}://#{host}#{path}?#{subresource}="), headers.except("host"), body)
+  end
+
+  def send_request(method, uri, headers, body = nil)
+    request = Net::HTTPGenericRequest.new(method, !body.nil?, method != "HEAD", uri.request_uri, headers)
+    request.body = body if body
+    Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: 5, read_timeout: 15) do |http|
+      http.request(request)
+    end
+  end
+
+  def check(label, response, passed)
+    @failures += 1 unless passed
+    report(label, response, passed)
+  end
+
+  # Prints a result without counting it as a failure.
+  def report(label, response, passed)
+    puts "  #{passed ? "PASS" : "FAIL"}  #{label}"
+    puts "        #{response.code} #{response.body.to_s.gsub(/\s+/, " ").strip[0, 300]}" unless passed
+    cors_headers = response.each_header.select { |name, _| name.start_with?("access-control-") }
+    cors_headers.each { |name, value| puts "        #{name}: #{value}" } unless passed
+    passed
+  end
+
+  def heading(text) = puts("\n#{text}")
+  def credentials = { access_key: @backend.access_key, secret_key: @backend.secret_key, region: @backend.region }
+  def scheme = @backend.tls ? "https" : "http"
+  def host = @backend.path_style ? @backend.endpoint : "#{@backend.bucket}.#{@backend.endpoint}"
+  def base_url = "#{scheme}://#{host}"
+  def object_path(key) = @backend.path_style ? "#{@backend.bucket}/#{key}" : key
+end
+
+url = ENV.fetch("STORAGE_CHECK_URL") do
+  abort "set STORAGE_CHECK_URL to the bucket's s3:// URL (see the top of #{$PROGRAM_NAME})"
+end
+which = ARGV.first || "all"
+abort "usage: #{$PROGRAM_NAME} [cors|lifecycle|all]" unless %w[cors lifecycle all].include?(which)
+exit(StorageCheck.new(url).passes?(which))
