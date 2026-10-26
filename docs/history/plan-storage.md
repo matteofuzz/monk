@@ -1,7 +1,8 @@
 # File storage (`Monk::Storage`): implementation plan
 
-Status: draft 2026-10-07. Phases 1 to 6 and 8 done 2026-10-23, Phase 7 done 2026-10-26.
-Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](adr/0018-storage-s3-compatible-direct-upload.md)
+Status: done, in monkrb 0.23.0. Drafted 2026-10-07; Phases 1 to 6 and 8
+done 2026-10-23, Phases 7 and 9 on 2026-10-26.
+Companion record: [`adr/0018-storage-s3-compatible-direct-upload.md`](../adr/0018-storage-s3-compatible-direct-upload.md)
 (why S3 is the only remote backend, why uploads skip the app, why
 downloads redirect, and the four Hetzner open items).
 
@@ -381,6 +382,14 @@ as live routes, because ADR 0017 gives only `live` a demo, and a live
   since its floci command needed a place.
 - README module list, CHANGELOG entry. The version bump is left to you.
 - When everything is done, this plan moves to `docs/history/`.
+- Done. `docs/guides/storage.md` follows the order of the flow (config,
+  keys, the API, uploads, downloads, an uploads table, setting up a
+  bucket, providers, `file://` on a server, tests); only Hetzner is
+  marked as checked, R2 and B2 are from their docs. `CONTEXT.md` gained
+  Storage, Key, Upload, Confirm, Signed link and Cache window, and
+  storage in Monk module's list. The CHANGELOG entry is under
+  "Unreleased". `docs/history/plan-scaffold.md` still links this plan at
+  its old path, as the record it is.
 
 ## Open questions for review
 

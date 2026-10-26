@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "json"
 
-# monk add storage (docs/plan-storage.md Phase 8): no service, no
+# monk add storage (docs/history/plan-storage.md Phase 8): no service, no
 # migration and no JS; the upload flow comes as commented examples.
 class GeneratorsStorageTest < Minitest::Test
   include GeneratorTestHelpers

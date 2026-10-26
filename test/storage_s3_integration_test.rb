@@ -3,7 +3,7 @@ require_relative "support/storage_contract"
 require "monk/storage"
 
 # The S3 backend against a real S3 server, a local floci that checks
-# signatures (docs/plan-storage.md Phase 5): the contract every backend
+# signatures (docs/history/plan-storage.md Phase 5): the contract every backend
 # meets, then the browser's side of an upload and a download, the ADR's
 # spike rebuilt as a test. Never skipped: StorageTestHelpers fails, naming
 # the docker command, when the server isn't there.

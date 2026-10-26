@@ -156,7 +156,7 @@ module Monk
         asset = Monk::Assets.response(env)
         return asset if asset
 
-        # The file storage backend's signed links (docs/plan-storage.md
+        # The file storage backend's signed links (docs/history/plan-storage.md
         # decision 7), only when the app requires monk/storage.
         stored = Monk::Storage.response(env) if defined?(Monk::Storage)
         return stored if stored

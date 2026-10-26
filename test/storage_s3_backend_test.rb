@@ -82,7 +82,7 @@ class StorageS3BackendTest < Minitest::Test
     assert_equal Encoding::BINARY, bytes.encoding
   end
 
-  # docs/plan-storage.md decision 12: a range past the end is "".
+  # docs/history/plan-storage.md decision 12: a range past the end is "".
   def test_get_maps_a_416_to_empty
     serve([416, {}, "<Error><Code>InvalidRange</Code></Error>"])
 
@@ -200,7 +200,7 @@ class StorageS3BackendTest < Minitest::Test
     assert link.start_with?("http://127.0.0.1:4566/media/media/a?")
   end
 
-  # docs/plan-storage.md decision 9: signed at the window's start, valid
+  # docs/history/plan-storage.md decision 9: signed at the window's start, valid
   # for the window plus expires_in, the same URL all window long.
   def test_url_is_the_same_within_one_cache_window
     window_start = 1_800_000_000 - (1_800_000_000 % 3600)

@@ -11,7 +11,7 @@ module Monk
     # of a request Monk sends, and the query string of a link a browser
     # uses (a presigned PUT, a signed GET). Pure functions of their
     # arguments, the time included, so they're tested against AWS's
-    # published vectors without stubbing Time (docs/plan-storage.md
+    # published vectors without stubbing Time (docs/history/plan-storage.md
     # decision 10).
     #
     # Paths and query strings are encoded the S3 way: each byte outside

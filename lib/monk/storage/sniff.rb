@@ -4,7 +4,7 @@ module Monk
     # sends can't be trusted. Defence in depth: the type a signed link
     # serves is the one the app signed into presigned_put from its allowed
     # list, and this catches a file whose bytes don't match it
-    # (docs/plan-storage.md decision 12). At confirm, read only these
+    # (docs/history/plan-storage.md decision 12). At confirm, read only these
     # bytes:
     #
     #   head = Monk::Storage.get(key, range: Monk::Storage::Sniff::RANGE)

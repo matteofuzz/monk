@@ -3,7 +3,7 @@ require "stringio"
 require "tempfile"
 
 # What every Monk::Storage backend does the same way
-# (docs/plan-storage.md decision 2). A test class includes it and defines
+# (docs/history/plan-storage.md decision 2). A test class includes it and defines
 # #backend, returning the backend under test, empty at the start of each
 # test. The file backend runs it in storage_file_backend_test.rb; the S3
 # backend runs it against floci (storage_s3_integration_test.rb).

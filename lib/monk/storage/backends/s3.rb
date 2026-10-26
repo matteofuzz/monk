@@ -23,7 +23,7 @@ module Monk
         # Returns the key. body is a String, or an IO that responds to size,
         # read and rewind: its SHA-256 is computed first and signed, then it
         # is rewound and streamed, so it's read twice but never held in
-        # memory (docs/plan-storage.md decision 11).
+        # memory (docs/history/plan-storage.md decision 11).
         def put(key, body, content_type: Input::DEFAULT_CONTENT_TYPE)
           Key.validate!(key)
           Input.content_type!(content_type)
@@ -94,7 +94,7 @@ module Monk
 
         # A signed GET link, the same for every call within one
         # cache_window: signed at the window's start, valid for the window
-        # plus expires_in (docs/plan-storage.md decision 9).
+        # plus expires_in (docs/history/plan-storage.md decision 9).
         def url(key, expires_in:, cache_window:, now: Time.now.to_i)
           Key.validate!(key)
           Input.link_times!(expires_in: expires_in, cache_window: cache_window)

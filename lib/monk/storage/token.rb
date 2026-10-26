@@ -7,7 +7,7 @@ module Monk
     # for a bucket's signed URL. A token is base64url(JSON payload) + "." +
     # base64url(HMAC-SHA256 of that first part), the payload
     # {m: "GET"|"PUT", k: key, e: expires_at, l: length, t: type}, l and t
-    # for uploads only (docs/plan-storage.md decision 8).
+    # for uploads only (docs/history/plan-storage.md decision 8).
     module Token
       module_function
 

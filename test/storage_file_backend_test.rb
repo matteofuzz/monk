@@ -17,7 +17,7 @@ class StorageFileBackendTest < Minitest::Test
     FileUtils.remove_entry(@dir)
   end
 
-  # docs/plan-storage.md decision 6.
+  # docs/history/plan-storage.md decision 6.
   def test_bytes_and_metadata_live_side_by_side_under_root
     backend.put("media/a", "hello", content_type: "text/plain")
 

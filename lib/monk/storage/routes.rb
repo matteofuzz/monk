@@ -4,7 +4,7 @@ module Monk
 
     # PUT and GET /_monk/storage/<token>: the file backend standing in for
     # a bucket's signed URLs, refusing what a bucket would refuse, the way
-    # it would (docs/plan-storage.md decisions 7 and 8). Served whenever
+    # it would (docs/history/plan-storage.md decisions 7 and 8). Served whenever
     # the backend is file://, in any environment, since its links only
     # work if the routes exist.
     module Routes

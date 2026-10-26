@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "monk/storage"
 
 # The file backend's /_monk/storage routes, through a booted app: the
-# browser's side of an upload and a download (docs/plan-storage.md
+# browser's side of an upload and a download (docs/history/plan-storage.md
 # Phase 3).
 class StorageRoutesTest < Minitest::Test
   LIB = File.expand_path("../lib", __dir__)
@@ -184,7 +184,7 @@ class StorageRoutesTest < Minitest::Test
     end
   end
 
-  # docs/plan-storage.md decision 9.
+  # docs/history/plan-storage.md decision 9.
   def test_the_same_url_within_one_cache_window
     window_start = 1_800_000_000 - (1_800_000_000 % 3600)
     at = ->(now) { backend.url("media/a", expires_in: 3600, cache_window: 3600, now: now) }

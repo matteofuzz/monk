@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "monk/storage"
 
-# Against AWS's published vectors (docs/plan-storage.md decision 10): the
+# Against AWS's published vectors (docs/history/plan-storage.md decision 10): the
 # SigV4 test suite (awslabs/aws-c-auth, tests/aws-signing-test-suite/v4)
 # and the S3 API reference's examples. A wrong byte anywhere in the
 # canonical request changes the signature, so each one checks all of it.

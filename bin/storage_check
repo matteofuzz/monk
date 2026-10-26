@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # Checks a real bucket for the two settings Monk::Storage needs and can't
 # test with an emulator: the CORS rule that lets browsers PUT uploads, and
-# the lifecycle rule that expires tmp/ (docs/plan-storage.md Phase 7,
+# the lifecycle rule that expires tmp/ (docs/history/plan-storage.md Phase 7,
 # ADR 0018's open items 2 and 3).
 #
 #   STORAGE_CHECK_URL='s3://KEY:SECRET@bucket?endpoint=fsn1.your-objectstorage.com&region=fsn1' \
