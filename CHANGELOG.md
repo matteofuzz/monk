@@ -25,6 +25,16 @@ in `lib/monk/version.rb`.
     wrapping it in `Raw`; a template's buffer is a `Raw` from the start
     rather than copied into one. `h` uses `ERB::Escape` too.
   - `Context#render` no longer allocates its header key per template.
+- **Route blocks run as methods.** `freeze!` defines each route and
+  `error` block as a private method of `Monk::Context`, once, and a
+  request calls it instead of `instance_exec`-ing the block. Same `self`,
+  ivars and return value; a block taking the context (`|c|`) still gets
+  it, and one needing two or more arguments keeps `instance_exec`. On
+  Ruby 4.1.0-preview1, `instance_exec` in a worker Ractor stops that
+  Ractor's own GCs: the heap grew to 1–3.8 GB between global,
+  stop-the-world GCs, and 4 workers served 64K req/s. As methods: 148K
+  req/s at 225 MB, against 120K at 86 MB on 4.0.7 (`GET /health`, 4
+  cores, locally). No change on 4.0.
 
 ## 0.23.0 - 2026-10-26
 
