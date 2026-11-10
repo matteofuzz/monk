@@ -111,6 +111,8 @@ module Monk
           end
         end
 
+        define_block_methods!
+
         Monk.freeze!
 
         # Settled once here, not read from ENV per request in
@@ -126,6 +128,7 @@ module Monk
         Ractor.make_shareable(@static_routes)
         Ractor.make_shareable(@dynamic_routes)
         Ractor.make_shareable(error_handlers)
+        Ractor.make_shareable(@block_methods)
         self
       end
 
@@ -168,19 +171,64 @@ module Monk
         context = Context.new(params, env)
         catch(:monk_halt) do
           begin
-            body = context.instance_exec(context, &route[:block])
+            body = run_block(context, route[:block])
             [200, context.headers, [body]]
           rescue StandardError => e
             handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
             log_exception(env, e, handled: !handler.nil?)
             if handler
               context.status = 500
-              body = context.instance_exec(context, &handler.last)
+              body = run_block(context, handler.last)
               [500, context.headers, [body]]
             else
               [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
             end
           end
+        end
+      end
+
+      # Each route and error-handler block becomes a private method of
+      # Context, once, here, rather than running through instance_exec on
+      # every request. Same self, same ivars, same return value. On Ruby
+      # 4.1 (preview1) an instance_exec in a worker Ractor stops that
+      # Ractor's own, cheap GCs: its heap grows to GBs between global,
+      # stop-the-world ones, and adding workers makes the app slower. A
+      # method call doesn't, and on 4.0 the two cost the same. Blocks are
+      # made shareable before this, so the methods run in any Ractor.
+      #
+      # A method's arity is strict, as a lambda's: a block with no
+      # positional parameter is called with none, one that can take the
+      # context (|c|, |c = nil|, |*args|) with it. A block that needs two
+      # or more (instance_exec passes nil for the rest) keeps
+      # instance_exec.
+      def define_block_methods!
+        @block_methods = {}.compare_by_identity
+        blocks = routes.map { |route| route[:block] } + error_handlers.map(&:last)
+        blocks.each_with_index do |block, i|
+          name = :"__monk_block_#{object_id}_#{i}"
+          Context.define_method(name, &block)
+          Context.send(:private, name)
+
+          takes_context = block.parameters.any? { |type, _| %i[req opt rest].include?(type) }
+          arity = Context.instance_method(name).arity
+          if !takes_context
+            @block_methods[block] = [name, false].freeze
+          elsif arity == 1 || arity.between?(-2, -1)
+            @block_methods[block] = [name, true].freeze
+          else
+            Context.send(:remove_method, name)
+          end
+        end
+      end
+
+      def run_block(context, block)
+        name, with_context = @block_methods[block]
+        if name.nil?
+          context.instance_exec(context, &block)
+        elsif with_context
+          context.__send__(name, context)
+        else
+          context.__send__(name)
         end
       end
 
@@ -218,7 +266,7 @@ module Monk
 
         context = Context.new({}, env, status: 404)
         catch(:monk_halt) do
-          body = context.instance_exec(context, &handler.last)
+          body = run_block(context, handler.last)
           [404, context.headers, [body]]
         end
       end

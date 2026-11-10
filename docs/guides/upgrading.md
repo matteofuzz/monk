@@ -14,6 +14,10 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.23.1
+
+`bundle update monkrb`. Nothing in the app changes.
+
 ## 0.23
 
 In the `Gemfile`, `gem "monkrb", "~> 0.23", require: "monk"` (what a new
