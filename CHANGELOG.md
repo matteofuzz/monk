@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Changed
+
+- **Fewer allocations per request in models and views.** On Ruby 4.0
+  every GC stops every worker Ractor, so allocations are what limit a
+  process's scaling. A board page (50 messages through a partial) goes
+  from 2,157 objects to 1,063, and a JSON read of the same messages
+  from 998 to 748, with byte-identical responses; GC time per request
+  falls about 30%.
+  - `Pg::Model` asks pg for Symbol-keyed rows (`field_name_type`)
+    instead of transforming String keys: one Hash per row, not two.
+  - An Array condition in `where` (and `find_all`) is one array
+    parameter, `col = ANY($1)`, instead of `col IN ($1, ..., $n)`;
+    a list of Integers is encoded without a String per id. Same rows,
+    nil items included.
+  - `<%= %>` escapes with `ERB::Escape.html_escape`, which returns
+    text with nothing to escape as is, and appends the result without
+    wrapping it in `Raw`; a template's buffer is a `Raw` from the start
+    rather than copied into one. `h` uses `ERB::Escape` too.
+  - `Context#render` no longer allocates its header key per template.
+
 ## 0.23.0 - 2026-10-26
 
 ### Added

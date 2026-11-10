@@ -1,5 +1,5 @@
 require "erb"
-require "cgi/escape"
+require "erb/escape"
 
 require_relative "freeze_hooks"
 require_relative "errors"
@@ -36,6 +36,9 @@ module Monk
 
     DEFAULT_ROOT = "views".freeze
 
+    # What every compiled template's buffer starts as a dup of.
+    EMPTY = Raw.new("").freeze
+
     class << self
       # Every reader here is a plain attr_reader over an ivar initialized
       # eagerly below, never `@x ||= ...`: a lazy reader *writes* on first
@@ -46,17 +49,27 @@ module Monk
 
       # Escapes unless the value is already Raw, and returns Raw either
       # way -- so an explicit `<%= h(x) %>` isn't escaped twice by the
-      # implicit `h` the compiler wraps every `<%= %>` in.
-      # CGI.escapeHTML, not ERB::Util.html_escape, though they produce
-      # byte-identical output: ERB's is not flagged Ractor-safe, so a
-      # worker calling it raises Ractor::UnsafeError ("ractor unsafe
-      # method called from not main ractor"). Found by
+      # implicit escape the compiler wraps every `<%= %>` in.
+      # ERB::Escape.html_escape, not ERB::Util.html_escape, though they
+      # produce byte-identical output: ERB::Util's is not flagged
+      # Ractor-safe, so a worker calling it raises Ractor::UnsafeError
+      # ("ractor unsafe method called from not main ractor"). Found by
       # test/ractor_integration_test.rb, in a real worker, not by reading
-      # either implementation.
+      # either implementation. ERB::Escape's is, and unlike
+      # CGI.escapeHTML it returns its argument when there's nothing to
+      # escape instead of a copy.
       def h(value)
         return value if value.is_a?(Raw)
 
-        Raw.new(CGI.escapeHTML(value.to_s))
+        Raw.new(ERB::Escape.html_escape(value.to_s))
+      end
+
+      # The implicit escape around every `<%= %>` (ERB has already called
+      # #to_s): #h without the Raw wrapper, since the result is appended
+      # to the buffer and dropped. For text with nothing to escape, the
+      # common case, it allocates nothing.
+      def escape(value)
+        value.is_a?(Raw) ? value : ERB::Escape.html_escape(value)
       end
 
       def compile(name, source, path = "(erb)")
@@ -143,14 +156,16 @@ module Monk
 
       # `<%= %>` escapes by default -- a deliberate break from stock ERB,
       # where it doesn't. ERB::Compiler emits `insert_cmd((expr).to_s)`
-      # for every insertion, so pointing insert_cmd at Views.h is the
-      # whole implementation; `raw(x)` opts back out.
+      # for every insertion, so pointing insert_cmd at Views.escape is the
+      # whole implementation; `raw(x)` opts back out. The buffer is a Raw
+      # from the start (a dup of EMPTY), so the template returns it as is
+      # rather than copying it into one.
       def compiled_source(source)
         compiler = ERB::Compiler.new("-")
-        compiler.pre_cmd = ["_erbout = +''"]
-        compiler.post_cmd = ["Monk::Views::Raw.new(_erbout)"]
+        compiler.pre_cmd = ["_erbout = +Monk::Views::EMPTY"]
+        compiler.post_cmd = ["_erbout"]
         compiler.put_cmd = "_erbout.<<"
-        compiler.insert_cmd = "_erbout.<< Monk::Views.h"
+        compiler.insert_cmd = "_erbout.<< Monk::Views.escape"
         script, encoding, = compiler.compile(source)
         # ERB::Compiler#compile scans the source as ASCII-8BIT (see its
         # own String#b) and hands that tag straight through to any code

@@ -19,6 +19,13 @@ module Monk
           ne: "<>",
         }.freeze
 
+        # An Array condition's values as one array parameter (#in_clause).
+        # The Integer one, for a list of ids, writes each number straight
+        # into the literal; the generic one makes a String of each item
+        # first. Shareable: worker Ractors encode with them.
+        ARRAY_ENCODER = Ractor.make_shareable(PG::TextEncoder::Array.new)
+        INTEGER_ARRAY_ENCODER = Ractor.make_shareable(PG::TextEncoder::Array.new(elements_type: PG::TextEncoder::Integer.new))
+
         class << self
           def create(data)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
@@ -196,14 +203,17 @@ module Monk
             "#{ident} #{operator} $#{values.size}"
           end
 
+          # `= ANY($n)` with the whole list as one Postgres array literal,
+          # not `IN ($1, ..., $n)`: a placeholder String and an encoded
+          # parameter per item made a 40-id lookup ~160 objects. Postgres
+          # types the parameter from the column, as it typed each `$n`,
+          # and a nil item matches nothing in either form.
           def in_clause(ident, list, values)
             return "1 = 0" if list.empty?
 
-            placeholders = list.map do |item|
-              values << item
-              "$#{values.size}"
-            end
-            "#{ident} IN (#{placeholders.join(", ")})"
+            integers = list.all? { |item| item.nil? || item.is_a?(Integer) }
+            values << (integers ? INTEGER_ARRAY_ENCODER : ARRAY_ENCODER).encode(list)
+            "#{ident} = ANY($#{values.size})"
           end
 
           def order_clause(conn, order)
@@ -219,8 +229,11 @@ module Monk
             " ORDER BY #{clause}"
           end
 
+          # Symbol keys straight from pg, not String keys transformed: one
+          # Hash per row instead of two.
           def to_rows(result)
-            result.map { |row| row.transform_keys(&:to_sym) }
+            result.field_name_type = :symbol
+            result.to_a
           end
 
           def to_row(result)

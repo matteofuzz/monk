@@ -17,6 +17,11 @@ module Monk
     include Monk::Views::Compiled
     include Monk::HeadTags
 
+    # Frozen once here: as literals in #render, the key was a new String
+    # for every template rendered, partials included.
+    CONTENT_TYPE = "content-type".freeze
+    HTML_CONTENT_TYPE = "text/html; charset=utf-8".freeze
+
     attr_reader :params, :env, :headers
     attr_accessor :status
 
@@ -60,7 +65,7 @@ module Monk
     # `self` bound to this same Context), and the `locals` hash passed
     # here, which is what a partial rendered inside a loop wants.
     def render(name, layout: :default, **locals)
-      headers["content-type"] ||= "text/html; charset=utf-8"
+      headers[CONTENT_TYPE] ||= HTML_CONTENT_TYPE
       Monk::Views.render(self, name, locals, layout: layout)
     end
 
