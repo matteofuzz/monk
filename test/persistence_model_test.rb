@@ -195,6 +195,19 @@ class PersistenceModelTest < Minitest::Test
     assert_equal [a, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
   end
 
+  # The list goes to Postgres as one array literal: values with the
+  # array syntax's own characters must still match exactly, and a nil
+  # item matches nothing, as it did in an IN list.
+  def test_where_with_an_array_condition_matches_values_that_need_quoting
+    names = ["a,b", 'say "hi"', "back\\slash", "{x}", "NULL", "", " padded "]
+    created = names.map { |name| Widget.create(name: name) }
+    Widget.create(name: "other")
+
+    rows = Widget.where(name: names + [nil])
+
+    assert_equal created.sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+  end
+
   def test_where_with_an_empty_array_condition_matches_no_rows
     Widget.create(name: "bolt", quantity: 1)
 
