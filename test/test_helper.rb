@@ -418,6 +418,20 @@ module WebSocketTestHelpers
   def teardown
     @server_thread&.kill
     @server_thread&.join
+    replace_min_ping_interval(@original_min_ping_interval) if @original_min_ping_interval
+  end
+
+  # Server::MIN_PING_INTERVAL is 5 s, too slow for a test of the heartbeat:
+  # lowered for this test, put back in teardown. Server.new still checks
+  # against it, just a lower one.
+  def lower_min_ping_interval!(seconds = 0.01)
+    @original_min_ping_interval ||= Monk::WebSocket::Server::MIN_PING_INTERVAL
+    replace_min_ping_interval(seconds)
+  end
+
+  def replace_min_ping_interval(seconds)
+    Monk::WebSocket::Server.send(:remove_const, :MIN_PING_INTERVAL)
+    Monk::WebSocket::Server.const_set(:MIN_PING_INTERVAL, seconds)
   end
 
   def start_server(**kwargs, &block)

@@ -66,9 +66,12 @@ Monk::Bin.run(__FILE__) do
   # in sync. More than one origin: comma-separated.
   allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
 
+  # A ping every 25 s keeps a quiet socket open through a proxy's idle
+  # timeout (nginx's is 60 s), and a socket that answers nothing for two
+  # of them (a phone that changed network) is closed instead of held.
   server = Monk::WebSocket::Server.new(
     port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
-    reuse_port: processes > 1,
+    ping_interval: 25, reuse_port: processes > 1,
   )
   puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
     "(#{live ? "live" : "app/sockets"}, transport: #{AppWebSocket::TRANSPORT}, authenticate: #{authenticate})"

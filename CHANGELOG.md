@@ -4,6 +4,34 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased
+
+### Changed
+
+- **`ping_interval:` closes silent connections.** A WebSocket connection
+  that sends nothing, not even a pong, for two ping intervals is closed:
+  a peer that vanished without closing (a phone that changed network)
+  used to hold its socket and its subscriptions until the kernel gave
+  up, about 15 minutes on Linux. The heartbeat sleeps until its next
+  ping or that deadline, whichever is first, and a ping that can't go
+  out at once is skipped, so a write blocked on a dead peer's full
+  buffer can't keep the close from happening. `ping_interval:` must now
+  be at least 5 s (`Server::MIN_PING_INTERVAL`). The scaffolded
+  `bin/websocket_server` sets `ping_interval: 25`. A ping that fails
+  with a network error (`EHOSTDOWN`, seen on a phone turning Wi-Fi off)
+  no longer ends the heartbeat, and with it that close.
+- **The Live client on real networks.** While its page is visible it
+  sends a ping in Live's protocol (`{"op":"ping"}`, answered with
+  `{"op":"pong"}`) every 25 s, and gives up on a socket that answers
+  nothing within 10 s instead of waiting for the browser to close it;
+  new `monk-live:stale` event, and `disconnected` now carries a
+  `reason` (`closed` with its `code`, `timeout`, `restored`). It
+  reconnects at once, not after the backoff, when the page is shown
+  again, comes back online, resumes or is restored from the
+  back/forward cache; it doesn't try while offline, and a hidden page
+  tries once, then waits to be shown. Events from a socket it gave up
+  on are ignored, so a late close can't start a second connection.
+
 ## 0.23.1 - 2026-11-10
 
 ### Changed

@@ -14,6 +14,18 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.24
+
+### `ping_interval:` in `bin/websocket_server` (apps with websocket)
+
+`ping_interval:` now also closes a connection that sends nothing, not
+even a pong, for two intervals, and must be at least 5 s. Add
+`ping_interval: 25` to the `Monk::WebSocket::Server.new(...)` call in
+`bin/websocket_server` (`monk help websocket --file bin/websocket_server`
+shows where), so a quiet page survives a proxy's idle timeout and a
+socket whose peer vanished is closed after 50 s instead of held. If your
+app already sets one under 5, raise it: `Server.new` refuses it at boot.
+
 ## 0.23.1
 
 `bundle update monkrb`. Nothing in the app changes.

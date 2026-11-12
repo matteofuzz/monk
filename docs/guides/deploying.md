@@ -282,6 +282,14 @@ Monk process ever touches a certificate (`docs/history/plan-websocket.md`'s expl
 scope cut). A browser connects `wss://example.com/ws`; the proxy talks
 plain `ws://` to the WebSocket process behind it.
 
+**Idle timeouts.** A proxy closes a WebSocket that carries nothing for a
+while: nginx after 60 s (`proxy_read_timeout`), Cloudflare after 100 s;
+Caddy has no idle timeout by default. The scaffolded
+`bin/websocket_server` pings every 25 s (`ping_interval:`), which keeps a
+quiet page's socket open under all of them, and closes a socket whose
+browser stopped answering ([`websocket.md`](websocket.md)). If you
+raise `ping_interval:`, keep it under your proxy's timeout.
+
 **Where this fits the two cases above:**
 
 - **Fly.io** is the natural fit: it's already a single Docker container
