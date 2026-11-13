@@ -169,8 +169,21 @@ Monk::Push.configure(db_name: :primary, public_key: ENV["VAPID_PUBLIC_KEY"],
   cache (a Ractor can't memoize, and signing is cheap).
 - On OpenSSL 3 keys are immutable: a key from raw bytes is built from DER
   (SubjectPublicKeyInfo; ECPrivateKey).
-- **Spike first** (step 1): `OpenSSL::PKey::EC` ECDH and signing, HKDF and
-  GCM inside a non-main Ractor on Ruby 4.0.
+- **Spike** (step 1, done 2026-11-13, Ruby 4.0.6, openssl gem 4.0.2,
+  OpenSSL 3.5.9): everything above works in a non-main Ractor, and gives
+  the same result as in the main one. RFC 8291 Appendix A's body is
+  reproduced byte for byte, a key rebuilt from its raw private scalar
+  derives the right public key, and an ES256 JWT built as above verifies.
+  8 Ractors × 200 rounds in parallel: no errors, 0.3 s. Findings:
+  - a raw private scalar becomes a key through an ECPrivateKey DER built
+    with `OpenSSL::ASN1` (its public point from
+    `group.generator.mul(d)`); a raw public point through the fixed
+    SubjectPublicKeyInfo prefix and `OpenSSL::PKey.read`;
+  - `OpenSSL::PKey::EC` objects can't be made shareable
+    (`Ractor::Error`), so `configure` keeps the keys as frozen raw
+    Strings, and each send rebuilds the key it needs (cheap);
+  - base64url via `pack("m0")`, as `Storage::Token` does, not the
+    `base64` gem.
 - Tests: RFC 8291 Appendix A's vector, with its fixed keys and salt.
 
 ### B3. Subscriptions
@@ -278,7 +291,7 @@ examples:
 Branches `main_dev/pwa` then `main_dev/push`, each merged into
 `main_dev/0_25_0` by a PR.
 
-1. Spike: OpenSSL EC, HKDF and GCM inside a Ractor.
+1. Spike: OpenSSL EC, HKDF and GCM inside a Ractor. Done (B2).
 2. The `app_name:` flag on `copy` and in `monk help --file`, with tests.
 3. A1-A3 with tests; A4 on desktop, Android, iOS.
 4. B2 against the RFC vectors.
