@@ -261,6 +261,14 @@ For each of iOS Safari and Android Chrome:
 Item 3's server-side answer decides whether A1 alone can mark a locked
 phone offline, or only the heartbeat rule marks it Away.
 
+Decided 2026-11-13: what the LAN runs below didn't cover moves to the
+first deploy of the real app with 0.24 (phase 7), behind TLS and its
+proxy: iPhone with the A2 client (lock, app switch for 1 and 5 minutes),
+airplane mode for 30 s, lock for 15 minutes, and why Android
+DuckDuckGo's socket closed cleanly after 441 s. Part A is merged into
+`main_dev/0_24_0` without them; B doesn't wait on them, since the LAN
+runs answered what a locked phone does to its socket.
+
 Run on the local network (the Mac's LAN IP, plain `ws://`, no proxy), with
 a throwaway scaffolded Live app: a page logging `monk-live:*` and
 lifecycle events, patches sent after a delay, and the WS server logging
@@ -413,8 +421,14 @@ Later runs, same page, same day:
 
 ### B0. ADR 0019 first
 
-The roadmap asks for an ADR before code. The questions, with what this
-analysis would recommend:
+Written 2026-11-12, to review before any presence code:
+`docs/adr/0019-presence-per-process-rows-in-postgres-settled-once-per-transition.md`.
+It settles the questions below: rows per (process, subject) with
+`status` and `gone_at`, counting while the process heartbeats and for
+the grace once gone; readers derive the status; transitions settled by
+any WS process into a logged `monk_presence_status`, which fires
+`on_change` once and keeps `last_seen_at`. B1 below follows it. The
+questions as they stood, with what this analysis recommended:
 
 1. **WebSocket feature or Live feature?** Recommend: tracking in
    `Monk::WebSocket` (it's where sockets and subjects are, and an
@@ -489,18 +503,21 @@ analysis would recommend:
 
 ### B1. Building it, once the ADR is settled
 
-- Migration in Monk's template (`00000000000005_create_presence_tables`):
-  `monk_presence_processes (id, hostname, pid, heartbeat_at)` and
-  `monk_presence (process_id, subject, sockets, visible_sockets,
-  last_seen_at, PRIMARY KEY (process_id, subject))`, an index on
-  `subject`, and `monk_presence_last_seen (subject PRIMARY KEY,
-  last_seen_at)`, written by `monk add presence` (open question 5).
+- Migration in Monk's template (`00000000000005_create_presence_tables`),
+  as ADR 0019: `monk_presence_processes (id, hostname, pid,
+  heartbeat_at)` and `monk_presence (process_id, subject, status,
+  gone_at, PRIMARY KEY (process_id, subject))`, both `UNLOGGED`, an
+  index on `subject`, and the logged `monk_presence_status (subject
+  PRIMARY KEY, status, changed_at, last_seen_at)`, written by
+  `monk add presence` (open question 5). Socket counts stay in memory.
 - The counts Ractor, fed by `Server.serve` (connect after the 101, leave
   in the ensure) without an ask: a send, so a connect never waits on it.
 - Visible or hidden per socket, from Live's pings (open question 6):
   `Live::Session` notes the time of each `{"op":"ping"}` and tells the
   counts Ractor when a socket crosses the `2 × HEARTBEAT` line, either
-  way. The server needs `HEARTBEAT` too: a Ruby constant mirroring
+  way. A Live socket starts hidden, and the client pings at once on
+  open when its page is visible (a change to A2's client), so a visible
+  page is Online within a frame. The server needs `HEARTBEAT` too: a Ruby constant mirroring
   `protocol.js`'s, with a test that reads the JS file and fails if they
   differ.
 - The flusher and heartbeat thread in the WS process, through its own
@@ -511,7 +528,14 @@ analysis would recommend:
   `{subject => {status: :online | :away | :offline, last_seen_at:}}`,
   and `online?(subject)`. One query, the people on screen at a time, as
   monk_talk does today. The exact shape is for the ADR.
-- `on_change` dispatch from the flusher/pruner, after the grace.
+- Settling and pruning on each tick, in one transaction: the flushed
+  subjects and those with expired rows, upserted into
+  `monk_presence_status` only where the status differs; a full
+  reconcile of non-offline subjects every minute.
+- `on_change` from the settling process, after its commit, at most
+  once per transition.
+- A `TERM`ed process sets `gone_at` on all its rows instead of deleting
+  them, so a deploy changes nobody's status.
 
 ## Tests
 
@@ -565,7 +589,8 @@ analysis would recommend:
    Away from Live's heartbeat, `last_seen_at`.
 6. **Scaffold, guides, upgrade guide.**
 7. **Check against the real app**: monk_talk's `ActiveUsers` replaced by
-   presence, on a phone, outside this repo.
+   presence, on a phone, outside this repo. On its first deploy with
+   0.24, also the device checks left from A0 ("A0 still open").
 
 Part A could go out as 0.24.0 and presence as 0.24.x if the ADR takes
 longer; the roadmap pairs them because presence is what makes the mobile
