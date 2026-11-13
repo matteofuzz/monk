@@ -17,7 +17,12 @@ module Monk
       # ping_interval: (seconds) opts a connection into a server-sent
       # heartbeat ping -- see Connection#start_heartbeat. Defaults to nil
       # (disabled) for the same reason authenticate: defaults false: a
-      # server that doesn't ask for it behaves exactly as before.
+      # server that doesn't ask for it behaves exactly as before. It also
+      # closes a connection silent for Connection::IDLE_PINGS intervals,
+      # so it can't be under MIN_PING_INTERVAL: reads stall during a GC
+      # pause or a slow db_pool: rule, and a timeout near that would close
+      # healthy sockets in bulk and start a reconnect wave
+      # (docs/plan-live-networks-presence.md, open question 2).
       #
       # reverify_interval: (seconds) re-runs Monk::Auth.verify against the
       # same credential on that cadence for as long as the connection
@@ -83,6 +88,8 @@ module Monk
       # (item 8). A broadcast reaches all of them through the fan-out.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
 
+      MIN_PING_INTERVAL = 5
+
       DEFAULT_MAX_HANDSHAKES = 128
       DEFAULT_HANDSHAKE_TIMEOUT = 10
 
@@ -99,8 +106,11 @@ module Monk
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
         max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, reuse_port: false
       )
-        if ping_interval && !ping_interval.positive?
-          raise ArgumentError, "ping_interval must be positive, got #{ping_interval.inspect}"
+        if ping_interval && !(ping_interval.is_a?(Numeric) && ping_interval >= MIN_PING_INTERVAL)
+          raise ArgumentError,
+            "ping_interval must be at least #{MIN_PING_INTERVAL} (seconds), got #{ping_interval.inspect}: " \
+            "a connection silent for #{Connection::IDLE_PINGS} intervals is closed, and a shorter one would " \
+            "close healthy sockets during a GC pause"
         end
 
         unless AUTHENTICATE_MODES.include?(authenticate)
@@ -464,10 +474,10 @@ module Monk
             break unless verify(raw_token, db_pool)
           end
           connection.close(code: 1008, reason: "session no longer valid")
-        rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+        rescue IOError, SystemCallError
           # The connection already closed via some other path (normal
-          # disconnect, the close handshake, a dead ping) -- nothing left
-          # to close.
+          # disconnect, the close handshake, a dead ping), or its peer's
+          # network is gone (Errno::EHOSTDOWN): nothing left to close.
         end
       end
       private_class_method :start_reverify

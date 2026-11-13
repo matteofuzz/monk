@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   INITIAL_DELAY, MAX_DELAY, nextDelay, jittered, topicsFrom, diffTopics,
   subscribeMessage, unsubscribeMessage, parseMessage, checkSeq, resyncVerdict,
+  HEARTBEAT, PONG_TIMEOUT, pingMessage, reconnectDecision, returnAction,
 } from "../../lib/monk/live/client/protocol.js";
 
 // Every browser reconnects when the WS process restarts; without jitter they
@@ -39,6 +40,38 @@ test("diffTopics returns what to add and what to remove", () => {
 test("subscribe and unsubscribe messages match the server protocol", () => {
   assert.deepEqual(JSON.parse(subscribeMessage(["a:1"])), { op: "subscribe", topics: ["a:1"] });
   assert.deepEqual(JSON.parse(unsubscribeMessage(["a:1"])), { op: "unsubscribe", topics: ["a:1"] });
+  assert.deepEqual(JSON.parse(pingMessage()), { op: "ping" });
+});
+
+// The server closes a socket silent for 2 x its ping_interval (25 s in the
+// scaffold); the heartbeat must notice a dead socket well within a minute.
+test("the heartbeat pings every 25 s and gives a ping 10 s", () => {
+  assert.equal(HEARTBEAT, 25000);
+  assert.equal(PONG_TIMEOUT, 10000);
+});
+
+test("without a socket, a visible online page reconnects", () => {
+  assert.equal(reconnectDecision({ hidden: false, online: true, hiddenAttempts: 0 }), "connect");
+  assert.equal(reconnectDecision({ hidden: false, online: true, hiddenAttempts: 3 }), "connect");
+});
+
+test("offline, the page waits for the network whatever its visibility", () => {
+  assert.equal(reconnectDecision({ hidden: false, online: false, hiddenAttempts: 0 }), "wait");
+  assert.equal(reconnectDecision({ hidden: true, online: false, hiddenAttempts: 0 }), "wait");
+});
+
+// iOS resets a socket opened by a hidden page within seconds; Android keeps it.
+test("hidden, the page tries once, then waits to be shown", () => {
+  assert.equal(reconnectDecision({ hidden: true, online: true, hiddenAttempts: 0 }), "connect");
+  assert.equal(reconnectDecision({ hidden: true, online: true, hiddenAttempts: 1 }), "wait");
+});
+
+test("coming back probes an open socket, leaves a connecting one, and connects otherwise", () => {
+  assert.equal(returnAction(1), "probe");
+  assert.equal(returnAction(0), "none");
+  assert.equal(returnAction(2), "connect");
+  assert.equal(returnAction(3), "connect");
+  assert.equal(returnAction(undefined), "connect");
 });
 
 test("a patch envelope parses to one op with its seq", () => {
@@ -74,6 +107,7 @@ test("control replies parse to their kinds", () => {
     { kind: "subscribed", topics: ["a"], denied: ["b"] });
   assert.deepEqual(parseMessage('{"op":"unsubscribed","topics":["a"]}'), { kind: "unsubscribed", topics: ["a"] });
   assert.deepEqual(parseMessage('{"op":"error","reason":"bad_message"}'), { kind: "error", reason: "bad_message" });
+  assert.deepEqual(parseMessage('{"op":"pong"}'), { kind: "pong" });
 });
 
 test("anything malformed is invalid, never thrown", () => {

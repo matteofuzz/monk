@@ -9,6 +9,8 @@ module Monk
     #
     # Client -> server: {"op":"subscribe"|"unsubscribe","topics":[...]}.
     # Replies: subscribed (+ denied), unsubscribed, or error/bad_message.
+    # And {"op":"ping"} -> {"op":"pong"}: the client's heartbeat, since
+    # browser JS can't see WebSocket pings.
     # A denial never says why or whether the topic exists.
     #
     # `connection` is anything with #read, #write and #subject.
@@ -41,6 +43,8 @@ module Monk
 
       def dispatch(raw)
         message = JSON.parse(raw, max_nesting: 5)
+        return reply(op: "pong") if message.is_a?(Hash) && message["op"] == "ping"
+
         topics = message.is_a?(Hash) ? message["topics"] : nil
         return reply(op: "error", reason: "bad_message") unless valid_topics?(topics)
 
