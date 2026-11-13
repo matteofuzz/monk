@@ -2,6 +2,11 @@ require "json"
 
 module Monk
   module Live
+    # Seconds between the client's pings while its page is visible:
+    # protocol.js's HEARTBEAT, which a test keeps equal. What Away means
+    # follows from it (ADR 0019), so the two are changed together.
+    HEARTBEAT = 25
+
     # One WebSocket connection's live state, running inside its own
     # connection Ractor: the subscribe/unsubscribe protocol, the topic
     # authorization check, and the relay that stamps each published
@@ -10,10 +15,20 @@ module Monk
     # Client -> server: {"op":"subscribe"|"unsubscribe","topics":[...]}.
     # Replies: subscribed (+ denied), unsubscribed, or error/bad_message.
     # And {"op":"ping"} -> {"op":"pong"}: the client's heartbeat, since
-    # browser JS can't see WebSocket pings.
+    # browser JS can't see WebSocket pings. {"op":"hidden"}, with no
+    # reply: the client's page was just hidden.
     # A denial never says why or whether the topic exists.
     #
-    # `connection` is anything with #read, #write and #subject.
+    # `connection` is anything with #read, #write and #subject. One that
+    # #tracks_presence? (Server.new(presence:)) is also told, through
+    # #visible=, whether its page is visible: while its client has pinged
+    # within visible_for, 2 x HEARTBEAT (ADR 0019). The client pings only
+    # while its page is visible, and at once on open, so this is Away. It
+    # also says when its page is hidden, so Away shows at once; the
+    # silence covers a page frozen before it could say so, checked on the
+    # connection's heartbeat (Connection#on_heartbeat), once per server
+    # ping: no thread of its own, which at 15K sockets cost more than
+    # everything else presence does (docs/plan-live-networks-presence.md).
     class Session
       # No `*`, no whitespace or NUL, ASCII only: a client can't smuggle a
       # glob or a delimiter into a topic, and only a topic that passed this
@@ -21,17 +36,23 @@ module Monk
       TOPIC_FORMAT = %r{\A[\w:.\-/@]{1,200}\z}
       MAX_TOPICS_PER_MESSAGE = 100
 
-      def initialize(connection, registry:, rules:, max_topics:)
+      VISIBLE_FOR = 2 * HEARTBEAT
+
+      def initialize(connection, registry:, rules:, max_topics:, visible_for: VISIBLE_FOR)
         @connection = connection
         @registry = registry
         @rules = rules
         @max_topics = max_topics
         @topics = {} # String topic => the Symbol it is registered under
+        @visible_for = visible_for
+        @presence = connection.respond_to?(:tracks_presence?) && connection.tracks_presence?
+        @visibility = Mutex.new
       end
 
       def run
         @port = Ractor::Port.new
         @relay = Thread.new { relay }
+        @connection.on_heartbeat { check_visibility } if @presence
         while (raw = @connection.read)
           dispatch(raw)
         end
@@ -43,7 +64,8 @@ module Monk
 
       def dispatch(raw)
         message = JSON.parse(raw, max_nesting: 5)
-        return reply(op: "pong") if message.is_a?(Hash) && message["op"] == "ping"
+        return pinged if message.is_a?(Hash) && message["op"] == "ping"
+        return hidden if message.is_a?(Hash) && message["op"] == "hidden"
 
         topics = message.is_a?(Hash) ? message["topics"] : nil
         return reply(op: "error", reason: "bad_message") unless valid_topics?(topics)
@@ -96,6 +118,37 @@ module Monk
 
       def reply(message)
         @connection.write(JSON.generate(message))
+      end
+
+      def pinged
+        if @presence
+          @visibility.synchronize do
+            @last_ping = Monk::WebSocket::Connection.monotonic
+            @connection.visible = true
+          end
+        end
+        reply(op: "pong")
+      end
+
+      def hidden
+        return unless @presence
+
+        @visibility.synchronize do
+          @last_ping = nil
+          @connection.visible = false
+        end
+      end
+
+      # On the connection's heartbeat, once per server ping: the page turns
+      # hidden once no ping has come for visible_for, so up to one ping
+      # interval late.
+      def check_visibility
+        @visibility.synchronize do
+          if @last_ping && Monk::WebSocket::Connection.monotonic - @last_ping >= @visible_for
+            @last_ping = nil
+            @connection.visible = false
+          end
+        end
       end
 
       # Runs on its own thread: each published envelope gets the next

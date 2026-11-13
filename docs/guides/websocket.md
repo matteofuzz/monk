@@ -146,6 +146,10 @@ should keep `true`, which refuses them at the door.
   so and exits. It's the only process that calls `listen!`. With auth it
   authenticates sockets, through the `:auth` pool: `:optional` with live,
   whose rules decide what visitors get, and `true` otherwise.
+  With presence (`monk add presence`), it also loads `config/presence.rb`
+  and counts the signed-in sockets in Postgres, through a connection of
+  its own ([`presence.md`](presence.md)); on `TERM` its people keep their
+  status for the grace while their pages reconnect elsewhere.
 - **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
   configure it, and **`WS_PROCESSES`** (1) how many server processes it
   runs on that port ([Several processes](#several-processes)).

@@ -41,6 +41,30 @@ class LiveSessionTest < Minitest::Test
     def hang_up = @inbox << nil
   end
 
+  # A connection counted for presence (Server.new(presence:)): records
+  # what Session reports about its page's visibility. #beat! is what the
+  # real one's heartbeat does after each server ping.
+  class FakePresenceConnection < FakeConnection
+    attr_reader :visibility
+
+    def initialize(subject)
+      super
+      @visibility = Queue.new
+    end
+
+    def tracks_presence? = true
+
+    def visible=(visible)
+      @visibility << visible
+    end
+
+    def on_heartbeat(&block)
+      @on_heartbeat = block
+    end
+
+    def beat! = @on_heartbeat.call
+  end
+
   def setup
     @registry = Monk::WebSocket::Registry.new
     @publisher = Monk::Live::Publisher.new(@registry)
@@ -234,6 +258,64 @@ class LiveSessionTest < Minitest::Test
     assert_equal 0, @registry.count(:"t:1")
   end
 
+  # Away, from Live's heartbeat (ADR 0019): a page is visible while its
+  # client pings, and hidden once it has been silent for visible_for, as
+  # the server's heartbeat finds.
+  def test_a_ping_makes_the_page_visible_and_silence_hidden_again
+    connection = start_session("7", connection: FakePresenceConnection.new("7"), visible_for: 0.3)
+
+    connection.send_message(op: "ping")
+    next_json(connection)
+    assert_equal true, pop_within(connection.visibility, 1)
+    connection.beat!
+    assert_nil pop_within(connection.visibility, 0.1), "not silent for visible_for yet"
+
+    sleep 0.3
+    connection.beat!
+    assert_equal false, pop_within(connection.visibility, 1)
+
+    connection.send_message(op: "ping")
+    assert_equal true, pop_within(connection.visibility, 1)
+  end
+
+  # The page says when it's hidden, so Away shows at once; there's no
+  # reply, and without presence it's ignored.
+  def test_hidden_makes_the_page_hidden_at_once_without_a_reply
+    connection = start_session("7", connection: FakePresenceConnection.new("7"), visible_for: 60)
+    connection.send_message(op: "ping")
+    next_json(connection)
+    assert_equal true, pop_within(connection.visibility, 1)
+
+    connection.send_message(op: "hidden")
+    assert_equal false, pop_within(connection.visibility, 1)
+
+    connection.send_message(op: "ping")
+    assert_equal({ "op" => "pong" }, next_json(connection), "no reply to hidden came first")
+    assert_equal true, pop_within(connection.visibility, 1)
+  end
+
+  def test_hidden_without_presence_is_ignored
+    connection = start_session("7")
+
+    connection.send_message(op: "hidden")
+    connection.send_message(op: "ping")
+
+    assert_equal({ "op" => "pong" }, next_json(connection))
+  end
+
+  def test_pings_inside_the_window_keep_the_page_visible
+    connection = start_session("7", connection: FakePresenceConnection.new("7"), visible_for: 0.4)
+
+    6.times do
+      connection.send_message(op: "ping")
+      next_json(connection)
+      sleep 0.1
+      connection.beat!
+    end
+
+    assert_equal [true], drain(connection.visibility).uniq
+  end
+
   def test_a_failing_relay_closes_the_connection_instead_of_leaving_it_silently_stale
     Monk::Live.authorize("t:*", &ALLOW)
     connection, thread = start_session("7", with_thread: true)
@@ -333,13 +415,11 @@ class LiveSessionTest < Minitest::Test
 
   # Runs a Session on a background thread against a FakeConnection, wired
   # to this test's registry and whatever rules the test declared.
-  def start_session(subject, with_thread: false)
-    connection = FakeConnection.new(subject)
-    thread = Thread.new do
-      Monk::Live::Session.new(
-        connection, registry: @registry, rules: Monk::Live.rules, max_topics: Monk::Live.max_topics,
-      ).run
-    end
+  def start_session(subject, with_thread: false, connection: FakeConnection.new(subject), **)
+    session = Monk::Live::Session.new(
+      connection, registry: @registry, rules: Monk::Live.rules, max_topics: Monk::Live.max_topics, **,
+    )
+    thread = Thread.new { session.run }
     @sessions << [connection, thread]
     with_thread ? [connection, thread] : connection
   end
@@ -356,5 +436,13 @@ class LiveSessionTest < Minitest::Test
 
   def next_json(connection)
     JSON.parse(Timeout.timeout(3) { connection.outbox.pop })
+  end
+
+  def pop_within(queue, seconds) = queue.pop(timeout: seconds)
+
+  def drain(queue)
+    items = []
+    items << queue.pop until queue.empty?
+    items
   end
 end

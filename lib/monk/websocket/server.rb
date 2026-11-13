@@ -86,6 +86,12 @@ module Monk
       # heap, so its own GC pauses, over a share of the sockets: on Ruby 4.0
       # K processes cut what GC costs a connect by about K squared
       # (item 8). A broadcast reaches all of them through the fan-out.
+      #
+      # presence: a Monk::Presence::Counts (Monk::Presence.start!), told
+      # when each connection with a subject opens (after the 101) and
+      # closes, with a send, so a connect never waits on it
+      # (docs/adr/0019-presence-per-process-rows-in-postgres-settled-once-per-transition.md).
+      # Requires authenticate:: only Monk::Auth subjects are tracked.
       AUTHENTICATE_MODES = [false, true, :optional].freeze
 
       MIN_PING_INTERVAL = 5
@@ -104,7 +110,8 @@ module Monk
       def initialize(
         port:, bind: "0.0.0.0", allowed_origins: nil, authenticate: false, ping_interval: nil,
         reverify_interval: nil, max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil,
-        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, reuse_port: false
+        max_handshakes: DEFAULT_MAX_HANDSHAKES, handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, reuse_port: false,
+        presence: nil
       )
         if ping_interval && !(ping_interval.is_a?(Numeric) && ping_interval >= MIN_PING_INTERVAL)
           raise ArgumentError,
@@ -125,6 +132,11 @@ module Monk
         end
 
         raise ArgumentError, "db_pool requires authenticate: true or :optional" if db_pool && !authenticate
+        raise ArgumentError, "presence requires authenticate: true or :optional" if presence && !authenticate
+        # A Live page that went silent turns hidden on the heartbeat
+        # (Connection#on_heartbeat), and a socket whose peer vanished is
+        # only closed, and stops counting, through it.
+        raise ArgumentError, "presence requires ping_interval:" if presence && !ping_interval
 
         unless max_payload_size.positive?
           raise ArgumentError, "max_payload_size must be positive, got #{max_payload_size.inspect}"
@@ -168,6 +180,7 @@ module Monk
         @db_pool = db_pool
         @max_handshakes = max_handshakes
         @handshake_timeout = handshake_timeout
+        @presence = presence && Ractor.make_shareable(presence)
       end
 
       def port
@@ -227,13 +240,14 @@ module Monk
           socket = @tcp_server.accept
           ractor = Ractor.new(
             shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
-            @db_pool, handshake_done, @handshake_timeout
-          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done, timeout|
+            @db_pool, handshake_done, @handshake_timeout, @presence
+          ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done, timeout,
+                presence|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
               authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
               reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool,
-              handshake_done: done, handshake_timeout: timeout
+              handshake_done: done, handshake_timeout: timeout, presence: presence
             )
           end
           ractor.send(socket, move: true)
@@ -271,7 +285,7 @@ module Monk
       def self.serve(
         socket, block, authenticate: false, allowed_origins: nil, ping_interval: nil, reverify_interval: nil,
         max_payload_size: Connection::DEFAULT_MAX_PAYLOAD_SIZE, db_pool: nil, handshake_done: nil,
-        handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT
+        handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT, presence: nil
       )
         # A `return` in here (a refused handshake) ends serve, and its
         # ensure frees the slot.
@@ -307,7 +321,8 @@ module Monk
         end
         handshake_done = handshake_over(handshake_done)
 
-        connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size)
+        connection = Connection.new(socket, subject: subject, max_payload_size: max_payload_size, presence: presence)
+        connection.presence_open!
         connection.start_heartbeat(ping_interval) if ping_interval
         if reverify_interval && subject
           reverify_thread = start_reverify(connection, credential[:token], reverify_interval, db_pool)
@@ -332,6 +347,7 @@ module Monk
         # A handshake that never reached its 101 still frees its slot.
         handshake_over(handshake_done)
         reverify_thread&.kill
+        connection&.presence_close!
         connection&.unsubscribe!
         connection&.stop_heartbeat!
         socket.close

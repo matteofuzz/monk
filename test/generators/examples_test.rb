@@ -15,7 +15,7 @@ class GeneratorsExamplesTest < Minitest::Test
   # chat example's -- and that way each transport is used by one.
   SUITES = {
     without_live: [%i[postgres redis mail auth jobs websocket storage], { transport: "redis" }],
-    with_live: [%i[live], { transport: "postgres" }],
+    with_live: [%i[live presence], { transport: "postgres" }],
   }.freeze
 
   # What each example does once uncommented, as test methods in the app.
@@ -191,6 +191,28 @@ class GeneratorsExamplesTest < Minitest::Test
         assert_equal %(<span id="greeting">Hi all</span>\\n), envelope["html"]
       ensure
         AppWebSocket::REGISTRY.unregister(:greeting, port) if port
+        port&.close
+      end
+    RUBY
+    "presence-dots" => <<~'RUBY',
+      def test_presence_dots
+        assert Monk::Live.authorized?("ann@example.test", "presence")
+        refute Monk::Live.authorized?(nil, "presence")
+        AppWebSocket::REGISTRY.listen!
+        port = Ractor::Port.new
+        AppWebSocket::REGISTRY.register(:presence, port)
+        changes = { "ann@example.test" => { status: :away, last_seen_at: nil },
+                    %(o"dd@example.test) => { status: :online, last_seen_at: nil } }
+
+        AppPresence::CHANGED.call(changes)
+
+        ops = JSON.parse(Timeout.timeout(5) { port.receive })["ops"]
+        assert_equal ['[data-presence="ann@example.test"]', '[data-presence="o\\"dd@example.test"]'],
+          ops.map { |op| op["target"] }
+        assert_includes ops.first["html"], "presence-away"
+        assert_includes ops.last["html"], %(data-presence="o&quot;dd@example.test")
+      ensure
+        AppWebSocket::REGISTRY.unregister(:presence, port) if port
         port&.close
       end
     RUBY

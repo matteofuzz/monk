@@ -35,6 +35,7 @@ modules it adds.
 | `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
 | `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
 | `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
+| `presence` | (websocket's and `bin/server`) | Postgres, **a direct connection** from `bin/server` (below) | — | — |
 | `storage` | — | an S3-compatible bucket, with a CORS rule for `PUBLIC_URL` and a `tmp/` lifecycle rule (see [`storage.md`](storage.md)) | `STORAGE_URL`; `STORAGE_SECRET` only with `file://` | — |
 
 `MONK_ENV` is `production` (or `staging`) wherever the app is deployed.
@@ -98,6 +99,22 @@ send `KILL` 10 seconds after `TERM` by default (`stop_grace_period`, below),
 and a job killed mid-run is only picked up again once another job process
 notices its process went silent, after 2 minutes. Scale it by running more
 instances, or with more workers per instance.
+
+**With presence**, nothing new to run: `bin/websocket_server` counts the
+signed-in sockets, and `bin/server` reacts to changes
+([`presence.md`](presence.md)). Two things to plan for:
+
+- `bin/server` holds a Postgres session for presence's `LISTEN` and the
+  lock that elects which process reacts, so it needs a direct connection:
+  not through PgBouncer in transaction mode (session mode is fine).
+- Each `bin/server` process opens one more connection to Postgres, and the
+  one reacting one more again: N web processes, N + 1. Each
+  `bin/websocket_server` process opens one for its counts. Count them
+  against the database's connection limit.
+
+If a host or pod vanishes without closing its connections, the reacting
+process's lock is freed in about 25 s (short TCP keepalives on that
+connection), and another process takes over within 5 s more.
 
 The rest of this page walks through deploying an app with Postgres on Render
 and Fly.io; adding the WebSocket process is covered in section 3, and a

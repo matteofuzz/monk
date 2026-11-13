@@ -18,6 +18,11 @@
 #   live  -- + Monk::Live (in-process Registry, ALLOW_ALL) and a subscribe
 #            to --topics topics; ready = the "subscribed" reply
 #
+# --presence (auth and live) adds Monk::Presence as bin/websocket_server
+# runs it: every socket counted, its tick writing to Postgres. Each step
+# then also reports the presence statements the server ran (ADR 0019: a
+# connect wave is a few a second, not one per connect).
+#
 # Linux only, for the numbers to mean anything: Ruby's M:N scheduler, which
 # runs the connection Ractors, is Linux-only. On a Mac, in the image the
 # monk-vs-rails bench builds (Ruby, pg, taskset):
@@ -42,6 +47,12 @@
 #   --timeout 10               seconds a connect may take to be ready (10)
 #   --server-cpus 0-3          taskset list for the server (0-3)
 #   --client-threads 2000      client threads, so connects in flight (2000)
+#   --ping-interval 600        the server's ping_interval: (none). This
+#                              client never answers pings, so the server
+#                              closes a held socket after two intervals:
+#                              use one longer than the run
+#   --presence                 count sockets with Monk::Presence (off);
+#                              needs --ping-interval
 #   --installed-gem            the installed monkrb, not this checkout's lib/
 #
 # Postgres (auth and live): MONK_BENCH_PG_HOST, _PORT, _USER, _PASSWORD
@@ -59,6 +70,7 @@ require "io/wait"
 options = {
   variant: "live", rates: [100, 200, 400], duration: 20, held: 0, held_rate: 200, topics: 8, users: 2000,
   pool_size: 4, timeout: 10.0, server_cpus: "0-3", client_threads: 2000, installed_gem: false, serve: false,
+  presence: false, ping_interval: nil,
 }
 OptionParser.new do |o|
   o.on("--variant V", %w[bare auth live]) { |v| options[:variant] = v }
@@ -72,9 +84,13 @@ OptionParser.new do |o|
   o.on("--timeout S", Float) { |v| options[:timeout] = v }
   o.on("--server-cpus LIST") { |v| options[:server_cpus] = v }
   o.on("--client-threads N", Integer) { |v| options[:client_threads] = v }
+  o.on("--presence") { options[:presence] = true }
+  o.on("--ping-interval N", Integer) { |v| options[:ping_interval] = v }
   o.on("--installed-gem") { options[:installed_gem] = true }
   o.on("--serve") { options[:serve] = true }
 end.parse!
+abort "--presence needs --variant auth or live: only signed-in sockets count" if options[:presence] && options[:variant] == "bare"
+abort "--presence needs --ping-interval (longer than the run: see the options above)" if options[:presence] && !options[:ping_interval]
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__)) unless options[:installed_gem]
 
@@ -126,6 +142,38 @@ def seed_sessions(users)
   conn.close
 end
 
+# Each Monk::Presence::Store call the tracker makes (one statement, or one
+# transaction for settle), by method. Only the main Ractor's tracker thread
+# calls the store here.
+module BenchPresenceCalls
+  COUNTS = Hash.new(0)
+  LOCK = Mutex.new
+
+  def self.counts = LOCK.synchronize { COUNTS.dup }
+
+  %i[register_process heartbeat flush rewrite mark_all_gone settle].each do |name|
+    define_method(name) do |*args, **kwargs|
+      LOCK.synchronize { COUNTS[name] += 1 }
+      super(*args, **kwargs)
+    end
+  end
+end
+
+# The presence tables, fresh, from Monk's own migration; then the tracker,
+# as bin/websocket_server starts it. Live sockets start hidden (no client
+# ping here), so they count as away.
+def start_presence(variant)
+  require "monk/presence"
+  migrate = File.expand_path("../lib/monk/templates/presence/db/migrate", __dir__)
+  conn = PG.connect(**PG_OPTS, dbname: PG_DATABASE)
+  conn.exec("DROP TABLE IF EXISTS monk_presence, monk_presence_processes, monk_presence_status")
+  conn.exec(File.read(Dir["#{migrate}/*_create_presence_tables.up.sql"].first))
+  conn.close
+  Monk::Presence::Store.prepend(BenchPresenceCalls)
+  Monk::Presence.configure(db_name: :bench)
+  Monk::Presence.start!(start_visible: variant != "live")
+end
+
 def serve(options)
   variant = options[:variant]
   require "monk"
@@ -153,7 +201,9 @@ def serve(options)
 
   # As bin/websocket_server: the pool starts before the server.
   Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
-  server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", authenticate: authenticate, db_pool: db_pool)
+  presence = start_presence(variant) if options[:presence]
+  server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", authenticate: authenticate, db_pool: db_pool,
+    presence: presence, ping_interval: options[:ping_interval],)
 
   # What triggered each GC (newobj, malloc, ...), sampled: a GC between two
   # looks counts once, under the later one's reason.
@@ -190,6 +240,7 @@ def serve(options)
         gc_minor: gc[:minor_gc_count], gc_major: gc[:major_gc_count], gc_global: gc.fetch(:global_gc_count, 0),
         gc_ms: gc[:time], mark_ms: gc[:marking_time], allocated: gc[:total_allocated_objects],
         sweep_ms: gc[:sweeping_time], ractors: Ractor.count, rss_mb: rss_kb / 1024, gc_by: gc_by.dup,
+        presence: BenchPresenceCalls.counts,
         # Per size pool: a GC starts when any one of them runs out of free
         # slots, so the pool that fills first sets the pace, not the total.
         heaps: GC.stat_heap.values.map do |h|
@@ -220,6 +271,8 @@ class BenchServer
     args = [RbConfig.ruby, __FILE__, "--serve", "--variant", options[:variant], "--users", options[:users].to_s,
             "--pool-size", options[:pool_size].to_s]
     args << "--installed-gem" if options[:installed_gem]
+    args << "--presence" if options[:presence]
+    args.push("--ping-interval", options[:ping_interval].to_s) if options[:ping_interval]
     @io = IO.popen(["taskset", "-c", options[:server_cpus], *args], "r+", err: [log_path, "w"])
     line = read_line
     _, _, port, *rest = line.split
@@ -416,6 +469,11 @@ def report_step(label, rate, outcomes, before, after, wall)
   reasons = after[:gc_by].to_h { |k, v| [k, v - before[:gc_by].fetch(k, 0)] }.select { |_, v| v.positive? }
   puts "         gc by: #{reasons.map { |k, v| "#{k}=#{v}" }.join(" ")}; marking #{after[:mark_ms] - before[:mark_ms]} ms, sweeping #{after[:sweep_ms] - before[:sweep_ms]} ms" \
     "#{"; #{(after[:allocated] - before[:allocated]) / [outcomes.size, 1].max} objects a connect" if after[:allocated]}"
+  unless after[:presence].empty?
+    calls = after[:presence].to_h { |k, v| [k, v - before[:presence].fetch(k, 0)] }.select { |_, v| v.positive? }
+    puts "         presence: #{calls.values.sum} store calls (#{format("%.1f", calls.values.sum / wall)}/s) for " \
+      "#{outcomes.size} connects: #{calls.map { |k, v| "#{k}=#{v}" }.join(" ")}"
+  end
   heaps = after[:heaps].zip(before[:heaps]).map do |a, b|
     allocated = a[:total_allocated_objects] - b[:total_allocated_objects]
     "#{a[:slot_size]}B #{allocated / [outcomes.size, 1].max}/connect, #{a[:heap_eden_slots]} slots " \

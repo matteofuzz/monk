@@ -126,7 +126,9 @@ What the client does for you:
 - **Notices a dead socket.** While the page is visible it pings the server
   every 25 s; a socket that answers nothing within 10 s is given up on at
   once (a phone's network can vanish without the browser closing anything)
-  and the page reconnects and resyncs.
+  and the page reconnects and resyncs. Hidden, it stops pinging and says
+  so once (`{"op":"hidden"}`), which is how [presence](presence.md) knows
+  a person is away.
 - **Comes back at once, and not before it can.** Shown again, back online,
   resumed after being frozen, or restored from the back/forward cache, it
   probes or reopens its socket without waiting out the backoff. Offline it
@@ -323,8 +325,8 @@ message out to 1,000 connections on a single topic, during which the
 single-threaded registry also holds up every other subscribe and
 unsubscribe. Per-recipient topics keep those counts small. Not built, on
 purpose: client → server events (`onclick` and forms over the socket),
-per-viewer diffing, presence, replay of missed messages (a resync re-fetches
-the page instead).
+per-viewer diffing, replay of missed messages (a resync re-fetches the page
+instead). Who is online is [presence](presence.md), `monk add presence`.
 
 Rate limiting or throttling of chatty topics (typing indicators, say) is the
 app's job.

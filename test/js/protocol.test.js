@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   INITIAL_DELAY, MAX_DELAY, nextDelay, jittered, topicsFrom, diffTopics,
   subscribeMessage, unsubscribeMessage, parseMessage, checkSeq, resyncVerdict,
-  HEARTBEAT, PONG_TIMEOUT, pingMessage, reconnectDecision, returnAction,
+  HEARTBEAT, PONG_TIMEOUT, pingMessage, hiddenMessage, reconnectDecision, returnAction,
 } from "../../lib/monk/live/client/protocol.js";
 
 // Every browser reconnects when the WS process restarts; without jitter they
@@ -41,6 +41,7 @@ test("subscribe and unsubscribe messages match the server protocol", () => {
   assert.deepEqual(JSON.parse(subscribeMessage(["a:1"])), { op: "subscribe", topics: ["a:1"] });
   assert.deepEqual(JSON.parse(unsubscribeMessage(["a:1"])), { op: "unsubscribe", topics: ["a:1"] });
   assert.deepEqual(JSON.parse(pingMessage()), { op: "ping" });
+  assert.deepEqual(JSON.parse(hiddenMessage()), { op: "hidden" });
 });
 
 // The server closes a socket silent for 2 x its ping_interval (25 s in the

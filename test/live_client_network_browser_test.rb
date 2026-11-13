@@ -60,6 +60,28 @@ class LiveClientNetworkBrowserTest < Minitest::Test
     assert_equal 1, events("connected").size
   end
 
+  # Presence counts a Live socket as hidden until its first ping (ADR
+  # 0019), so a visible page pings at once, not a heartbeat later.
+  def test_a_visible_page_pings_as_soon_as_its_socket_opens
+    @pages.js_overrides = {}
+    open_page(PAGE)
+
+    wait_for("ping") { sent_ops.include?("ping") }
+    assert_equal %w[subscribe ping], sent_ops.first(2)
+  end
+
+  def test_a_page_hidden_when_its_socket_opens_sends_no_ping
+    open_page(PAGE)
+    hide_page!
+    @proxy.sever!
+    wait_for("reconnect while hidden") { events("connected").size == 2 }
+    sent = evaluate("window.__sent.length")
+
+    sleep 1
+
+    assert_equal ["subscribe"], sent_ops.drop(sent - 1)
+  end
+
   # Throttled timers would fire the timeout late and wrongly, and pings
   # stopping is how presence will tell a hidden page (open question 6).
   def test_a_hidden_page_sends_no_pings_and_probes_when_shown
@@ -134,6 +156,8 @@ class LiveClientNetworkBrowserTest < Minitest::Test
   end
 
   private
+
+  def sent_ops = evaluate("window.__sent.map(s => JSON.parse(s).op)")
 
   def hide_page!
     @other_page ||= LiveBrowserHelpers.browser.create_page

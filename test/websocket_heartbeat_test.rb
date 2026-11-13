@@ -182,6 +182,23 @@ class WebSocketHeartbeatTest < Minitest::Test
     client&.close
   end
 
+  # Live::Session's check for a silent page runs here, so no connection
+  # needs a thread of its own for it.
+  def test_on_heartbeat_runs_after_each_ping
+    server_side, client = UNIXSocket.pair
+    beats = Queue.new
+    connection = Monk::WebSocket::Connection.new(server_side)
+    connection.on_heartbeat { beats << :beat }
+    connection.start_heartbeat(0.05)
+
+    assert_equal 0x9, read_raw_frame(client)[:opcode]
+    assert_equal :beat, beats.pop(timeout: 1)
+  ensure
+    connection&.stop_heartbeat!
+    server_side&.close
+    client&.close
+  end
+
   def test_the_heartbeat_thread_does_not_outlive_the_socket
     server = start_server(ping_interval: 0.02, &WAIT_FOR_DISCONNECT)
 

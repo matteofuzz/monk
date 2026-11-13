@@ -22,8 +22,8 @@ Monk::Bin.run(__FILE__) do
   require_relative "../config/websocket"
 
   # Each only if this app has it: auth says whose a socket is, live what it
-  # may subscribe to.
-  %w[auth live].each do |name|
+  # may subscribe to, presence whether this process counts who is online.
+  %w[auth live presence].each do |name|
     path = File.expand_path("../config/#{name}.rb", __dir__)
     require path if File.exist?(path)
   end
@@ -61,19 +61,32 @@ Monk::Bin.run(__FILE__) do
   db_pool = (:auth if authenticate)
   Monk::Persistence::Pg.start_pools!(db_pool) if db_pool
 
-  port = ENV.fetch("WS_PORT", "9293").to_i
-  # Defaults to public_url (config/settings.rb): one PUBLIC_URL keeps both
-  # in sync. More than one origin: comma-separated.
-  allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
+  # With presence (monk add presence), this process counts its signed-in
+  # sockets and writes them to Postgres every few seconds, through a
+  # connection of its own. With live, a socket counts as a hidden page
+  # until its page's first ping.
+  presence = (Monk::Presence.start!(start_visible: !live) if defined?(Monk::Presence) && authenticate)
+  begin
+    port = ENV.fetch("WS_PORT", "9293").to_i
+    # Defaults to public_url (config/settings.rb): one PUBLIC_URL keeps both
+    # in sync. More than one origin: comma-separated.
+    allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
 
-  # A ping every 25 s keeps a quiet socket open through a proxy's idle
-  # timeout (nginx's is 60 s), and a socket that answers nothing for two
-  # of them (a phone that changed network) is closed instead of held.
-  server = Monk::WebSocket::Server.new(
-    port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
-    ping_interval: 25, reuse_port: processes > 1,
-  )
-  puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
-    "(#{live ? "live" : "app/sockets"}, transport: #{AppWebSocket::TRANSPORT}, authenticate: #{authenticate})"
-  server.run(&handler)
+    # A ping every 25 s keeps a quiet socket open through a proxy's idle
+    # timeout (nginx's is 60 s), and a socket that answers nothing for two
+    # of them (a phone that changed network) is closed instead of held.
+    server = Monk::WebSocket::Server.new(
+      port: port, authenticate: authenticate, allowed_origins: allowed_origins, db_pool: db_pool,
+      ping_interval: 25, reuse_port: processes > 1, presence: presence,
+    )
+    puts "Monk::WebSocket::Server listening on ws://0.0.0.0:#{port} " \
+      "(#{live ? "live" : "app/sockets"}, transport: #{AppWebSocket::TRANSPORT}, authenticate: #{authenticate}" \
+      "#{", presence" if presence})"
+    server.run(&handler)
+  ensure
+    # On TERM (a deploy): this process's people stay as they were for the
+    # grace, while their pages reconnect to another process. Also when the
+    # server couldn't start (its port in use), so presence stops with it.
+    Monk::Presence.stop! if presence
+  end
 end

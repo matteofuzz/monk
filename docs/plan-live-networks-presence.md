@@ -261,6 +261,14 @@ For each of iOS Safari and Android Chrome:
 Item 3's server-side answer decides whether A1 alone can mark a locked
 phone offline, or only the heartbeat rule marks it Away.
 
+Decided 2026-11-13: what the LAN runs below didn't cover moves to the
+first deploy of the real app with 0.24 (phase 7), behind TLS and its
+proxy: iPhone with the A2 client (lock, app switch for 1 and 5 minutes),
+airplane mode for 30 s, lock for 15 minutes, and why Android
+DuckDuckGo's socket closed cleanly after 441 s. Part A is merged into
+`main_dev/0_24_0` without them; B doesn't wait on them, since the LAN
+runs answered what a locked phone does to its socket.
+
 Run on the local network (the Mac's LAN IP, plain `ws://`, no proxy), with
 a throwaway scaffolded Live app: a page logging `monk-live:*` and
 lifecycle events, patches sent after a delay, and the WS server logging
@@ -413,8 +421,14 @@ Later runs, same page, same day:
 
 ### B0. ADR 0019 first
 
-The roadmap asks for an ADR before code. The questions, with what this
-analysis would recommend:
+Written 2026-11-12, to review before any presence code:
+`docs/adr/0019-presence-per-process-rows-in-postgres-settled-once-per-transition.md`.
+It settles the questions below: rows per (process, subject) with
+`status` and `gone_at`, counting while the process heartbeats and for
+the grace once gone; readers derive the status; transitions settled by
+any WS process into a logged `monk_presence_status`, which fires
+`on_change` once and keeps `last_seen_at`. B1 below follows it. The
+questions as they stood, with what this analysis recommended:
 
 1. **WebSocket feature or Live feature?** Recommend: tracking in
    `Monk::WebSocket` (it's where sockets and subjects are, and an
@@ -462,6 +476,14 @@ analysis would recommend:
    `authorize` rules, called once per global transition (after the
    grace), from which the app calls `Monk::Live.patch`. The alternative,
    apps polling, loses what makes it live.
+   **Revised 2026-11-13, during B1:** the WS process doesn't load the
+   app's views or code, so it couldn't render the partial, and a slow
+   hook would delay its heartbeat. The WS process now only signals: one
+   `NOTIFY monk_presence` per settle, listing the changed subjects. One
+   Ractor in `bin/server`, elected by advisory lock, reacts by reading
+   their status and calling `on_change` with the batch. A spike in a
+   real Kino process showed this works (ADR 0019, "The reactor,
+   measured").
 7. **What a status is.** Decided: `:online` (a visible page open),
    `:away` (only hidden pages open), `:offline`, plus `last_seen_at`
    (open question 6). "Reachable" is the app's, from 0.25's push
@@ -489,29 +511,105 @@ analysis would recommend:
 
 ### B1. Building it, once the ADR is settled
 
-- Migration in Monk's template (`00000000000005_create_presence_tables`):
-  `monk_presence_processes (id, hostname, pid, heartbeat_at)` and
-  `monk_presence (process_id, subject, sockets, visible_sockets,
-  last_seen_at, PRIMARY KEY (process_id, subject))`, an index on
-  `subject`, and `monk_presence_last_seen (subject PRIMARY KEY,
-  last_seen_at)`, written by `monk add presence` (open question 5).
+- Migration in Monk's template (`00000000000005_create_presence_tables`),
+  as ADR 0019: `monk_presence_processes (id, hostname, pid,
+  heartbeat_at)` and `monk_presence (process_id, subject, status,
+  gone_at, PRIMARY KEY (process_id, subject))`, both `UNLOGGED`, an
+  index on `subject`, and the logged `monk_presence_status (subject
+  PRIMARY KEY, status, changed_at, last_seen_at)`, written by
+  `monk add presence` (open question 5). Socket counts stay in memory.
 - The counts Ractor, fed by `Server.serve` (connect after the 101, leave
   in the ensure) without an ask: a send, so a connect never waits on it.
 - Visible or hidden per socket, from Live's pings (open question 6):
   `Live::Session` notes the time of each `{"op":"ping"}` and tells the
   counts Ractor when a socket crosses the `2 × HEARTBEAT` line, either
-  way. The server needs `HEARTBEAT` too: a Ruby constant mirroring
+  way. A Live socket starts hidden, and the client pings at once on
+  open when its page is visible (a change to A2's client), so a visible
+  page is Online within a frame. The server needs `HEARTBEAT` too: a Ruby constant mirroring
   `protocol.js`'s, with a test that reads the JS file and fails if they
   differ.
-- The flusher and heartbeat thread in the WS process, through its own
-  pool (`:presence`, size 1), started by `bin/websocket_server`. Its
-  errors are logged and never end the process; on reconnect it rewrites
-  its whole state (the counts are in memory, so nothing is lost).
+- The flusher and heartbeat thread in the WS process, started by
+  `bin/websocket_server`, through the main Ractor's own connection (no
+  app code runs there, so nothing else uses it; the ADR's first draft
+  had a `:presence` pool). Its errors are logged and never end the
+  process; the tick after a failure rewrites its whole state (the counts
+  are in memory, so nothing is lost).
 - Readers, from any process: `Monk::Presence.status(subjects)` →
   `{subject => {status: :online | :away | :offline, last_seen_at:}}`,
   and `online?(subject)`. One query, the people on screen at a time, as
-  monk_talk does today. The exact shape is for the ADR.
-- `on_change` dispatch from the flusher/pruner, after the grace.
+  monk_talk does today. An offline subject not yet settled takes
+  `last_seen_at` from its expired rows.
+- Settling and pruning on each tick, in one transaction under
+  `pg_advisory_xact_lock`: the flushed subjects and those with expired
+  rows, upserted into `monk_presence_status` only where the status
+  differs; a full reconcile of non-offline subjects every minute.
+- The signal: when `config/presence.rb` sets an `on_change` (the WS
+  processes load it too), the settling
+  transaction sends `NOTIFY monk_presence` with a JSON array of the
+  changed subjects, split into several notifies when it would pass
+  8000 bytes. The Tracker no longer calls `on_change`.
+- The reactor in `bin/server`: a Ractor started at boot when presence
+  is configured with an `on_change` (`Monk::Presence.start_reactor!`,
+  called from the scaffold's `config.ru` after `Monk.boot`; the exact
+  hook is to settle while writing it). It opens its own connection,
+  tries `pg_try_advisory_lock`, retries every 5 s while another process
+  holds it, and once it has it `LISTEN`s. Per notify it calls
+  `Monk::Presence.status(subjects)` once and `on_change` with the batch,
+  logging errors. A lost connection: reconnect, compete for the lock
+  again. Its `LISTEN` loop follows `PgFanout.subscribe`.
+- `on_change(&block)`: a shareable block receiving
+  `{subject => {status:, last_seen_at:}}`, at most once per change.
+- A `TERM`ed process sets `gone_at` on all its rows instead of deleting
+  them, so a deploy changes nobody's status.
+
+**Progress (2026-11-13), uncommitted on `main_dev/live_presence`:**
+the migration, `Store` (all statements), `Counts`, `Tracker` (with
+`on_change` still called in the WS process, to move), `Monk::Presence`,
+the `presence:` option on `Server`, Away from `Live::Session`'s pings,
+the client's ping on open, `Monk::Live::HEARTBEAT`, with tests (store,
+counts, tracker, server, headless Chrome). Then, the same day: the
+`NOTIFY` in settle (`Store#settle(notify:)`, `Store.signals`), the
+Tracker no longer calling app code (`Tracker.new(notify:)`, `#tick`
+returns what it settled), `Monk::Presence::Reactor` (one thread, stop
+port, lock, reconnect) and `Monk::Presence.on_change`/`start_reactor!`,
+with store and reactor tests. Next: the scaffold (`monk add presence`,
+`bin/websocket_server`, `config.ru`), the end-to-end browser test, the
+multi-process `KILL` test and the 25K connect wave.
+Also done: short TCP keepalives on the reactor's connection (a vanished
+host's lock freed in ~25 s, not ~2 h) and a two-process reactor test
+with `KILL` (`test/presence_reactor_process_test.rb`). The deploying
+guide must say: the reactor needs a direct connection (not PgBouncer in
+transaction mode), and N web processes hold N + 1 more connections.
+Then the scaffold: `monk add presence` (depends on auth and websocket;
+`config/presence.rb`, the migration, `app/views/presence/_dot.erb`,
+`test/presence_test.rb`, its SETUP.md/AGENTS.md sections, and the
+`presence-dots` example: one `Live.batch` per 50 changes, with a probe in
+`test/generators/examples_test.rb`). `config/load.rb` loads presence after
+live; `config.ru` calls `start_reactor!` after `Monk.boot` (not in
+`config/load.rb`, so tests and `bin/console` don't react);
+`bin/websocket_server` loads `config/presence.rb`, starts and stops the
+Tracker and passes `presence:`. `test/generators/presence_test.rb` runs
+the generated `bin/websocket_server`: a signed-in Live socket reads away,
+online after a ping, and still online after `TERM`.
+Then, the same day, tried on a scaffolded app on a Mac, an iPhone and an
+Android phone: Away took 50–75 s, which looked broken, so the client now
+sends `{"op":"hidden"}` as its page is hidden (open question 6, revised;
+ADR 0019 has the measured timings per platform). Also: the WebSocket
+process's presence cleanup covers a failed start, the duplicate next step
+is gone, and `test/generators/presence_test.rb` kills one of two real
+`bin/websocket_server` processes with `KILL` (its heartbeat aged past the
+process timeout): the person stays counted through the other, and is
+offline with `last_seen_at` once both are gone. Docs: `docs/guides/presence.md`
+(new), the Live, WebSocket, deploying, scaffolding and upgrading guides,
+the CHANGELOG. `bin/benchmark_ws_connect --presence` reports the presence
+statements per step. The 25K connect wave, measured with it, found that a
+thread per Live connection for the silence check (waking every 10 s) cost
+more than everything else presence does: at 15K held, CPU 40% → 83% and a
+third of the connects failed. The check now runs on the connection's own
+heartbeat (`Connection#on_heartbeat`), so `Server.new(presence:)` requires
+`ping_interval:`; with it, presence makes no measurable difference at 15K
+or 25K, at about 2 statements a second (ADR 0019, "A connect wave,
+measured"). Left: roadmap item 3 marked done once this branch is merged.
 
 ## Tests
 
@@ -534,13 +632,29 @@ analysis would recommend:
   offline, including through a killed process; a 25K connect wave is a few statements a
   second, not 25K (measured with `bin/benchmark_ws_connect`'s `live`
   variant, which must not get slower).
+- Signal and reactor, against real Postgres: a settle that changes
+  statuses sends one notify listing them, none when nothing changed or
+  without `notify:`, several when the list passes 8000 bytes; the reactor
+  calls `on_change` with the current statuses; with two reactors only
+  the lock holder reacts, and the other takes over when the holder's
+  connection ends; an error in `on_change` is logged and the next
+  notify is still handled; the reactor's connection has short TCP
+  keepalives; two real processes, one reacting, killed with `KILL`, the
+  other takes over. End to end: a page in headless Chrome shows
+  another subject's dot change, patched from `bin/server`'s reactor.
 - 0 skips, as always: Postgres, Redis and floci up before the run.
 
 ## Docs and scaffold
 
 - Scaffolded `bin/websocket_server`: `ping_interval: 25`, and presence
-  when `config/presence.rb` exists. The `monk add presence` generator
-  and its generator test (open question 5).
+  when `config/presence.rb` exists (start the Tracker, pass `presence:`
+  to the server, stop it on `TERM`). `config.ru` starts the reactor. The
+  `monk add presence` generator and its generator test (open question
+  5).
+- `docs/guides/live.md` or a presence guide: `on_change` gets batches;
+  patch per page rather than per person when many change at once (the
+  `:notify` pool drops patches past 1000 waiting: ADR 0019, "Patch
+  volume").
 - `docs/guides/live.md`: a "Mobile and flaky networks" section (what the
   client does, the events, what an app still owns), and presence moved
   out of "Not built"; `docs/guides/websocket.md`: the idle timeout and
@@ -561,11 +675,13 @@ analysis would recommend:
 3. **A2 + A3**: Live ping/pong, client heartbeat, lifecycle events, tests.
    Shippable alone: everything in Part A helps every Live app.
 4. **ADR 0019** (presence), reviewed before any presence code.
-5. **B1**: tables, counts Ractor, flusher, pruning, readers, `on_change`,
-   Away from Live's heartbeat, `last_seen_at`.
+5. **B1**: tables, counts Ractor, flusher, pruning, readers, Away from
+   Live's heartbeat, `last_seen_at`, the settle's `NOTIFY` and the
+   reactor in `bin/server` calling `on_change`.
 6. **Scaffold, guides, upgrade guide.**
 7. **Check against the real app**: monk_talk's `ActiveUsers` replaced by
-   presence, on a phone, outside this repo.
+   presence, on a phone, outside this repo. On its first deploy with
+   0.24, also the device checks left from A0 ("A0 still open").
 
 Part A could go out as 0.24.0 and presence as 0.24.x if the ADR takes
 longer; the roadmap pairs them because presence is what makes the mobile
@@ -637,28 +753,31 @@ work visible.
      behind it later without breaking anything.
 5. **Scaffold**: decided, its own generator, `monk add presence`, with
    `depends_on :auth, :websocket` (as `live` depends on `:websocket`,
-   ADR 0017). It writes the migration, `config/presence.rb` (the
-   `:presence` pool and an empty `on_change` example), and its sections
+   ADR 0017). It writes the migration, `config/presence.rb`
+   (`Monk::Presence.configure(db_name: :primary)` and a commented
+   `on_change` example), and its sections
    of `agents.md`/`setup.md`. `bin/websocket_server` loads
    `config/presence.rb` only if it exists, as it does `config/auth.rb`
    and `config/live.rb`, so the template stays one file. Not on by
    default when auth and websocket are both installed: `monk add` does
    nothing for an installed module, so presence would depend on the
    order the modules were added in, and every such app would pay a
-   flusher thread, a pool connection and a table it may never read. An
+   flusher thread, a connection and a table it may never read. An
    existing app turns it on with one command, which is all the upgrade
    guide has to say.
-6. **Away**: decided, in Monk, inferred from Live's heartbeat (A2): no
-   other channel, and no new message type. The page pings only while
+6. **Away**: decided, in Monk, inferred from Live's heartbeat (A2), with
+   no other channel. Revised on 2026-11-13, after trying the scaffold on a
+   Mac and an iPhone: the client also sends `{"op":"hidden"}` (no reply)
+   as its page is hidden, so Away shows within a tick instead of 50–75 s
+   later; the silence below stays as the fallback. The page pings only while
    visible, and A3 probes the moment it becomes visible again, so a Live
    socket that answers the server's pings but has sent no Live ping for
    `2 × HEARTBEAT` belongs to a hidden page. Away is noticed after ~50 s
    (plus the grace); Online again is immediate. The ADR writes this rule
    down, so a later change to when the client pings can't silently
    change what Away means.
-   - Rejected: an explicit `{"op":"visibility"}` message (instant, but the
-     first client → server message in Live that isn't about
-     subscriptions); closing the socket after a while hidden and deriving
+   - Rejected: a `{"op":"visibility"}` message both ways (the probe ping
+     already says visible); closing the socket after a while hidden and deriving
      Away from recency (no live updates for background tabs, a refetch on
      every return); leaving Away to apps (only through a second channel,
      an HTTP post or another socket, which races the Live one).
