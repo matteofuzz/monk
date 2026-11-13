@@ -37,6 +37,7 @@ module Monk
       ".txt" => "text/plain",
       ".xml" => "application/xml",
       ".map" => "application/json",
+      ".webmanifest" => "application/manifest+json",
     })
 
     BINARY_TYPES = Ractor.make_shareable({

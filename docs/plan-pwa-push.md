@@ -105,8 +105,8 @@ end
 - `manifest.webmanifest`: `name`/`short_name` `"{{app}}"`, `start_url "/"`,
   `display "standalone"`, `theme_color`, `background_color`, the icons.
   A todo: "set a display name in name/short_name, and replace the icons".
-- `config/pwa.rb`: `require "monk/pwa"` and
-  `Monk::Pwa.configure(theme_color: "#...")`.
+- `config/pwa.rb`: `require "monk/pwa"` and `Monk::Pwa.configure`, which
+  checks the manifest and takes `theme_color` from it (step 3).
 - **The `app_name:` flag** (decision 3), three places:
   - `Definition#copy` accepts `app_name: false`;
   - `Run#copy_entry` replaces `{{app}}` before comparing, so an unchanged
@@ -270,7 +270,10 @@ CREATE INDEX ON push_subscriptions (session_id);
 Since `pwa` is copied first, `monk add push` can't rewrite `sw.js`. The
 push handlers are therefore in `pwa`'s `sw.js` from the start, between
 `// monk:example push-handlers` markers, commented out, with a todo from
-`monk add push` to uncomment them. To be confirmed while building A2.
+`monk add push` to uncomment them. Step 3 left this to step 8: example
+markers are found by `#\s*monk:example` (`Run#example_tags`,
+`uncomment_examples`), which a JavaScript file would need as
+`// # monk:example push-handlers`, or the regex extended to `//`.
 
 ### B7. Generator
 
@@ -295,7 +298,23 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 2. The `app_name:` flag on `copy` and in `monk help --file`, with tests.
    Done: `Generator.fill_app_name` (also used for sections now), tests in
    `test/generator_test.rb` and `test/exe_monk_test.rb`.
-3. A1-A3 with tests; A4 on desktop, Android, iOS.
+3. A1-A3 with tests; A4 on desktop, Android, iOS. Done, except the
+   device checks (step 10):
+   - `Monk::Pwa.configure` checks the manifest the way Chrome does
+     (`Pwa::Manifest.check!`): JSON, `name`/`short_name` without `{{app}}`,
+     `start_url`, an installable `display`, a 192 and a 512 icon for
+     purpose any, every local icon, `sw.js` and the apple-touch-icon on
+     disk. It reads them under `Monk::Assets.root` (`public`), or `root:`.
+   - `theme_color` comes from the manifest, so it isn't set twice; there
+     is no `theme_color:` argument.
+   - The icons are `role: :view`: an app's own icon is kept and reported
+     skipped, not a conflict.
+   - `test/pwa_browser_test.rb` runs a generated app's `bin/server` in
+     headless Chrome: `/sw.js` registers with scope `/`,
+     `Page.getInstallabilityErrors` is empty, and a controlled page still
+     fetches from the app. It needs Chrome's default profile: in a Ferrum
+     context (incognito) Chrome reports only `in-incognito` and skips the
+     manifest checks.
 4. B2 against the RFC vectors.
 5. B1: configure, key checks, `monk push keys`.
 6. B3: migration, subscription API, session tie-in.
@@ -320,5 +339,4 @@ Suite with 0 skips, with the Postgres, Redis and S3 containers up.
 ## Open
 
 - Device checks (A4, step 10).
-- Whether `sw.js` holds the push handlers from the start (B6), confirmed in
-  step 3.
+- How `sw.js` gets the push handlers (B6): decided in step 8.

@@ -15,7 +15,7 @@ class GeneratorsExamplesTest < Minitest::Test
   # chat example's -- and that way each transport is used by one.
   SUITES = {
     without_live: [%i[postgres redis mail auth jobs websocket storage], { transport: "redis" }],
-    with_live: [%i[live presence], { transport: "postgres" }],
+    with_live: [%i[live presence pwa], { transport: "postgres" }],
   }.freeze
 
   # What each example does once uncommented, as test methods in the app.

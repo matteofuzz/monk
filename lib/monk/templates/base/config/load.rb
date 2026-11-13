@@ -6,7 +6,7 @@ require_relative "settings"
 # Each Monk module's config, if this app has it (`monk add <module>` writes
 # it), in Monk's fixed order: a module's config may rely on the ones
 # before it. Nothing to edit here when a module is added.
-%w[persistence redis auth mail jobs websocket live presence storage].each do |name|
+%w[persistence redis auth mail jobs websocket live presence storage pwa].each do |name|
   path = File.expand_path("#{name}.rb", __dir__)
   require path if File.exist?(path)
 end
