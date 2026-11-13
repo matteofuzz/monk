@@ -4,7 +4,7 @@ module Monk
     # declares it. Only declarations: Run decides what they mean for a given
     # app, and writes nothing until it has checked every file.
     class Definition
-      Copy = Data.define(:path, :from, :role, :executable, :condition)
+      Copy = Data.define(:path, :from, :role, :executable, :condition, :app_name)
       Migration = Data.define(:name)
       Env = Data.define(:file, :key, :value, :commented)
       Option = Data.define(:name, :values, :infer_from, :describe, :default)
@@ -75,13 +75,18 @@ module Monk
       # A file copied verbatim from templates/<module>/<path>, or from
       # `from:`, a template path or a block taking the options. `if:`, a
       # block taking the options, decides whether it's copied at all.
-      def copy(*paths, role:, from: nil, executable: false, if: nil)
+      # `app_name: true` replaces {{app}} with the app's name, in the file
+      # written and in `monk help MODULE --file` (pwa's manifest); opt-in, so
+      # every other file stays byte for byte (docs/plan-pwa-push.md
+      # decision 3).
+      def copy(*paths, role:, from: nil, executable: false, if: nil, app_name: false)
         raise ArgumentError, "unknown role #{role.inspect}, one of #{ROLES.inspect}" unless ROLES.include?(role)
         raise ArgumentError, "from: needs a single path" if from && paths.size > 1
 
         condition = binding.local_variable_get(:if)
         paths.each do |path|
-          @copies << Copy.new(path: path, from: from, role: role, executable: executable, condition: condition)
+          @copies << Copy.new(path: path, from: from, role: role, executable: executable, condition: condition,
+            app_name: app_name,)
         end
       end
 

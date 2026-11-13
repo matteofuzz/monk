@@ -300,6 +300,32 @@ class ExeMonkTest < Minitest::Test
     assert_includes monk("help", "websocket", "--file", "config/websocket.rb", "--transport=redis")[1], "RedisFanout"
   end
 
+  def test_help_file_fills_in_the_app_name_only_inside_an_app_and_only_where_asked
+    templates = File.join(@tmp, "templates")
+    { "badge/public/badge.json" => %({"name": "{{app}}"}\n), "badge/config/badge.rb" => "# {{app}} stays\n" }
+      .each do |path, content|
+        FileUtils.mkdir_p(File.dirname(File.join(templates, path)))
+        File.write(File.join(templates, path), content)
+      end
+    registry = Monk::Generator::Registry.new(templates_dir: templates)
+    registry.define(:badge) do
+      copy "config/badge.rb", role: :wiring
+      copy "public/badge.json", role: :wiring, app_name: true
+    end
+    FileUtils.mkdir_p(File.join(@tmp, "shop/config"))
+    File.write(File.join(@tmp, "shop/config/load.rb"), "")
+    help = lambda do |path, cwd|
+      stdout = StringIO.new
+      Monk::CLI.new(stdout: stdout, stderr: StringIO.new, cwd: cwd, registry: registry, now: NOW)
+               .run(["help", "badge", "--file", path])
+      stdout.string
+    end
+
+    assert_equal %({"name": "shop"}\n), help.call("public/badge.json", File.join(@tmp, "shop"))
+    assert_equal %({"name": "{{app}}"}\n), help.call("public/badge.json", @tmp)
+    assert_equal "# {{app}} stays\n", help.call("config/badge.rb", File.join(@tmp, "shop"))
+  end
+
   def test_unknown_commands_and_options
     assert_equal 1, monk("nope").first
     assert_includes monk("add", "--nope")[2], "Unknown option: --nope."

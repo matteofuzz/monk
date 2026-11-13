@@ -231,8 +231,18 @@ module Monk
         raise Error.new("#{definition.name} doesn't write #{path}.", suggestion: "monk help #{definition.name}")
       end
 
-      @stdout.print File.read(source)
+      @stdout.print file_help_content(definition, path, source)
       0
+    end
+
+    # A file copied with `app_name: true` shows this app's name, as monk add
+    # writes it; outside an app it keeps {{app}}.
+    def file_help_content(definition, path, source)
+      content = File.read(source)
+      copy = definition.copies.find { |candidate| candidate.path == path }
+      return content unless copy&.app_name && monk_app?
+
+      Generator.fill_app_name(content, File.basename(@cwd))
     end
 
     def migration_template(definition, path)

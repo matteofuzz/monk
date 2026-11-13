@@ -293,6 +293,8 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 
 1. Spike: OpenSSL EC, HKDF and GCM inside a Ractor. Done (B2).
 2. The `app_name:` flag on `copy` and in `monk help --file`, with tests.
+   Done: `Generator.fill_app_name` (also used for sections now), tests in
+   `test/generator_test.rb` and `test/exe_monk_test.rb`.
 3. A1-A3 with tests; A4 on desktop, Android, iOS.
 4. B2 against the RFC vectors.
 5. B1: configure, key checks, `monk push keys`.
