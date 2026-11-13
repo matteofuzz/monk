@@ -1,0 +1,18 @@
+<%# Notifications on or off, for this browser (monk add push). Render it
+    with render "push/_settings", layout: false. push.js handles the buttons and sets <html data-push-state>; the rules
+    below show what applies. Restyle freely. %>
+<div class="push-settings">
+  <button type="button" data-push-enable>Turn on notifications</button>
+  <button type="button" data-push-disable>Turn off notifications</button>
+  <p data-push-note="denied">Notifications are blocked for this site in the browser's settings.</p>
+  <p data-push-note="needs-install">On iPhone and iPad, add this app to the Home Screen first (Share › Add to Home Screen), then open it from there.</p>
+  <p data-push-note="unsupported">This browser can't receive notifications from this site.</p>
+</div>
+<style>
+  .push-settings [data-push-enable], .push-settings [data-push-disable], .push-settings [data-push-note] { display: none; }
+  html[data-push-state="off"] .push-settings [data-push-enable],
+  html[data-push-state="subscribed"] .push-settings [data-push-disable],
+  html[data-push-state="denied"] .push-settings [data-push-note="denied"],
+  html[data-push-state="needs-install"] .push-settings [data-push-note="needs-install"],
+  html[data-push-state="unsupported"] .push-settings [data-push-note="unsupported"] { display: revert; }
+</style>

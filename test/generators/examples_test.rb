@@ -14,7 +14,7 @@ class GeneratorsExamplesTest < Minitest::Test
   # because with live bin/websocket_server runs live's handler, never the
   # chat example's -- and that way each transport is used by one.
   SUITES = {
-    without_live: [%i[postgres redis mail auth jobs websocket storage], { transport: "redis" }],
+    without_live: [%i[postgres redis mail auth jobs websocket storage push], { transport: "redis" }],
     with_live: [%i[live presence pwa], { transport: "postgres" }],
   }.freeze
 
@@ -216,6 +216,33 @@ class GeneratorsExamplesTest < Minitest::Test
         port&.close
       end
     RUBY
+    "push-subscribe" => <<~RUBY,
+      def test_push_subscribe
+        session, env = push_session
+        subscription = push_subscription
+
+        assert_equal 200, request("POST", "/push/subscription", subscription, env).first
+        assert Monk::Push.subscribed?(session[:subject])
+        assert_equal 422, request("POST", "/push/subscription", { endpoint: "nope" }, env).first
+        assert_equal 401, request("POST", "/push/subscription", subscription).first, "signed in only"
+
+        assert_equal 200, request("DELETE", "/push/subscription", { endpoint: subscription[:endpoint] }, env).first
+        refute Monk::Push.subscribed?(session[:subject])
+      end
+    RUBY
+    "push-notify" => <<~RUBY,
+      def test_push_notify
+        session, env = push_session
+        Monk::Push.subscribe(session_token: session[:token], subscription: push_subscription)
+
+        status, body = request("POST", "/push/test", nil, env)
+
+        assert_equal [200, 1], [status, JSON.parse(body)["devices"]]
+        assert_equal 403, request("POST", "/push/test", nil, env.except("HTTP_X_CSRF_TOKEN")).first
+      ensure
+        Monk::Jobs.clear!
+      end
+    RUBY
   }.freeze
 
   PROBE_HELPERS = <<~'RUBY'.freeze
@@ -270,6 +297,22 @@ class GeneratorsExamplesTest < Minitest::Test
       raise "PUT #{upload["url"]}: #{status}" unless status == 200
 
       upload
+    end
+
+    # A signed-in session, and the env a page's request carries with it:
+    # the session and CSRF cookies, and the X-CSRF-Token header.
+    def push_session
+      session = Monk::Auth.redeem(Monk::Auth.request_login("push-#{rand(1_000_000)}@example.test"))
+      csrf = Monk::Auth.csrf_token_for(session[:token])
+      [session, { "HTTP_COOKIE" => "session_token=#{session[:token]}; csrf_token=#{csrf}", "HTTP_X_CSRF_TOKEN" => csrf }]
+    end
+
+    # What a browser's PushSubscription.toJSON() gives.
+    def push_subscription
+      key = OpenSSL::PKey::EC.generate("prime256v1")
+      { endpoint: "https://push.example/send/#{rand(1_000_000)}", expirationTime: nil,
+        keys: { p256dh: Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_public(key)),
+                auth: Monk::Push::Base64Url.encode(Random.bytes(16)) } }
     end
 
     # Monk reads params from the query string and JSON bodies. Returns

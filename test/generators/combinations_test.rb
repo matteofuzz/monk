@@ -9,14 +9,17 @@ class GeneratorsCombinationsTest < Minitest::Test
   include PersistenceTestHelpers
   include RedisTestHelpers
 
-  MODULES = %i[postgres redis mail auth jobs websocket live storage pwa].freeze
+  MODULES = %i[postgres redis mail auth jobs websocket live storage pwa push].freeze
   # websocket and live need a transport; Postgres, so a pair adds it.
   OPTIONS = { transport: "postgres" }.freeze
+  # push's VAPID pairs are fresh on every run, by design.
+  VAPID_KEY = /\A(VAPID_(?:PUBLIC|PRIVATE)_KEY=)[A-Za-z0-9_-]+\z/
 
   # A then B, B then A, and both in one command give the same app, up to
   # what legitimately depends on the order: migration timestamps (each
   # run's own), the order of appended lines, and of SETUP.md and
-  # AGENTS.md's sections. Every copied file is byte for byte the same.
+  # AGENTS.md's sections; and push's VAPID keys, new on every run. Every
+  # copied file is byte for byte the same.
   def test_the_order_modules_are_added_in_doesnt_matter
     MODULES.combination(2).each do |first, second|
       one_then_other = app_tree { |dest| add_each(dest, first, second) }
@@ -108,7 +111,8 @@ class GeneratorsCombinationsTest < Minitest::Test
   def normalized(path, content)
     case path
     when "SETUP.md", "AGENTS.md" then content.split(/^(?=<!-- monk:module )/).map(&:strip).sort
-    when "Gemfile", /\A\.env/, ".gitignore", ".dockerignore" then content.lines.map(&:chomp).reject(&:empty?).sort
+    when /\A\.env/ then content.lines.map { |line| line.chomp.sub(VAPID_KEY, '\1<key>') }.reject(&:empty?).sort
+    when "Gemfile", ".gitignore", ".dockerignore" then content.lines.map(&:chomp).reject(&:empty?).sort
     else content
     end
   end

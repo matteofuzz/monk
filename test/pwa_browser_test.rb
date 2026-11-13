@@ -1,5 +1,6 @@
 require_relative "test_helper"
 require "socket"
+require "pg"
 
 # A generated app with pwa (monk new shop --with pwa), served by its own
 # bin/server, in real headless Chrome: Chrome registers /sw.js for the
@@ -7,6 +8,7 @@ require "socket"
 # files exactly as monk add writes them (docs/plan-pwa-push.md, A4).
 class PwaBrowserTest < Minitest::Test
   include GeneratorTestHelpers
+  include PersistenceTestHelpers
 
   # Its own Chrome, not the Live tests' one: Ferrum opens every page in a
   # new browser context, which Chrome treats as incognito, and in incognito
@@ -96,7 +98,54 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # push.js in a generated push app (monk add push): the page learns its
+  # state at once, even with notifications allowed and a push service that
+  # never answers -- headless Chrome reaches none, so subscribing itself is
+  # left to the device checks (docs/plan-pwa-push.md step 10).
+  def test_push_js_reports_the_state_of_this_browser
+    with_new_app(:push) do |dest|
+      with_generated_database do |database|
+        out, status = run_generated_script(dest, "bin/setup_db", database)
+        assert status.success?, out
+
+        with_server(dest, database.merge(test_env(dest))) do |port|
+          origin = "http://127.0.0.1:#{port}"
+          assert_equal "off", push_state(origin), "not asked yet"
+
+          @page.command("Browser.grantPermissions", origin: origin, permissions: ["notifications"])
+          assert_equal "off", push_state(origin), "allowed, re-subscribing, the push service silent"
+
+          @page.command("Browser.setPermission", origin: origin, permission: { name: "notifications" },
+            setting: "denied",)
+          assert_equal "denied", push_state(origin)
+        end
+      end
+    end
+  end
+
   private
+
+  def push_state(origin)
+    @page.go_to("#{origin}/")
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+    loop do
+      state = @page.evaluate("document.documentElement.dataset.pushState")
+      return state if state
+
+      flunk "push.js set no data-push-state" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.05
+    end
+  end
+
+  # .env.test's values, as the app's own tests load them; the database's
+  # come from with_generated_database.
+  def test_env(dest)
+    File.read(File.join(dest, ".env.test")).lines.filter_map do |line|
+      key, value = line.chomp.split("=", 2)
+      [key, value.delete_prefix('"').delete_suffix('"')] if value && !key.start_with?("DB_", "#")
+    end.to_h
+  end
 
   # DevTools names registrations in workerRegistrationUpdated events,
   # sent for each existing one once ServiceWorker is enabled.
@@ -133,9 +182,10 @@ class PwaBrowserTest < Minitest::Test
     context.create_page
   end
 
-  def with_server(dest)
+  def with_server(dest, app_env = {})
     port = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
-    env = { "PORT" => port.to_s, "MONK_ENV" => "test", "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__) }
+    env = app_env.merge("PORT" => port.to_s, "MONK_ENV" => "test",
+      "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__),)
     pid = Process.spawn(env, "bin/server", chdir: dest, out: File::NULL, err: File::NULL)
     wait_for_port(port, pid)
     yield port

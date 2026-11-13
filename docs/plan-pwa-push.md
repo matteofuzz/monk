@@ -346,6 +346,16 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
    is checked in Chrome through DevTools' `deliverPushMessage`
    (`test/pwa_browser_test.rb`); the click handler only on devices.
 9. B7: generator; the examples uncommented and run by Monk's tests.
+   Done: `monk add push` (needs pwa, jobs, auth) writes `config/push.rb`,
+   the migration, `push-subscribe` and `push-notify` examples (probed in
+   `examples_test.rb`), `app/views/push/_settings.erb` (the switch, shown
+   by `data-push-state`), a fresh VAPID pair in `.env` and another in
+   `.env.test` per run, and `Monk::Push::Sweep` nightly in
+   `config/recurring.rb`. Found and fixed here: with permission granted,
+   push.js reported no state until the push service answered; it now
+   reports at once. Headless Chrome reaches no push service, so
+   subscribing is a device check; `test/pwa_browser_test.rb` checks the
+   states `off` and `denied`.
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+
     Home Screen app. Enable, receive, open from a notification, permission
     revoked in settings, app reinstalled (a 410), logout on one device.
