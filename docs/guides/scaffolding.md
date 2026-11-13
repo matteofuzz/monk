@@ -40,6 +40,7 @@ modules it needs, first:
 | `jobs` | background jobs on Postgres, run by `bin/jobs` | `postgres` |
 | `websocket` | the WebSocket server process | `postgres` or `redis` |
 | `live` | HTML pushed to open pages | `websocket` |
+| `presence` | who is online, from the sockets ([`presence.md`](presence.md)) | `auth`, `websocket` |
 | `storage` | files users send: local files in development, an S3 bucket in production | — |
 
 - **What it prints:** the files created (`+`), the lines appended (`~`),
@@ -160,7 +161,7 @@ SETUP.md  AGENTS.md  CLAUDE.md
 
 `config.ru` is the same for every app. `config/load.rb` is too: it
 requires `config/settings`, then each module's config that exists, in a
-fixed order (`persistence redis auth mail jobs websocket live storage`),
+fixed order (`persistence redis auth mail jobs websocket live presence storage`),
 then loads `app/`. It never boots the app; `config.ru`'s `Monk.boot(App)`
 does. `bin/jobs`, `bin/console` and the test helper require `config/load`
 too, so they see the same configs, models, mailers and jobs as

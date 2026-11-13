@@ -26,9 +26,12 @@ module Monk
 
       def self.monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-      def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE)
+      # presence: is a Monk::Presence::Counts this connection reports to
+      # (Server.new(presence:)), used only for a connection with a subject.
+      def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE, presence: nil)
         @socket = socket
         @subject = subject
+        @presence = presence if subject
         @write_mutex = Mutex.new
         @max_payload_size = max_payload_size
         @last_read_at = Connection.monotonic
@@ -170,6 +173,7 @@ module Monk
 
             if now >= next_ping
               send_ping
+              @on_heartbeat&.call
               next_ping = now + interval
             end
             sleep [[next_ping, deadline].min - Connection.monotonic, 0].max
@@ -183,10 +187,42 @@ module Monk
         end
       end
 
+      # A block run on the heartbeat thread after each ping, in this
+      # connection's Ractor: periodic work for a handler without a thread
+      # of its own per connection (Live::Session's check for a silent
+      # page). Never runs without ping_interval:.
+      def on_heartbeat(&block)
+        @on_heartbeat = block
+      end
+
       # Called unconditionally from Server.serve's ensure, alongside
       # #unsubscribe! -- a no-op if #start_heartbeat was never called.
       def stop_heartbeat!
         @heartbeat_thread&.kill
+      end
+
+      # Presence (docs/adr/0019-...): whether this connection is counted
+      # for its subject. Server.serve reports the open after the 101 and
+      # the close in its ensure; a handler that knows whether its page is
+      # visible (Live::Session, from its client's pings) sets #visible=.
+      # Each is a send to the counts, never a wait, keyed by this
+      # connection's own Ractor.
+      def tracks_presence? = !@presence.nil?
+
+      def presence_open!
+        @presence&.open(Ractor.current, @subject.to_s)
+      end
+
+      def presence_close!
+        @presence&.close(Ractor.current)
+      end
+
+      # Reported only when it changes.
+      def visible=(visible)
+        return if @visible == visible
+
+        @visible = visible
+        @presence&.visible(Ractor.current, visible)
       end
 
       private

@@ -596,3 +596,47 @@ module JobsTestHelpers
     Monk::Persistence::Pg.checkout(db_name) { |conn| conn.exec("SELECT count(*) FROM #{table}").getvalue(0, 0) }
   end
 end
+
+# Shared by the Monk::Presence Postgres tests (presence_*_test.rb): the
+# real schema from the one canonical migration, applied through Migrator.
+# Include alongside PersistenceTestHelpers.
+module PresenceTestHelpers
+  PRESENCE_MIGRATIONS_DIR = File.expand_path("../lib/monk/templates/presence/db/migrate", __dir__)
+
+  def setup_presence_tables(db_name)
+    require "monk/persistence/pg/migrator"
+    Monk::Persistence::Pg.register(db_name, **pg_test_opts)
+    Monk::Persistence::Pg.checkout(db_name) { |conn| drop_presence_tables(conn) }
+    Monk::Persistence::Pg::Migrator.new(db_name: db_name, dir: PRESENCE_MIGRATIONS_DIR).migrate!
+  end
+
+  def drop_presence_tables(conn)
+    %w[monk_presence monk_presence_processes monk_presence_status schema_migrations].each do |table|
+      drop_table_if_exists(conn, table)
+    end
+  end
+
+  # Moves a row's gone_at `seconds` into the past; returns it, as a Time.
+  def age_gone(db_name, process_id, subject, seconds)
+    Monk::Persistence::Pg.checkout(db_name) do |conn|
+      value = conn.exec_params(<<~SQL, [process_id, subject, seconds]).getvalue(0, 0)
+        UPDATE monk_presence SET gone_at = gone_at - $3::float8 * interval '1 second'
+        WHERE process_id = $1 AND subject = $2
+        RETURNING extract(epoch FROM gone_at)::float8
+      SQL
+      Time.at(value)
+    end
+  end
+
+  # Moves a process's heartbeat `seconds` into the past; returns it.
+  def age_heartbeat(db_name, process_id, seconds)
+    Monk::Persistence::Pg.checkout(db_name) do |conn|
+      value = conn.exec_params(<<~SQL, [process_id, seconds]).getvalue(0, 0)
+        UPDATE monk_presence_processes SET heartbeat_at = heartbeat_at - $2::float8 * interval '1 second'
+        WHERE id = $1
+        RETURNING extract(epoch FROM heartbeat_at)::float8
+      SQL
+      Time.at(value)
+    end
+  end
+end

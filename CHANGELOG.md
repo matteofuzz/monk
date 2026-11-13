@@ -6,6 +6,24 @@ in `lib/monk/version.rb`.
 
 ## Unreleased
 
+### Added
+
+- **Presence: who is online (`monk add presence`).** Whether a signed-in
+  person has a page open and visible (`:online`), only hidden ones
+  (`:away`), or none (`:offline`, with `last_seen_at`), across tabs,
+  devices and WebSocket processes: `Monk::Presence.status(subjects)` and
+  `online?(subject)`, one query from any process. Each
+  `bin/websocket_server` process counts its signed-in sockets in memory
+  and writes what changed once a second to Postgres; a person stays as
+  they were for a 20 s grace after their last page closes, so a deploy
+  or a phone changing networks changes nobody's status. Every transition
+  is settled once across processes, and `Monk::Presence.on_change` runs
+  in `bin/server` with each batch of changes, in one process at a time,
+  elected through a Postgres lock, with another taking over when it
+  stops. The generator writes `config/presence.rb`, the migration, a dot
+  partial and an example pushing changes to pages through Live. ADR 0019;
+  [`presence.md`](docs/guides/presence.md).
+
 ### Changed
 
 - **`ping_interval:` closes silent connections.** A WebSocket connection
@@ -31,6 +49,13 @@ in `lib/monk/version.rb`.
   back/forward cache; it doesn't try while offline, and a hidden page
   tries once, then waits to be shown. Events from a socket it gave up
   on are ignored, so a late close can't start a second connection.
+  When its page is hidden it stops pinging and sends `{"op":"hidden"}`
+  once (no reply), which presence reads as away at once; on open, a
+  visible page pings at once.
+- **`config.ru`, `config/load.rb` and `bin/websocket_server`** start
+  presence when `config/presence.rb` exists, and do nothing otherwise.
+  Existing apps that want presence update them first
+  ([`upgrading.md`](docs/guides/upgrading.md), 0.24).
 
 ## 0.23.1 - 2026-11-10
 

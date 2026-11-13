@@ -30,10 +30,13 @@ module LiveBrowserPage
       <meta name="monk-live-url" content="ws://127.0.0.1:#{@proxy.port}">
       <script>
         window.__events = [];
-        // Every socket the client opens, even one the browser blocks.
+        // Every socket the client opens, even one the browser blocks, and
+        // every message it sends, in order.
         window.__sockets = 0;
+        window.__sent = [];
         window.WebSocket = class extends window.WebSocket {
           constructor(...args) { super(...args); window.__sockets += 1; }
+          send(data) { window.__sent.push(data); super.send(data); }
         };
         #{EVENTS.to_json}.forEach(n => document.addEventListener("monk-live:" + n,
           e => window.__events.push({ name: n, detail: e.detail, at: performance.now() })));
@@ -279,8 +282,8 @@ module LiveBrowserHelpers
     @publisher = Monk::Live::Publisher.new(@registry)
     Monk::Live.configure(registry: @registry)
     Monk::Live.authorize("t:*", anonymous: true, &self.class::ALLOW)
-    @ws_server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
-    @ws_thread = Thread.new { @ws_server.run(&Monk::Live::HANDLER) }
+    @ws_server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **ws_server_options)
+    @ws_thread = Thread.new { @ws_server.run(&ws_handler) }
     @proxy = WsProxy.new(@ws_server.port)
     @pages = PageServer.new
     @page = LiveBrowserHelpers.browser.create_page
@@ -293,4 +296,8 @@ module LiveBrowserHelpers
     @ws_thread&.kill
     Monk::Live.reset!
   end
+
+  # What a test class may change about the WS server it runs.
+  def ws_server_options = {}
+  def ws_handler = Monk::Live::HANDLER
 end
