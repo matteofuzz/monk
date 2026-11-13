@@ -315,7 +315,12 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
      fetches from the app. It needs Chrome's default profile: in a Ferrum
      context (incognito) Chrome reports only `in-incognito` and skips the
      manifest checks.
-4. B2 against the RFC vectors.
+4. B2 against the RFC vectors. Done: `Push::Keys`, `Push::Encryption`
+   (`MAX_PAYLOAD` 3993 bytes: a full record is exactly 4096),
+   `Push::Vapid`, `Push::Base64Url`; `test/push_crypto_test.rb` checks
+   RFC 8291's body byte for byte, decrypts as a browser would (random
+   salts and keys round-trip), verifies the JWT, and runs it all in 4
+   worker Ractors. A private scalar outside `1...order` is refused.
 5. B1: configure, key checks, `monk push keys`.
 6. B3: migration, subscription API, session tie-in.
 7. B4: delivery job, against a fake push server in the tests (201, 404,
