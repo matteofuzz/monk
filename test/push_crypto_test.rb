@@ -7,6 +7,8 @@ require "monk/push"
 # and against a browser-side decryption; RFC 8292's VAPID header; P-256 keys
 # from raw bytes; all of it inside a worker Ractor too.
 class PushCryptoTest < Minitest::Test
+  include PushTestHelpers
+
   B64 = Monk::Push::Base64Url
 
   # RFC 8291, Appendix A.
@@ -198,38 +200,8 @@ class PushCryptoTest < Minitest::Test
      B64.encode(SecureRandom.random_bytes(16)),]
   end
 
-  # What the browser does with a push message (RFC 8291 section 3, RFC
-  # 8188), written independently of Monk::Push::Encryption.
-  def decrypt(body, ua_private, ua_public, auth)
-    salt = body.byteslice(0, 16)
-    record_size, id_length = body.byteslice(16, 5).unpack("NC")
-    assert_equal 4096, record_size
-    server_public = body.byteslice(21, id_length)
-    ciphertext = body.byteslice((21 + id_length)..)
-
-    ua_key = Monk::Push::Keys.private_pkey(B64.decode(ua_private))
-    shared = ua_key.derive(Monk::Push::Keys.public_pkey(server_public))
-    info = "WebPush: info\0".b + B64.decode(ua_public) + server_public
-    ikm = OpenSSL::KDF.hkdf(shared, salt: B64.decode(auth), info: info, length: 32, hash: "SHA256")
-    key = OpenSSL::KDF.hkdf(ikm, salt: salt, info: "Content-Encoding: aes128gcm\0".b, length: 16, hash: "SHA256")
-    nonce = OpenSSL::KDF.hkdf(ikm, salt: salt, info: "Content-Encoding: nonce\0".b, length: 12, hash: "SHA256")
-
-    cipher = OpenSSL::Cipher.new("aes-128-gcm").decrypt
-    cipher.key = key
-    cipher.iv = nonce
-    cipher.auth_tag = ciphertext.byteslice(-16, 16)
-    padded = cipher.update(ciphertext.byteslice(0, ciphertext.bytesize - 16)) + cipher.final
-    padded.sub(/\x02\x00*\z/n, "").force_encoding(Encoding::UTF_8)
-  end
-
   def vapid(endpoint, pair, now: Time.now.to_i, expires_in: Monk::Push::Vapid::EXPIRES_IN)
     Monk::Push::Vapid.authorization(endpoint, public_key: pair[:public_key], private_key: pair[:private_key],
       contact: "mailto:ops@shop.test", now: now, expires_in: expires_in,)
-  end
-
-  def verifies?(public_key, input, raw_signature)
-    r, s = [raw_signature.byteslice(0, 32), raw_signature.byteslice(32, 32)].map { |half| OpenSSL::BN.new(half, 2) }
-    der = OpenSSL::ASN1::Sequence([OpenSSL::ASN1::Integer(r), OpenSSL::ASN1::Integer(s)]).to_der
-    Monk::Push::Keys.public_pkey(B64.decode(public_key)).verify("SHA256", der, input)
   end
 end

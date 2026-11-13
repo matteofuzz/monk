@@ -334,7 +334,10 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
    is public now, so Push finds the cookie's session in its own SQL;
    `monk/push` requires `monk/auth`.
 7. B4: delivery job, against a fake push server in the tests (201, 404,
-   410, 413, 429, 5xx).
+   410, 413, 429, 5xx). Done: `Push::Delivery`, `Monk::Push.deliver`,
+   `notify` with `DeliveryJob` and `Push::Sweep` (`push/later.rb`, loaded
+   by whichever of monk/push and monk/jobs comes second). ttl defaults to
+   a day. Retry-After isn't honoured (jobs' own backoff).
 8. B5-B6: browser side, Node tests for its logic.
 9. B7: generator; the examples uncommented and run by Monk's tests.
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+

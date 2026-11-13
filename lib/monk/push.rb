@@ -7,6 +7,7 @@ require_relative "push/encryption"
 require_relative "push/vapid"
 require_relative "push/subscription"
 require_relative "push/store"
+require_relative "push/delivery"
 
 # Opt-in: require "monk/push" explicitly; `require "monk"` alone doesn't
 # load it. Web push to the browsers people allowed it in
@@ -83,6 +84,16 @@ module Monk
 
       def subscribed?(subject) = subscribed([subject]).fetch(subject.to_s)
 
+      # Sends payload to one subscription now, in this process: what
+      # Monk::Push::DeliveryJob runs; notify is the usual call. subscription
+      # is one of subscriptions(subject). Returns :delivered, or :gone when
+      # the push service says it no longer exists (its row is deleted).
+      # Raises RejectedError (final) or DeliveryError (worth retrying).
+      def deliver(subscription, payload, ttl: Delivery::TTL, urgency: nil, topic: nil)
+        Delivery.deliver(current, subscription, Delivery.payload_bytes(payload),
+          Delivery.options(ttl: ttl, urgency: urgency, topic: topic),)
+      end
+
       # Deletes subscriptions that no longer count: a revoked or expired
       # session's, and those past the browser's expirationTime. Returns how
       # many. Run nightly by Monk::Push::Sweep.
@@ -130,3 +141,7 @@ module Monk
     end
   end
 end
+
+# Monk::Push.notify and its job, when jobs are loaded too -- either order
+# works (docs/adr/0017).
+require_relative "push/later" if Monk.const_defined?(:Jobs)

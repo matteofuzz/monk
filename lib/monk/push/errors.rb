@@ -14,6 +14,18 @@ module Monk
     class InvalidSubscriptionError < ArgumentError
     end
 
+    # A send that didn't reach the push service, or that it refused for
+    # now (429, 5xx): worth retrying. The network's own exception, if any,
+    # is the #cause.
+    class DeliveryError < StandardError
+    end
+
+    # A push service's final no: 400, 401/403 (the VAPID keys or contact
+    # are wrong) or 413. Retrying sends the same request, so
+    # Monk::Push::DeliveryJob doesn't.
+    class RejectedError < DeliveryError
+    end
+
     # A payload over Encryption::MAX_PAYLOAD bytes: once encrypted it
     # wouldn't fit the 4096 bytes every push service accepts.
     class PayloadTooLargeError < ArgumentError

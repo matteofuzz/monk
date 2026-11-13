@@ -666,10 +666,43 @@ module PushTestHelpers
     Monk::Auth.redeem(Monk::Auth.request_login(email)).slice(:token, :subject)
   end
 
+  # What the browser does with a push message (RFC 8291 section 3, RFC
+  # 8188), written independently of Monk::Push::Encryption.
+  def decrypt(body, ua_private, ua_public, auth)
+    salt = body.byteslice(0, 16)
+    record_size, id_length = body.byteslice(16, 5).unpack("NC")
+    assert_equal 4096, record_size
+    server_public = body.byteslice(21, id_length)
+    ciphertext = body.byteslice((21 + id_length)..)
+
+    ua_key = Monk::Push::Keys.private_pkey(Monk::Push::Base64Url.decode(ua_private))
+    shared = ua_key.derive(Monk::Push::Keys.public_pkey(server_public))
+    info = "WebPush: info\0".b + Monk::Push::Base64Url.decode(ua_public) + server_public
+    ikm = OpenSSL::KDF.hkdf(shared, salt: Monk::Push::Base64Url.decode(auth), info: info, length: 32, hash: "SHA256")
+    key = OpenSSL::KDF.hkdf(ikm, salt: salt, info: "Content-Encoding: aes128gcm\0".b, length: 16, hash: "SHA256")
+    nonce = OpenSSL::KDF.hkdf(ikm, salt: salt, info: "Content-Encoding: nonce\0".b, length: 12, hash: "SHA256")
+
+    cipher = OpenSSL::Cipher.new("aes-128-gcm").decrypt
+    cipher.key = key
+    cipher.iv = nonce
+    cipher.auth_tag = ciphertext.byteslice(-16, 16)
+    padded = cipher.update(ciphertext.byteslice(0, ciphertext.bytesize - 16)) + cipher.final
+    padded.sub(/\x02\x00*\z/n, "").force_encoding(Encoding::UTF_8)
+  end
+
+  def verifies?(public_key, input, raw_signature)
+    r, s = [raw_signature.byteslice(0, 32), raw_signature.byteslice(32, 32)].map { |half| OpenSSL::BN.new(half, 2) }
+    der = OpenSSL::ASN1::Sequence([OpenSSL::ASN1::Integer(r), OpenSSL::ASN1::Integer(s)]).to_der
+    Monk::Push::Keys.public_pkey(Monk::Push::Base64Url.decode(public_key)).verify("SHA256", der, input)
+  end
+
   # What a browser's PushSubscription.toJSON() gives, with real keys.
   def browser_subscription(endpoint: "https://push.example/send/#{SecureRandom.hex(8)}", expiration_time: nil)
     key = OpenSSL::PKey::EC.generate("prime256v1")
+    # "_private_key" is the browser's own, for decrypt: a browser never
+    # sends it, and Monk::Push ignores keys it doesn't know.
     { "endpoint" => endpoint, "expirationTime" => expiration_time,
+      "_private_key" => Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_private(key)),
       "keys" => { "p256dh" => Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_public(key)),
                   "auth" => Monk::Push::Base64Url.encode(SecureRandom.random_bytes(16)), }, }
   end
