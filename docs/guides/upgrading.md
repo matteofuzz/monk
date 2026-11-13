@@ -16,6 +16,10 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.24
 
+In the `Gemfile`, `gem "monkrb", "~> 0.24", require: "monk"` (what a new
+app gets; `"~> 0.23"` would also install 0.24, but not require it), then
+`bundle update monkrb`.
+
 ### `ping_interval:` in `bin/websocket_server` (apps with websocket)
 
 `ping_interval:` now also closes a connection that sends nothing, not

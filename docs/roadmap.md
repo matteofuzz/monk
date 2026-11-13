@@ -50,22 +50,20 @@ gets its own design doc and plan when work on it starts.
 
 3. **0.24: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.
-   - **Mobile.** The Live client already reconnects with a jittered backoff
-     (500 ms to 30 s), and the WebSocket server can ping (`ping_interval:`).
-     Still missing, and belonging in the Live client and the WebSocket server
-     rather than in each app's JS: a client-side timeout that notices a dead
-     socket, for example after a phone changes network, instead of waiting
-     for the OS to close it; and reconnecting and resyncing on
-     `visibilitychange`, after a tab was backgrounded or suspended.
-   - **Presence: is this person connected?** Only the WebSocket server knows
-     who has a socket open, and presence is listed as missing in
-     `docs/guides/live.md`. A valid session only means "logged in
-     somewhere", not "online". Monk would track connected subjects, remove
-     them on disconnect or timeout, and share them across processes through
-     the fanout. An ADR comes first, to decide where the shared state lives
-     (each process's memory, Postgres, Redis), how a process that dies
-     without disconnecting its sockets gets cleaned up, and whether it's a
-     Live feature or a WebSocket one.
+   Done (2026-11-13), measured on desktop, iPhone and Android
+   (`docs/plan-live-networks-presence.md`). A few device checks on a
+   deployed app are still open there; they run on the first real deploy.
+   - **Mobile.** Done: with `ping_interval:`, the WebSocket server closes a
+     connection silent for two intervals. The Live client pings while its
+     page is visible, gives up on a socket silent for 10 s, and reconnects
+     and resyncs when the page is shown, comes back online or is restored
+     from the back/forward cache.
+   - **Presence: is this person connected?** Done: `Monk::Presence`
+     (`monk add presence`, `docs/guides/presence.md`). Each WebSocket
+     process keeps its rows in the app's Postgres, a dead process's rows
+     expire, and `bin/server` calls the app's `on_change` once per
+     transition (online, away, offline). It's tied to Live, which tells it
+     whether each page is visible (ADR 0019).
 
 4. **0.25: PWA and web push.** Together because on iOS web push needs the
    app installed on the Home Screen.
