@@ -66,13 +66,16 @@ gets its own design doc and plan when work on it starts.
      whether each page is visible (ADR 0019).
 
 4. **0.25: PWA and web push.** Together because on iOS web push needs the
-   app installed on the Home Screen.
-   - **PWA scaffolding.** A web app manifest and a `sw.js` served at the
-     root scope, without getting in the way of the Live client.
-   - **Web push, `Monk::Push`.** VAPID keys, storing subscriptions, sending
-     from a job, and deleting subscriptions the push service reports as gone
-     (404/410). Nothing in it is specific to one kind of app, and it makes a
-     PWA useful to any Monk app.
+   app installed on the Home Screen. Built (`docs/plan-pwa-push.md`); the
+   checks on real devices are still open there.
+   - **PWA scaffolding.** Done: `monk add pwa` (`docs/guides/pwa.md`): a
+     web app manifest and a `sw.js` served at the root scope, checked at
+     boot, with no `fetch` handler, so it never gets in the way of the
+     Live client.
+   - **Web push, `Monk::Push`.** Done: `monk add push`
+     (`docs/guides/push.md`, ADR 0020): VAPID keys, subscriptions tied to
+     auth sessions, sending from a job per device, and deleting
+     subscriptions the push service reports as gone (404/410).
 
 5. **0.26: `monk check`: verifying an environment's wiring.** `bin/check`
    (written by the base app) loads `config/load` and runs a read-only check

@@ -14,6 +14,33 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.25
+
+In the `Gemfile`, `gem "monkrb", "~> 0.25", require: "monk"`, then
+`bundle update monkrb`. Both modules below are optional; an app that adds
+neither needs none of this.
+
+### Installable app (optional)
+
+`monk add pwa` is new ([`pwa.md`](pwa.md)). First add `pwa` to the list
+of module configs in `config/load.rb`, after `storage`
+(`monk help base --file config/load.rb`). Then `monk add pwa`, set the
+name in `public/manifest.webmanifest`, and replace the icons.
+
+### Web push (optional, apps with auth and jobs)
+
+`monk add push` is new ([`push.md`](push.md)); it adds `pwa` too.
+Before running it, update two files an earlier Monk wrote, carrying over
+anything you changed in yours:
+
+- `config/load.rb`: `pwa push` at the end of the list of module configs.
+- `config/recurring.rb`: the `monk_push_sweep` line, after
+  `monk_auth_sweep` (`monk help jobs --file config/recurring.rb`).
+
+Then `monk add push`, `bin/setup_db`, and restart `bin/server` and
+`bin/jobs`. In production, set `VAPID_PUBLIC_KEY` and
+`VAPID_PRIVATE_KEY` (from `monk push keys`) and `VAPID_CONTACT`.
+
 ## 0.24
 
 In the `Gemfile`, `gem "monkrb", "~> 0.24", require: "monk"` (what a new

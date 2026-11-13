@@ -359,9 +359,26 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+
     Home Screen app. Enable, receive, open from a notification, permission
     revoked in settings, app reinstalled (a 410), logout on one device.
+    Open: needs a deployed app on https (or a tunnel) and real devices.
+    For each platform:
+    - [ ] installs (address bar or Share › Add to Home Screen), opens
+      standalone, and Live reconnects and resyncs when it comes back to
+      the foreground (A4);
+    - [ ] the switch shows the right state (`needs-install` in an iOS
+      Safari tab), and "Turn on" asks and subscribes;
+    - [ ] `push-notify` shows a notification, also with the app closed;
+      a click opens its page, focusing an open window;
+    - [ ] "Turn off", then a reload: stays off;
+    - [ ] notifications blocked in the OS or browser settings: the switch
+      says `denied`, and the next send gets a 404/410 and deletes the row;
+    - [ ] the app uninstalled: the next send deletes the row;
+    - [ ] logging out on one device: it gets nothing more, others do.
 11. Docs: ADR 0020; `docs/guides/pwa.md`, `docs/guides/push.md`; CONTEXT.md
     (Push subscription, VAPID keys, Notification payload); the 0.25
     section of `docs/guides/upgrading.md`; CHANGELOG; roadmap entry Done.
+    Done, plus the README's module table and `docs/guides/scaffolding.md`.
+    The CHANGELOG section is "Unreleased (0.25.0)": the version bump and
+    its date are the release's.
 
 Suite with 0 skips, with the Postgres, Redis and S3 containers up.
 

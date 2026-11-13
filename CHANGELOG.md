@@ -4,6 +4,38 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased (0.25.0)
+
+### Added
+
+- **Installable app (`monk add pwa`).** A web app manifest with the
+  app's name, placeholder icons and a service worker at `/sw.js`, all the
+  app's own files in `public/`. `Monk::Pwa.configure` checks them at boot
+  the way Chrome does (`InvalidManifestError`), and `<%= monk_head %>`
+  links them and registers the worker. The worker has no `fetch` handler,
+  so it never gets between Live's resync and the network.
+  [`pwa.md`](docs/guides/pwa.md).
+- **Web push (`monk add push`).** `Monk::Push.notify(subject, payload)`
+  sends a notification to every device where a signed-in person turned
+  them on, one job per device. Messages are encrypted (RFC 8291) and
+  signed (VAPID, RFC 8292) by Monk itself over OpenSSL, with no gem.
+  Subscriptions are tied to the auth session they were made in, so
+  logging out stops a device's notifications; a subscription the push
+  service reports gone (404/410) is deleted. `push.js` handles the
+  page's on/off switch; pwa's `sw.js` shows the notification and opens
+  its page on a click. `Monk::Push.subscribed(subjects)` says who can be
+  reached, in one query. ADR 0020; [`push.md`](docs/guides/push.md).
+- **`monk push keys`** prints a new VAPID key pair.
+- **`copy ..., app_name: true`** in a generator fills in `{{app}}` in a
+  copied file (pwa's manifest); `monk help MODULE --file` shows it filled
+  in inside an app.
+
+### Changed
+
+- **`Monk::Auth.token_hash(raw)`** is public: what `sessions.token_hash`
+  holds for a session token, for modules that keep rows per session.
+- **`.webmanifest`** files are served as `application/manifest+json`.
+
 ## 0.24.0 - 2026-11-13
 
 ### Added
