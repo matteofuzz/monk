@@ -4,6 +4,59 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.24.0 - 2026-11-13
+
+### Added
+
+- **Presence: who is online (`monk add presence`).** Whether a signed-in
+  person has a page open and visible (`:online`), only hidden ones
+  (`:away`), or none (`:offline`, with `last_seen_at`), across tabs,
+  devices and WebSocket processes: `Monk::Presence.status(subjects)` and
+  `online?(subject)`, one query from any process. Each
+  `bin/websocket_server` process counts its signed-in sockets in memory
+  and writes what changed once a second to Postgres; a person stays as
+  they were for a 20 s grace after their last page closes, so a deploy
+  or a phone changing networks changes nobody's status. Every transition
+  is settled once across processes, and `Monk::Presence.on_change` runs
+  in `bin/server` with each batch of changes, in one process at a time,
+  elected through a Postgres lock, with another taking over when it
+  stops. The generator writes `config/presence.rb`, the migration, a dot
+  partial and an example pushing changes to pages through Live. ADR 0019;
+  [`presence.md`](docs/guides/presence.md).
+
+### Changed
+
+- **`ping_interval:` closes silent connections.** A WebSocket connection
+  that sends nothing, not even a pong, for two ping intervals is closed:
+  a peer that vanished without closing (a phone that changed network)
+  used to hold its socket and its subscriptions until the kernel gave
+  up, about 15 minutes on Linux. The heartbeat sleeps until its next
+  ping or that deadline, whichever is first, and a ping that can't go
+  out at once is skipped, so a write blocked on a dead peer's full
+  buffer can't keep the close from happening. `ping_interval:` must now
+  be at least 5 s (`Server::MIN_PING_INTERVAL`). The scaffolded
+  `bin/websocket_server` sets `ping_interval: 25`. A ping that fails
+  with a network error (`EHOSTDOWN`, seen on a phone turning Wi-Fi off)
+  no longer ends the heartbeat, and with it that close.
+- **The Live client on real networks.** While its page is visible it
+  sends a ping in Live's protocol (`{"op":"ping"}`, answered with
+  `{"op":"pong"}`) every 25 s, and gives up on a socket that answers
+  nothing within 10 s instead of waiting for the browser to close it;
+  new `monk-live:stale` event, and `disconnected` now carries a
+  `reason` (`closed` with its `code`, `timeout`, `restored`). It
+  reconnects at once, not after the backoff, when the page is shown
+  again, comes back online, resumes or is restored from the
+  back/forward cache; it doesn't try while offline, and a hidden page
+  tries once, then waits to be shown. Events from a socket it gave up
+  on are ignored, so a late close can't start a second connection.
+  When its page is hidden it stops pinging and sends `{"op":"hidden"}`
+  once (no reply), which presence reads as away at once; on open, a
+  visible page pings at once.
+- **`config.ru`, `config/load.rb` and `bin/websocket_server`** start
+  presence when `config/presence.rb` exists, and do nothing otherwise.
+  Existing apps that want presence update them first
+  ([`upgrading.md`](docs/guides/upgrading.md), 0.24).
+
 ## 0.23.1 - 2026-11-10
 
 ### Changed

@@ -27,7 +27,7 @@ end
 
 server = Monk::WebSocket::Server.new(
   port: 9293, authenticate: true, allowed_origins: ["https://example.com"],
-  ping_interval: 30, reverify_interval: 60,
+  ping_interval: 25, reverify_interval: 60,
 )
 server.run(&Chat::HANDLER)
 ```
@@ -43,7 +43,18 @@ client answers it with a pong automatically, no app code involved either
 side, which is what actually defeats an idle reverse-proxy timeout: a
 connection that only ever answers a client's own pings stays vulnerable
 whenever the client is a browser, since browser JavaScript has no API to
-send WS pings at all. `reverify_interval:` (seconds, off by default,
+send WS pings at all. It also closes a connection that has sent nothing,
+not even a pong, for two intervals: a peer that vanished without closing
+(a phone that changed network, a laptop that went to sleep) would
+otherwise hold its socket, and everything subscribed through it, until
+the kernel gave up, about 15 minutes on Linux with a ping pending and
+never without one. Any frame from the client counts, so a client that
+answers pings is never closed. It must be at least 5 s
+(`Server::MIN_PING_INTERVAL`): reads stall during a GC pause, and a
+timeout near that would close healthy sockets in bulk. The scaffolded
+`bin/websocket_server` uses 25 s, under nginx's 60 s idle timeout and
+Cloudflare's 100 s, so a vanished peer is closed after 50 s.
+`reverify_interval:` (seconds, off by default,
 requires `authenticate: true` or `:optional`) re-runs `Monk::Auth.verify` against the
 same credential on that cadence and closes the socket the moment it comes
 back nil — without it, a session revoked or expired after the handshake
@@ -135,6 +146,10 @@ should keep `true`, which refuses them at the door.
   so and exits. It's the only process that calls `listen!`. With auth it
   authenticates sockets, through the `:auth` pool: `:optional` with live,
   whose rules decide what visitors get, and `true` otherwise.
+  With presence (`monk add presence`), it also loads `config/presence.rb`
+  and counts the signed-in sockets in Postgres, through a connection of
+  its own ([`presence.md`](presence.md)); on `TERM` its people keep their
+  status for the grace while their pages reconnect elsewhere.
 - **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
   configure it, and **`WS_PROCESSES`** (1) how many server processes it
   runs on that port ([Several processes](#several-processes)).

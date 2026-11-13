@@ -9,7 +9,7 @@ require "monk/live"
 # files. They skip when Ferrum or Chrome aren't available, the same way the
 # Postgres and Redis tests skip.
 module LiveBrowserPage
-  EVENTS = %w[connected disconnected subscribed patched gap resynced resync-failed stopped].freeze
+  EVENTS = %w[connected disconnected stale subscribed patched gap resynced resync-failed stopped].freeze
 
   # Serves `body_html` as the app page (with the client wired in and every
   # monk-live event recorded on window.__events) and opens it.
@@ -30,6 +30,14 @@ module LiveBrowserPage
       <meta name="monk-live-url" content="ws://127.0.0.1:#{@proxy.port}">
       <script>
         window.__events = [];
+        // Every socket the client opens, even one the browser blocks, and
+        // every message it sends, in order.
+        window.__sockets = 0;
+        window.__sent = [];
+        window.WebSocket = class extends window.WebSocket {
+          constructor(...args) { super(...args); window.__sockets += 1; }
+          send(data) { window.__sent.push(data); super.send(data); }
+        };
         #{EVENTS.to_json}.forEach(n => document.addEventListener("monk-live:" + n,
           e => window.__events.push({ name: n, detail: e.detail, at: performance.now() })));
       </script>
@@ -87,12 +95,20 @@ module LiveBrowserHelpers
   # client files, one request per connection.
   class PageServer
     attr_reader :port, :page_hits
+    # Replacements made in a client file as it's served, e.g. shorter
+    # heartbeat constants: { "protocol.js" => { "from" => "to" } }.
+    attr_accessor :js_overrides
+    # Sent with every response; nil sends none, as Monk doesn't on HTML,
+    # which lets Chrome keep the page in its back/forward cache.
+    attr_accessor :cache_control
 
     def initialize
       @server = TCPServer.new("127.0.0.1", 0)
       @port = @server.addr[1]
       @page = [200, {}, "", 0, false]
       @page_hits = 0
+      @js_overrides = {}
+      @cache_control = "no-store"
       @thread = Thread.new { loop { handle(@server.accept) } }
     end
 
@@ -127,7 +143,10 @@ module LiveBrowserHelpers
         file = File.join(CLIENT_DIR, Regexp.last_match(1))
         return write(client, 404, {}, "") unless File.file?(file)
 
-        write(client, 200, { "content-type" => "text/javascript" }, File.read(file))
+        source = (@js_overrides[Regexp.last_match(1)] || {}).reduce(File.read(file)) do |text, (from, to)|
+          text.include?(from) ? text.sub(from, to) : raise("#{from.inspect} not in #{file}")
+        end
+        write(client, 200, { "content-type" => "text/javascript" }, source)
       when "/login"
         write(client, 200, { "content-type" => "text/html" }, "<body>login</body>")
       else
@@ -141,16 +160,17 @@ module LiveBrowserHelpers
     end
 
     def write(client, status, headers, body)
-      head = headers.merge("content-length" => body.bytesize.to_s, "connection" => "close",
-        "cache-control" => "no-store",)
+      head = headers.merge("content-length" => body.bytesize.to_s, "connection" => "close")
+      head["cache-control"] = @cache_control if @cache_control
       client.write("HTTP/1.1 #{status} X\r\n#{head.map { |k, v| "#{k}: #{v}" }.join("\r\n")}\r\n\r\n#{body}")
     end
   end
 
   # A TCP proxy between the browser and the WS server, so a test can cut
-  # the connection (a network drop) or lose one server frame (a gap).
+  # the connection (a network drop), lose one server frame (a gap), or
+  # go silent without closing anything (a phone that changed network).
   class WsProxy
-    attr_reader :port, :connections
+    attr_reader :port, :connections, :upstream_bytes
 
     def initialize(target_port)
       @target_port = target_port
@@ -159,12 +179,30 @@ module LiveBrowserHelpers
       @pairs = []
       @drop_next = false
       @connections = 0
+      @upstream_bytes = 0
       @thread = Thread.new { loop { accept(@server.accept) } }
     end
 
     def sever!
       @pairs.each { |pair| pair.each { |socket| socket.close unless socket.closed? } }
       @pairs.clear
+    end
+
+    # Everything already open stops getting through, both ways, and
+    # nothing is closed: neither end hears a FIN or an RST, as when a
+    # phone's network goes away under it. Both ends' own TCP stays happy
+    # (loopback acks everything), so this is the worst case: only a
+    # timeout of the client's or the server's own can notice. New
+    # connections get through, as a phone's would on its new network.
+    def blackhole!
+      @blackholed = @pairs.flatten
+      @pairs.clear
+    end
+
+    # The blackholed connections finally close, as a dead socket's close
+    # can reach the browser long after the client gave up on it.
+    def release_blackholed!
+      @blackholed&.each { |socket| socket.close unless socket.closed? }
     end
 
     def drop_next_server_frame!
@@ -174,6 +212,7 @@ module LiveBrowserHelpers
     def close
       @thread.kill
       sever!
+      @blackholed&.each { |socket| socket.close unless socket.closed? }
       @server.close
     end
 
@@ -187,8 +226,16 @@ module LiveBrowserHelpers
       Thread.new { pump_downstream(upstream, client) }
     end
 
+    def blackholed?(socket) = @blackholed&.include?(socket)
+
     def pump_upstream(from, to)
-      loop { to.write(from.readpartial(16_384)) }
+      loop do
+        data = from.readpartial(16_384)
+        next if blackholed?(from)
+
+        @upstream_bytes += data.bytesize
+        to.write(data)
+      end
     rescue IOError, SystemCallError
       nil
     ensure
@@ -207,6 +254,8 @@ module LiveBrowserHelpers
         extended = length == 126 ? from.read(2) : ""
         length = extended.unpack1("n") if length == 126
         payload = from.read(length)
+        next if blackholed?(from)
+
         if @drop_next && payload.start_with?('{"seq"')
           @drop_next = false
         else
@@ -233,8 +282,8 @@ module LiveBrowserHelpers
     @publisher = Monk::Live::Publisher.new(@registry)
     Monk::Live.configure(registry: @registry)
     Monk::Live.authorize("t:*", anonymous: true, &self.class::ALLOW)
-    @ws_server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1")
-    @ws_thread = Thread.new { @ws_server.run(&Monk::Live::HANDLER) }
+    @ws_server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **ws_server_options)
+    @ws_thread = Thread.new { @ws_server.run(&ws_handler) }
     @proxy = WsProxy.new(@ws_server.port)
     @pages = PageServer.new
     @page = LiveBrowserHelpers.browser.create_page
@@ -247,4 +296,8 @@ module LiveBrowserHelpers
     @ws_thread&.kill
     Monk::Live.reset!
   end
+
+  # What a test class may change about the WS server it runs.
+  def ws_server_options = {}
+  def ws_handler = Monk::Live::HANDLER
 end

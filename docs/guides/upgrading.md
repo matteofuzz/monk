@@ -14,6 +14,43 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.24
+
+In the `Gemfile`, `gem "monkrb", "~> 0.24", require: "monk"` (what a new
+app gets; `"~> 0.23"` would also install 0.24, but not require it), then
+`bundle update monkrb`.
+
+### `ping_interval:` in `bin/websocket_server` (apps with websocket)
+
+`ping_interval:` now also closes a connection that sends nothing, not
+even a pong, for two intervals, and must be at least 5 s. Add
+`ping_interval: 25` to the `Monk::WebSocket::Server.new(...)` call in
+`bin/websocket_server` (`monk help websocket --file bin/websocket_server`
+shows where), so a quiet page survives a proxy's idle timeout and a
+socket whose peer vanished is closed after 50 s instead of held. If your
+app already sets one under 5, raise it: `Server.new` refuses it at boot.
+
+### Presence (optional, apps with auth and websocket)
+
+`monk add presence` is new ([`presence.md`](presence.md)). It writes its
+own files, but three files an earlier Monk wrote don't know about it yet.
+Before running it, update them from this Monk's versions, carrying over
+anything you changed in yours:
+
+- `config/load.rb`: `presence` in the list of module configs, after
+  `live` (`monk help base --file config/load.rb`).
+- `config.ru`: `Monk.boot(App)` assigned to `app`, then
+  `Monk::Presence.start_reactor! if defined?(Monk::Presence) && Monk::Presence.configured?`,
+  then `run app` (`monk help base --file config.ru`).
+- `bin/websocket_server`: `presence` loaded beside `auth` and `live`,
+  `Monk::Presence.start!` before the server, `presence:` passed to it, and
+  `Monk::Presence.stop!` when it stops
+  (`monk help websocket --file bin/websocket_server`).
+
+Then `monk add presence`, `bin/setup_db`, and restart `bin/server` and
+`bin/websocket_server`. An app that doesn't add presence needs none of
+this: the lines do nothing without `config/presence.rb`.
+
 ## 0.23.1
 
 `bundle update monkrb`. Nothing in the app changes.

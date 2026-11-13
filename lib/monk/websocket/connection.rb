@@ -14,16 +14,27 @@ module Monk
       # each just under the per-frame cap would silently bypass it.
       DEFAULT_MAX_PAYLOAD_SIZE = 1 * 1024 * 1024
 
+      # With a heartbeat (#start_heartbeat), a connection that sends
+      # nothing for this many ping intervals is taken for gone and closed:
+      # one ping unanswered is allowed, two aren't.
+      IDLE_PINGS = 2
+
       # subject is whatever Monk::Auth.verify returned when
       # Server.new(authenticate: true) verified this handshake
       # (docs/history/plan-websocket.md Phase 5) -- nil for an unauthenticated server.
       attr_reader :subject
 
-      def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE)
+      def self.monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      # presence: is a Monk::Presence::Counts this connection reports to
+      # (Server.new(presence:)), used only for a connection with a subject.
+      def initialize(socket, subject: nil, max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE, presence: nil)
         @socket = socket
         @subject = subject
+        @presence = presence if subject
         @write_mutex = Mutex.new
         @max_payload_size = max_payload_size
+        @last_read_at = Connection.monotonic
       end
 
       # Reassembles a fragmented message per RFC 6455 5.4: a frame with
@@ -59,8 +70,9 @@ module Monk
             # payload back, per RFC 6455 5.5.3.
             write_frame(frame[:payload], 0xA)
           when 0xA
-            # An unsolicited pong -- nothing to do yet (no pending-ping
-            # tracking exists), but still not a message for app code.
+            # A pong: read_frame has already noted that the peer is
+            # there (#start_heartbeat's idle deadline), and it's not a
+            # message for app code.
           when 0x0
             return close_with(1002, "unexpected continuation frame") unless fragments
 
@@ -141,11 +153,30 @@ module Monk
       # no app-level JS involved) answers a server-sent ping with a pong
       # automatically; #read already discards an incoming pong silently
       # either way, so nothing app-visible changes.
+      #
+      # The same thread closes a connection that has sent nothing, not even
+      # a pong, for IDLE_PINGS intervals (docs/plan-live-networks-presence.md,
+      # A1): a peer that vanished without a FIN or an RST (a phone that
+      # changed network) never ends the read on its own. With nothing to
+      # send, the kernel never notices; with a ping pending, Linux gives up
+      # after about 15 minutes. It sleeps until the earlier of its next ping
+      # and that deadline, so the close comes at IDLE_PINGS intervals, not
+      # up to one more.
       def start_heartbeat(interval)
+        idle_timeout = interval * IDLE_PINGS
         @heartbeat_thread = Thread.new do
+          next_ping = Connection.monotonic + interval
           loop do
-            sleep interval
-            write("", opcode: 0x9)
+            now = Connection.monotonic
+            deadline = @last_read_at + idle_timeout
+            break drop_silent_peer if now >= deadline
+
+            if now >= next_ping
+              send_ping
+              @on_heartbeat&.call
+              next_ping = now + interval
+            end
+            sleep [[next_ping, deadline].min - Connection.monotonic, 0].max
           end
         rescue IOError, Errno::EPIPE, Errno::ECONNRESET
           # The socket closed out from under this loop -- #close or a
@@ -156,13 +187,83 @@ module Monk
         end
       end
 
+      # A block run on the heartbeat thread after each ping, in this
+      # connection's Ractor: periodic work for a handler without a thread
+      # of its own per connection (Live::Session's check for a silent
+      # page). Never runs without ping_interval:.
+      def on_heartbeat(&block)
+        @on_heartbeat = block
+      end
+
       # Called unconditionally from Server.serve's ensure, alongside
       # #unsubscribe! -- a no-op if #start_heartbeat was never called.
       def stop_heartbeat!
         @heartbeat_thread&.kill
       end
 
+      # Presence (docs/adr/0019-...): whether this connection is counted
+      # for its subject. Server.serve reports the open after the 101 and
+      # the close in its ensure; a handler that knows whether its page is
+      # visible (Live::Session, from its client's pings) sets #visible=.
+      # Each is a send to the counts, never a wait, keyed by this
+      # connection's own Ractor.
+      def tracks_presence? = !@presence.nil?
+
+      def presence_open!
+        @presence&.open(Ractor.current, @subject.to_s)
+      end
+
+      def presence_close!
+        @presence&.close(Ractor.current)
+      end
+
+      # Reported only when it changes.
+      def visible=(visible)
+        return if @visible == visible
+
+        @visible = visible
+        @presence&.visible(Ractor.current, visible)
+      end
+
       private
+
+      # A ping that can't go out at once is skipped, not waited for: on a
+      # dead connection the kernel's send buffer fills, a writer (a relay
+      # with patches queued) blocks inside write_frame holding the mutex,
+      # and a heartbeat waiting behind it would never reach its deadline.
+      # A ping cut in half (the buffer had room for one byte) would corrupt
+      # the stream, so that connection is dropped instead.
+      #
+      # A ping that fails with a network error (Errno::EHOSTDOWN on macOS,
+      # EHOSTUNREACH on Linux, once the peer's network is gone) is skipped
+      # too: ending the heartbeat there would also end the close after
+      # IDLE_PINGS silent intervals, the one thing that still frees a
+      # connection whose peer vanished. A closed socket (IOError) still
+      # ends it.
+      def send_ping
+        return unless @write_mutex.try_lock
+
+        begin
+          ping = Monk::WebSocket::Frame.encode("", opcode: 0x9)
+          written = @socket.write_nonblock(ping, exception: false)
+          drop_silent_peer if written.is_a?(Integer) && written < ping.bytesize
+        rescue SystemCallError
+          # Skipped; the deadline decides.
+        ensure
+          @write_mutex.unlock
+        end
+      end
+
+      # Shut down, without a close frame and without the write mutex: the
+      # peer is taken for gone, and a writer may be blocked holding the
+      # mutex on its full send buffer. shutdown makes that write raise and
+      # the handler's read return nil, and Server.serve's ensure cleans up
+      # as after any other close.
+      def drop_silent_peer
+        @socket.shutdown(:RDWR)
+      rescue IOError, SystemCallError
+        # Already closed or gone.
+      end
 
       def relay_broadcasts
         loop do
@@ -197,6 +298,8 @@ module Monk
         header = read_exactly(2)
         return nil unless header
 
+        # Any frame shows the peer is there: data, a ping, a pong.
+        @last_read_at = Connection.monotonic
         byte1 = header.getbyte(1)
         masked = byte1.anybits?(0x80)
         length_indicator = byte1 & 0x7F
