@@ -321,7 +321,10 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
    RFC 8291's body byte for byte, decrypts as a browser would (random
    salts and keys round-trip), verifies the JWT, and runs it all in 4
    worker Ractors. A private scalar outside `1...order` is refused.
-5. B1: configure, key checks, `monk push keys`.
+5. B1: configure, key checks, `monk push keys`. Done: a missing key, a
+   private key that isn't the public key's (checked by deriving it) and a
+   contact that isn't `mailto:`/`https:` fail the boot; `monk push keys`
+   prints the two env lines, or `--json`.
 6. B3: migration, subscription API, session tie-in.
 7. B4: delivery job, against a fake push server in the tests (201, 404,
    410, 413, 429, 5xx).

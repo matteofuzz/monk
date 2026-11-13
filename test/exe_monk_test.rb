@@ -326,6 +326,22 @@ class ExeMonkTest < Minitest::Test
     assert_equal "# {{app}} stays\n", help.call("config/badge.rb", File.join(@tmp, "shop"))
   end
 
+  def test_push_keys_prints_a_new_matching_pair
+    require "monk/push"
+    code, out = monk("push", "keys")
+
+    assert_equal 0, code
+    lines = out.lines.to_h { |line| line.chomp.split("=", 2) }
+    public_key, private_key = lines.values_at("VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY")
+    assert_equal public_key, Monk::Push::Keys.public_key_for(private_key)
+    refute_equal out, monk("push", "keys")[1], "a new pair each time"
+
+    json = JSON.parse(monk("push", "keys", "--json")[1])
+    assert_equal json["public_key"], Monk::Push::Keys.public_key_for(json["private_key"])
+    assert_equal 1, monk("push").first
+    assert_equal 1, monk("push", "rotate").first
+  end
+
   def test_unknown_commands_and_options
     assert_equal 1, monk("nope").first
     assert_includes monk("add", "--nope")[2], "Unknown option: --nope."

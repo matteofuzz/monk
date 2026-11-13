@@ -1,5 +1,8 @@
 module Monk
   module Push
+    class NotConfiguredError < StandardError
+    end
+
     # A VAPID key that isn't a base64url P-256 key, or a private key that
     # doesn't go with the public one. Raised at boot by configure.
     class InvalidKeyError < ArgumentError
