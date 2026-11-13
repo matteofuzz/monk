@@ -304,6 +304,11 @@ module Monk
         end
       end
 
+      # What `sessions.token_hash` holds for a raw session token: how a
+      # module that keeps rows per session (Monk::Push) finds the session
+      # a request's cookie names, in its own SQL.
+      def token_hash(raw) = hash_token(raw)
+
       # Stateless double-submit CSRF token, derived not stored
       # (docs/design/auth-sessions.md's "CSRF: stateless double-submit, no third
       # table") -- the one HMAC implementation set_session_cookie and

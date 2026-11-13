@@ -325,7 +325,14 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
    private key that isn't the public key's (checked by deriving it) and a
    contact that isn't `mailto:`/`https:` fail the boot; `monk push keys`
    prints the two env lines, or `--json`.
-6. B3: migration, subscription API, session tie-in.
+6. B3: migration, subscription API, session tie-in. Done:
+   `Push::Subscription` (the browser's JSON, checked: https endpoint, or
+   http on loopback for tests), `Push::Store`; `subscribe` stores a row
+   only for a valid session (nil otherwise) and moves an endpoint to
+   whoever subscribes it last; `subscribed(subjects)` returns
+   `{ subject => bool }` (`subscribed?` for one). `Monk::Auth.token_hash`
+   is public now, so Push finds the cookie's session in its own SQL;
+   `monk/push` requires `monk/auth`.
 7. B4: delivery job, against a fake push server in the tests (201, 404,
    410, 413, 429, 5xx).
 8. B5-B6: browser side, Node tests for its logic.

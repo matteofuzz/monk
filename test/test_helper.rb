@@ -640,3 +640,37 @@ module PresenceTestHelpers
     end
   end
 end
+
+# Shared by the Monk::Push Postgres tests: auth's tables (push's
+# references sessions), then push's own from its canonical migration.
+# Include alongside PersistenceTestHelpers and AuthTestHelpers.
+module PushTestHelpers
+  PUSH_MIGRATIONS_DIR = File.expand_path("../lib/monk/templates/push/db/migrate", __dir__)
+
+  def setup_push_tables(db_name)
+    require "monk/persistence/pg/migrator"
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(db_name, **pg_test_opts)
+    Monk::Persistence::Pg.checkout(db_name) { |conn| drop_push_tables(conn) }
+    setup_auth_tables(db_name)
+    Monk::Persistence::Pg::Migrator.new(db_name: db_name, dir: PUSH_MIGRATIONS_DIR).migrate!
+  end
+
+  # Push's table first: it references sessions.
+  def drop_push_tables(conn)
+    %w[push_subscriptions schema_migrations].each { |table| drop_table_if_exists(conn, table) }
+  end
+
+  # A signed-in session: { token:, subject: }, token being the cookie's.
+  def sign_in(email)
+    Monk::Auth.redeem(Monk::Auth.request_login(email)).slice(:token, :subject)
+  end
+
+  # What a browser's PushSubscription.toJSON() gives, with real keys.
+  def browser_subscription(endpoint: "https://push.example/send/#{SecureRandom.hex(8)}", expiration_time: nil)
+    key = OpenSSL::PKey::EC.generate("prime256v1")
+    { "endpoint" => endpoint, "expirationTime" => expiration_time,
+      "keys" => { "p256dh" => Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_public(key)),
+                  "auth" => Monk::Push::Base64Url.encode(SecureRandom.random_bytes(16)), }, }
+  end
+end

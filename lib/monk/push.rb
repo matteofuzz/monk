@@ -1,9 +1,12 @@
 require_relative "../monk"
+require_relative "auth"
 require_relative "push/errors"
 require_relative "push/base64_url"
 require_relative "push/keys"
 require_relative "push/encryption"
 require_relative "push/vapid"
+require_relative "push/subscription"
+require_relative "push/store"
 
 # Opt-in: require "monk/push" explicitly; `require "monk"` alone doesn't
 # load it. Web push to the browsers people allowed it in
@@ -50,6 +53,47 @@ module Monk
       # applicationServerKey.
       def public_key = current[:public_key]
 
+      # Stores the subscription a browser made (its PushSubscription
+      # JSON, from the page) for the signed-in session session_token
+      # names: the session cookie's raw token. Returns { id:, subject: },
+      # or nil when that session is unknown, revoked or expired (answer
+      # 401). The same browser subscribing again -- every page load does
+      # -- updates its row, and moves it to this session's person.
+      # InvalidSubscriptionError for a subscription a browser wouldn't send.
+      def subscribe(session_token:, subscription:, user_agent: nil)
+        return nil if session_token.nil? || session_token.empty?
+
+        parsed = Subscription.parse(subscription)
+        Store.subscribe(db_name, Monk::Auth.token_hash(session_token), parsed, user_agent&.slice(0, 512))
+      end
+
+      # Forgets the browser with this endpoint (the page's "turn off").
+      # The endpoint is the browser's own secret URL, so knowing it is
+      # proof enough. Returns whether there was one.
+      def unsubscribe(endpoint) = Store.unsubscribe(db_name, endpoint.to_s)
+
+      # The subscriptions that count for subject, oldest first:
+      # [{ id:, subject:, endpoint:, p256dh:, auth: }].
+      def subscriptions(subject) = Store.for_subject(db_name, subject.to_s)
+
+      # { subject => true/false } for each subject: whether a notification
+      # would reach at least one device. One query, for a page listing
+      # people (shaped like Monk::Presence.status).
+      def subscribed(subjects) = Store.subscribed(db_name, Array(subjects))
+
+      def subscribed?(subject) = subscribed([subject]).fetch(subject.to_s)
+
+      # Deletes subscriptions that no longer count: a revoked or expired
+      # session's, and those past the browser's expirationTime. Returns how
+      # many. Run nightly by Monk::Push::Sweep.
+      def sweep!(batch_size: 1000)
+        unless batch_size.is_a?(Integer) && batch_size.positive?
+          raise ArgumentError, "batch_size: must be a positive Integer, got #{batch_size.inspect}"
+        end
+
+        Store.sweep(db_name, batch_size)
+      end
+
       # Test-only.
       def reset!
         @config = nil
@@ -60,6 +104,8 @@ module Monk
       def current
         config || raise(NotConfiguredError, "Monk::Push isn't configured -- call Monk::Push.configure first")
       end
+
+      def db_name = current[:db_name]
 
       def checked_keys(public_key, private_key)
         { public_key: public_key, private_key: private_key }.each do |name, value|
