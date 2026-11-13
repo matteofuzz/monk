@@ -74,7 +74,57 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # sw.js's push handler, given a message the way a push service hands it
+  # over (DevTools delivers it straight to the worker): it shows the
+  # message as a notification, its url kept for the click.
+  def test_a_push_message_becomes_a_notification
+    with_new_app(:pwa) do |dest|
+      with_server(dest) do |port|
+        origin = "http://127.0.0.1:#{port}"
+        @page.command("Browser.grantPermissions", origin: origin, permissions: ["notifications"])
+        @page.go_to("#{origin}/")
+        @page.evaluate_async("navigator.serviceWorker.ready.then(() => arguments[0](true))", 10)
+        registration_id = wait_for_registration_id(origin)
+
+        message = { title: "Ann", body: "Lunch?", url: "/chats/7", tag: "chat-7" }.to_json
+        @page.command("ServiceWorker.deliverPushMessage", origin: "#{origin}/", registrationId: registration_id,
+          data: message,)
+
+        shown = wait_for_notifications
+        assert_equal [["Ann", "Lunch?", "chat-7", "/chats/7"]], shown
+      end
+    end
+  end
+
   private
+
+  # DevTools names registrations in workerRegistrationUpdated events,
+  # sent for each existing one once ServiceWorker is enabled.
+  def wait_for_registration_id(origin)
+    found = Queue.new
+    @page.on("ServiceWorker.workerRegistrationUpdated") do |params|
+      params["registrations"].each do |registration|
+        found << registration["registrationId"] if registration["scopeURL"].start_with?(origin)
+      end
+    end
+    @page.command("ServiceWorker.enable")
+    found.pop(timeout: 10) || flunk("DevTools reported no registration for #{origin}")
+  end
+
+  def wait_for_notifications
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+    loop do
+      shown = @page.evaluate_async(<<~JS, 10)
+        navigator.serviceWorker.ready.then((r) => r.getNotifications())
+          .then((list) => arguments[0](list.map((n) => [n.title, n.body, n.tag, n.data.url])))
+      JS
+      return shown unless shown.empty?
+
+      flunk "no notification shown" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.1
+    end
+  end
 
   def default_profile_page(browser)
     id = browser.command("Target.getTargets")["targetInfos"].find { |info| info["type"] == "page" }["browserContextId"]

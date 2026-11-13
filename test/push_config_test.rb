@@ -51,6 +51,43 @@ class PushConfigTest < Minitest::Test
     assert_raises(Monk::Push::NotConfiguredError) { Monk::Push.public_key }
   end
 
+  def test_the_subscribe_path_defaults_and_must_be_a_path
+    configure
+    assert_equal "/push/subscription", Monk::Push.config[:path]
+
+    configure(path: "/me/push")
+    assert_equal "/me/push", Monk::Push.config[:path]
+    assert_raises(ArgumentError) { configure(path: "push") }
+  end
+
+  # --- the page side ---
+
+  def test_nothing_in_the_head_until_configured
+    refute_includes Monk::Context.new({}).monk_head.to_s, "monk-push"
+  end
+
+  def test_the_head_gives_the_key_the_route_and_the_client
+    configure(path: %(/push/"x))
+    head = Monk::Context.new({}).monk_head.to_s
+
+    assert_includes head, %(<meta name="monk-push-key" content="#{@pair[:public_key]}">)
+    assert_includes head, %(<meta name="monk-push-url" content="/push/&quot;x">)
+    assert_match(%r{<script type="module" src="/_monk/push/push\.js(\?v=\h+)?"></script>}, head)
+  end
+
+  def test_the_client_is_served_from_the_gem
+    with_assets({}) do
+      app = Class.new(Monk::Base) { get("/") { "home" } }
+      app.assets(Monk::Assets.root)
+      boot_quietly(app)
+
+      %w[push.js state.js].each do |file|
+        status, headers, = app.call(env_for("GET", "/_monk/push/#{file}"))
+        assert_equal [200, "text/javascript; charset=utf-8"], [status, headers["content-type"]], file
+      end
+    end
+  end
+
   private
 
   def configure(**override)

@@ -267,13 +267,10 @@ CREATE INDEX ON push_subscriptions (session_id);
 - `{title, body, url, tag}` is the scaffold's convention between the
   example and `sw.js`, not enforced by Monk.
 
-Since `pwa` is copied first, `monk add push` can't rewrite `sw.js`. The
-push handlers are therefore in `pwa`'s `sw.js` from the start, between
-`// monk:example push-handlers` markers, commented out, with a todo from
-`monk add push` to uncomment them. Step 3 left this to step 8: example
-markers are found by `#\s*monk:example` (`Run#example_tags`,
-`uncomment_examples`), which a JavaScript file would need as
-`// # monk:example push-handlers`, or the regex extended to `//`.
+Since `pwa` is copied first, `monk add push` can't rewrite `sw.js`.
+Decided in step 8: the handlers are in `pwa`'s `sw.js` from the start,
+active, not commented out. They do nothing until a subscription exists,
+so there's nothing to uncomment and no example markers in a `.js` file.
 
 ### B7. Generator
 
@@ -338,7 +335,16 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
    `notify` with `DeliveryJob` and `Push::Sweep` (`push/later.rb`, loaded
    by whichever of monk/push and monk/jobs comes second). ttl defaults to
    a day. Retry-After isn't honoured (jobs' own backoff).
-8. B5-B6: browser side, Node tests for its logic.
+8. B5-B6: browser side, Node tests for its logic. Done:
+   `push/client/push.js` (`data-push-enable`/`data-push-disable`,
+   `<html data-push-state>`, `monk-push:state`/`monk-push:error`; a
+   person's "off" is remembered in localStorage so page loads don't
+   resubscribe; a subscription made with an old VAPID key is replaced),
+   its logic in `state.js` with `test/js/push_state.test.js`. CSRF comes
+   from auth's `csrf_token` cookie. `configure(path:)` names the app's
+   subscribe route (`/push/subscription` by default). The push handler
+   is checked in Chrome through DevTools' `deliverPushMessage`
+   (`test/pwa_browser_test.rb`); the click handler only on devices.
 9. B7: generator; the examples uncommented and run by Monk's tests.
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+
     Home Screen app. Enable, receive, open from a notification, permission
@@ -357,4 +363,3 @@ Suite with 0 skips, with the Postgres, Redis and S3 containers up.
 ## Open
 
 - Device checks (A4, step 10).
-- How `sw.js` gets the push handlers (B6): decided in step 8.

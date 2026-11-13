@@ -8,6 +8,7 @@ require_relative "push/vapid"
 require_relative "push/subscription"
 require_relative "push/store"
 require_relative "push/delivery"
+require_relative "push/helpers"
 
 # Opt-in: require "monk/push" explicitly; `require "monk"` alone doesn't
 # load it. Web push to the browsers people allowed it in
@@ -15,7 +16,17 @@ require_relative "push/delivery"
 # header (RFC 8292) are written here over OpenSSL, with no gem, the way
 # Storage signs its own S3 requests.
 module Monk
+  Context.include(Push::Helpers)
+
   module Push
+    CLIENT_DIR = File.expand_path("push/client", __dir__).freeze
+    # push.js and state.js, served from the gem like Live's client.
+    CLIENT_PATH = "/_monk/push".freeze
+    Monk::Assets.mount(CLIENT_PATH, CLIENT_DIR)
+    # The app's route a page POSTs its subscription to and DELETEs it
+    # from (the push-subscribe example).
+    PATH = "/push/subscription".freeze
+
     # The JWT's sub: who the push service can reach about this app.
     # Apple refuses a push without one.
     CONTACT = %r{\A(mailto:[^@\s]+@[^@\s]+|https://\S+)\z}
@@ -37,15 +48,18 @@ module Monk
       # every push service would refuse every message: that's checked
       # here, so a mismatched pair fails the boot. contact: a mailto: or
       # https: URL, the JWT's sub. db_name: where the subscriptions table
-      # is.
-      def configure(db_name:, public_key:, private_key:, contact:)
+      # is. path: the app's subscribe route, which push.js calls.
+      def configure(db_name:, public_key:, private_key:, contact:, path: PATH)
         keys = checked_keys(public_key, private_key)
         unless contact.is_a?(String) && contact.match?(CONTACT)
           raise ArgumentError, "Monk::Push.configure(contact:) is a mailto: or https: URL (VAPID_CONTACT), " \
                                "got #{contact.inspect}"
         end
 
-        @config = Ractor.make_shareable({ db_name: db_name, contact: contact.dup, **keys })
+        raise ArgumentError, "Monk::Push.configure(path:) is a path, got #{path.inspect}" unless
+          path.is_a?(String) && path.start_with?("/")
+
+        @config = Ractor.make_shareable({ db_name: db_name, contact: contact.dup, path: path.dup, **keys })
       end
 
       def configured? = !@config.nil?
