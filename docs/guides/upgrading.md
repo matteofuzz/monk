@@ -36,6 +36,9 @@ anything you changed in yours:
 - `config/load.rb`: `pwa push` at the end of the list of module configs.
 - `config/recurring.rb`: the `monk_push_sweep` line, after
   `monk_auth_sweep` (`monk help jobs --file config/recurring.rb`).
+- `JOBS_QUEUES`, in `.env` and wherever `bin/jobs` runs: add `push`
+  (`mailers,push,default`). Notifications are sent from the `push` queue;
+  without it they wait there, unsent.
 
 Then `monk add push`, `bin/setup_db`, and restart `bin/server` and
 `bin/jobs`. In production, set `VAPID_PUBLIC_KEY` and

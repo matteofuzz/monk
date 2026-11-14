@@ -2,6 +2,7 @@ require_relative "../test_helper"
 require "json"
 require "pg"
 require "monk/push"
+require "monk/jobs"
 
 # monk add push (docs/plan-pwa-push.md, B7): needs pwa, jobs and auth;
 # writes a fresh VAPID pair to .env and .env.test, its migration, the
@@ -31,6 +32,28 @@ class GeneratorsPushTest < Minitest::Test
       end
       refute_equal development["VAPID_PRIVATE_KEY"], test["VAPID_PRIVATE_KEY"]
       assert_includes generated(dest, ".env.example"), "# VAPID_PRIVATE_KEY=from-monk-push-keys"
+    end
+  end
+
+  # An app's name may have underscores, which a domain can't.
+  def test_the_contact_is_a_valid_domain_for_any_app_name
+    Dir.mktmpdir("monk-generated") do |tmp|
+      dest = File.join(tmp, "my_shop")
+      FileUtils.mkdir_p(dest)
+      assert_equal :ok, add_modules(dest, :base, :push).status
+
+      assert_equal "mailto:push@my-shop.example", env_values(dest, ".env")["VAPID_CONTACT"]
+    end
+  end
+
+  # DeliveryJob is on the push queue: a bin/jobs not taking it would
+  # never deliver.
+  def test_bin_jobs_takes_the_push_queue
+    with_new_app(:push) do |dest|
+      queues = env_values(dest, ".env")["JOBS_QUEUES"].split(",")
+
+      assert_includes queues, Monk::Push::DeliveryJob.queue
+      assert_includes generated(dest, "bin/jobs"), %("mailers,push,default")
     end
   end
 

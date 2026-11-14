@@ -11,7 +11,7 @@ Monk::Generator.define(:jobs) do
   migration "create_jobs_tables"
   migration "create_recurring_tables"
 
-  queues = { "JOBS_WORKERS" => "2", "JOBS_QUEUES" => "mailers,default" }
+  queues = { "JOBS_WORKERS" => "2", "JOBS_QUEUES" => "mailers,push,default" }
   env :development, queues
   env :example, queues
 

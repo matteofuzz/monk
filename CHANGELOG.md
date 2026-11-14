@@ -35,6 +35,9 @@ in `lib/monk/version.rb`.
 - **`Monk::Auth.token_hash(raw)`** is public: what `sessions.token_hash`
   holds for a session token, for modules that keep rows per session.
 - **`.webmanifest`** files are served as `application/manifest+json`.
+- **`JOBS_QUEUES`** is `mailers,push,default` in a new app's `.env` and
+  in `bin/jobs`' default: push notifications are sent from the `push`
+  queue.
 
 ## 0.24.0 - 2026-11-13
 

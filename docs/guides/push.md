@@ -49,7 +49,9 @@ Monk::Push.notify(subject, payload, ttl: 86_400, urgency: nil, topic: nil, conn:
 
 - Enqueues one `Monk::Push::DeliveryJob` per device where `subject` is
   signed in and turned notifications on, and returns how many (0 for
-  someone with none).
+  someone with none). The jobs are on the `push` queue: `bin/jobs` takes
+  it when `JOBS_QUEUES` lists it, as `monk add jobs` writes it
+  (`mailers,push,default`).
 - `payload`: a Hash (sent as JSON) or a String, at most 3993 bytes:
   checked here, so too large raises `PayloadTooLargeError` in the caller.
   Send an id and a short text, not a whole record.

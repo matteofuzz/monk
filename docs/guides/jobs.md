@@ -263,9 +263,10 @@ The runtime's settings, for a `bin/jobs` of your own
 - **More throughput:** more `JOBS_WORKERS` for CPU-bound jobs, up to about
   the number of cores. For jobs that mostly wait on the network, more
   processes. Each worker runs one job at a time.
-- **Mail first:** `monk new` with mail and jobs sets
-  `JOBS_QUEUES=mailers,default`, so emails (on the `mailers` queue) go out
-  before other work waiting in the queue.
+- **Mail first:** `monk add jobs` sets
+  `JOBS_QUEUES=mailers,push,default`, so emails (on the `mailers` queue),
+  then notifications (`push`), go out before other work waiting in the
+  queue.
 - **Separating slow work from urgent work:** run a second `bin/jobs` with
   its own `JOBS_QUEUES` (e.g. one process for `mailers`, another for
   `default,reports`), so a backlog of slow jobs never delays a login email.

@@ -24,7 +24,7 @@ Monk::Generator.define(:push) do
     env file, {
       "VAPID_PUBLIC_KEY" => ->(app) { (pending[[file, app]] = Monk::Push::Keys.generate)[:public_key] },
       "VAPID_PRIVATE_KEY" => ->(app) { (pending.delete([file, app]) || Monk::Push::Keys.generate)[:private_key] },
-      "VAPID_CONTACT" => ->(app) { "mailto:push@#{app}.example" },
+      "VAPID_CONTACT" => ->(app) { "mailto:push@#{app.tr("_", "-")}.example" },
     }
   end
   env :example, { "VAPID_PUBLIC_KEY" => "from-monk-push-keys", "VAPID_PRIVATE_KEY" => "from-monk-push-keys",

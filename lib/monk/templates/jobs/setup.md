@@ -13,10 +13,10 @@ bin/jobs
 ```
 
 `JOBS_WORKERS` (in `.env`) is how many jobs run at once, and `JOBS_QUEUES`
-which queues it takes them from, in order: `mailers,default` serves mail
-first. `TERM` or Ctrl-C lets the jobs in hand finish before it exits. In
-production it's one more process from the same image, with `bin/jobs` as
-its command.
+which queues it takes them from, in order: `mailers,push,default` serves
+mail first, then web push notifications. `TERM` or Ctrl-C lets the jobs in
+hand finish before it exits. In production it's one more process from the
+same image, with `bin/jobs` as its command.
 
 ### Recurring jobs
 
