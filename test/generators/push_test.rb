@@ -28,21 +28,23 @@ class GeneratorsPushTest < Minitest::Test
 
       [development, test].each do |values|
         assert_equal values["VAPID_PUBLIC_KEY"], Monk::Push::Keys.public_key_for(values["VAPID_PRIVATE_KEY"])
-        assert_equal "mailto:push@shop.example", values["VAPID_CONTACT"]
+        assert_nil values["VAPID_CONTACT"]
       end
       refute_equal development["VAPID_PRIVATE_KEY"], test["VAPID_PRIVATE_KEY"]
       assert_includes generated(dest, ".env.example"), "# VAPID_PRIVATE_KEY=from-monk-push-keys"
     end
   end
 
-  # An app's name may have underscores, which a domain can't.
-  def test_the_contact_is_a_valid_domain_for_any_app_name
-    Dir.mktmpdir("monk-generated") do |tmp|
-      dest = File.join(tmp, "my_shop")
-      FileUtils.mkdir_p(dest)
-      assert_equal :ok, add_modules(dest, :base, :push).status
+  # Apple refuses a placeholder contact (mailto:push@shop.example, found
+  # on an iPhone), so none is written: config/push.rb falls back to
+  # PUBLIC_URL, the app's own address once deployed.
+  def test_the_contact_defaults_to_public_url
+    with_new_app(:push) do |dest|
+      config = generated(dest, "config/push.rb")
 
-      assert_equal "mailto:push@my-shop.example", env_values(dest, ".env")["VAPID_CONTACT"]
+      assert_includes config, %(contact: ENV.fetch("VAPID_CONTACT", Monk::Settings[:public_url]))
+      refute_includes generated(dest, ".env"), "VAPID_CONTACT"
+      assert_includes generated(dest, ".env.example"), "# VAPID_CONTACT=mailto:ops@your-domain.com"
     end
   end
 

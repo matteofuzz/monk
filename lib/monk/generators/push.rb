@@ -24,17 +24,16 @@ Monk::Generator.define(:push) do
     env file, {
       "VAPID_PUBLIC_KEY" => ->(app) { (pending[[file, app]] = Monk::Push::Keys.generate)[:public_key] },
       "VAPID_PRIVATE_KEY" => ->(app) { (pending.delete([file, app]) || Monk::Push::Keys.generate)[:private_key] },
-      "VAPID_CONTACT" => ->(app) { "mailto:push@#{app.tr("_", "-")}.example" },
     }
   end
   env :example, { "VAPID_PUBLIC_KEY" => "from-monk-push-keys", "VAPID_PRIVATE_KEY" => "from-monk-push-keys",
-                  "VAPID_CONTACT" => "mailto:ops@your-domain.example", }, commented: true
+                  "VAPID_CONTACT" => "mailto:ops@your-domain.com", }, commented: true
 
   setup_section "push/setup.md"
   agents_section "push/agents.md"
   set_before_production "VAPID_PUBLIC_KEY", "`monk push keys`, a pair of its own; changing it ends every subscription"
   set_before_production "VAPID_PRIVATE_KEY", "the same `monk push keys` pair"
-  set_before_production "VAPID_CONTACT", "mailto: or https: where push services can reach you", placeholder: true
+  set_before_production "VAPID_CONTACT", "optional, PUBLIC_URL by default: mailto: or https: on a real domain"
   example "push-subscribe", todo: "uncomment: push.js stores each browser's subscription through it"
   example "push-notify", todo: "uncomment to try it, then call Monk::Push.notify where your app has news"
   closing "Then render the switch in a page: <%= render \"push/_settings\", layout: false %> " \

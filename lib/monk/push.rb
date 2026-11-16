@@ -29,7 +29,10 @@ module Monk
 
     # The JWT's sub: who the push service can reach about this app.
     # Apple refuses a push without one.
-    CONTACT = %r{\A(mailto:[^@\s]+@[^@\s]+|https://\S+)\z}
+    CONTACT = %r{\A(mailto:[^@\s]+@[^@\s]+|https?://\S+)\z}
+    # Hosts no one can be reached at. Apple answers 403 BadJwtToken to a
+    # contact on one (checked on an iPhone: mailto:push@shop.example).
+    UNREACHABLE_HOST = /(\A|\.)(localhost|example|test|invalid|local)\z|\Aexample\.(com|net|org)\z|\A[\d.]+\z|:/
 
     # Eager, never `@x ||=` (a lazy write from a worker Ractor is an
     # isolation error).
@@ -47,19 +50,21 @@ module Monk
       # keys` makes one). The private key must be the public key's, or
       # every push service would refuse every message: that's checked
       # here, so a mismatched pair fails the boot. contact: a mailto: or
-      # https: URL, the JWT's sub. db_name: where the subscriptions table
-      # is. path: the app's subscribe route, which push.js calls.
+      # https: URL, the JWT's sub, on a real domain (config/push.rb
+      # defaults it to PUBLIC_URL). Outside development and test a contact
+      # no one can be reached at (localhost, an IP, .example, .test) fails
+      # the boot, since Apple refuses every push signed with it; in
+      # development and test it's a warning. db_name: where the
+      # subscriptions table is. path: the app's subscribe route, which
+      # push.js calls.
       def configure(db_name:, public_key:, private_key:, contact:, path: PATH)
         keys = checked_keys(public_key, private_key)
-        unless contact.is_a?(String) && contact.match?(CONTACT)
-          raise ArgumentError, "Monk::Push.configure(contact:) is a mailto: or https: URL (VAPID_CONTACT), " \
-                               "got #{contact.inspect}"
-        end
+        contact = checked_contact(contact)
 
         raise ArgumentError, "Monk::Push.configure(path:) is a path, got #{path.inspect}" unless
           path.is_a?(String) && path.start_with?("/")
 
-        @config = Ractor.make_shareable({ db_name: db_name, contact: contact.dup, path: path.dup, **keys })
+        @config = Ractor.make_shareable({ db_name: db_name, contact: contact, path: path.dup, **keys })
       end
 
       def configured? = !@config.nil?
@@ -151,6 +156,31 @@ module Monk
         end
 
         { public_key: public_key.dup, private_key: private_key.dup }
+      end
+
+      def checked_contact(contact)
+        unless contact.is_a?(String) && contact.match?(CONTACT)
+          raise ArgumentError, "Monk::Push.configure(contact:) is a mailto: or https: URL (VAPID_CONTACT, or " \
+                               "PUBLIC_URL by default), got #{contact.inspect}"
+        end
+        problem = contact_problem(contact)
+        return contact.dup unless problem
+
+        message = "Monk::Push.configure(contact:) #{contact.inspect} #{problem}: Apple refuses every push signed " \
+                  "with it (403 BadJwtToken). Set VAPID_CONTACT, or PUBLIC_URL, to an address on a real domain."
+        raise ArgumentError, message unless Monk.env.development? || Monk.env.test?
+
+        Log.warn(message)
+        contact.dup
+      end
+
+      def contact_problem(contact)
+        return "isn't https" if contact.start_with?("http://")
+
+        host = contact.start_with?("mailto:") ? contact.split("@", 2).last : URI.parse(contact).host.to_s
+        "is on #{host}, where no one can be reached" if host.downcase.match?(UNREACHABLE_HOST)
+      rescue URI::InvalidURIError
+        "isn't a URL"
       end
     end
   end

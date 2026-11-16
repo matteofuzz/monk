@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pushState, shouldResubscribe, keyBytes, sameKey, csrfToken, isIos } from "../../lib/monk/push/client/state.js";
+import { pushState, shouldResubscribe, shouldForget, keyBytes, sameKey, csrfToken, isIos } from "../../lib/monk/push/client/state.js";
 
 const desktop = {
   secure: true, serviceWorker: true, pushManager: true, notification: true, ios: false, standalone: false,
@@ -32,6 +32,13 @@ test("shouldResubscribe: only when allowed and not turned off here", () => {
   assert.equal(shouldResubscribe({ permission: "granted", optedOut: true }), false);
   assert.equal(shouldResubscribe({ permission: "default", optedOut: false }), false);
   assert.equal(shouldResubscribe({ permission: "denied", optedOut: false }), false);
+});
+
+test("shouldForget: a subscription whose permission is gone", () => {
+  assert.equal(shouldForget({ permission: "denied", subscribed: true }), true);
+  assert.equal(shouldForget({ permission: "default", subscribed: true }), true);
+  assert.equal(shouldForget({ permission: "granted", subscribed: true }), false);
+  assert.equal(shouldForget({ permission: "denied", subscribed: false }), false);
 });
 
 test("keyBytes decodes base64url without padding", () => {

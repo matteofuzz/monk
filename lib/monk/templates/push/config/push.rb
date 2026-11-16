@@ -12,6 +12,8 @@ Monk::Push.configure(
   db_name: :primary,
   public_key: ENV["VAPID_PUBLIC_KEY"],
   private_key: ENV["VAPID_PRIVATE_KEY"],
-  contact: ENV["VAPID_CONTACT"],  # mailto: or https:, for push services to reach you
+  # Where push services can reach you: mailto: or https:, on a real domain
+  # (Apple refuses every push signed with localhost or .example).
+  contact: ENV.fetch("VAPID_CONTACT", Monk::Settings[:public_url]),
   path: "/push/subscription",     # the push-subscribe route (app/routes/push.rb)
 )

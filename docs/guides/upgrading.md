@@ -42,7 +42,8 @@ anything you changed in yours:
 
 Then `monk add push`, `bin/setup_db`, and restart `bin/server` and
 `bin/jobs`. In production, set `VAPID_PUBLIC_KEY` and
-`VAPID_PRIVATE_KEY` (from `monk push keys`) and `VAPID_CONTACT`.
+`VAPID_PRIVATE_KEY` (from `monk push keys`); the contact is
+`PUBLIC_URL` unless `VAPID_CONTACT` is set.
 
 ## 0.24
 

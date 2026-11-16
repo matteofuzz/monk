@@ -40,10 +40,41 @@ class PushConfigTest < Minitest::Test
   end
 
   def test_the_contact_is_a_mailto_or_https_url
-    ["mailto:ops@shop.test", "https://shop.test/contact"].each { |contact| configure(contact: contact) }
-    [nil, "", "ops@shop.test", "http://shop.test", "mailto:nobody"].each do |contact|
+    ["mailto:ops@shop.com", "https://shop.com/contact"].each { |contact| configure(contact: contact) }
+    [nil, "", "ops@shop.com", "ftp://shop.com", "mailto:nobody"].each do |contact|
       error = assert_raises(ArgumentError, contact.inspect) { configure(contact: contact) }
       assert_includes error.message, "VAPID_CONTACT"
+    end
+  end
+
+  # Apple answers 403 BadJwtToken to a contact on a placeholder domain
+  # (an iPhone, with mailto:push@shop.example): outside development and
+  # test that fails the boot.
+  def test_a_contact_no_one_can_be_reached_at_fails_the_boot_in_production
+    unreachable = ["mailto:push@shop.example", "https://shop.test", "http://localhost:9292", "https://127.0.0.1",
+                   "mailto:ops@example.com", "https://app.localhost",]
+    with_settings do
+      with_env("MONK_ENV", "production") do
+        unreachable.each do |contact|
+          error = assert_raises(ArgumentError, contact) { configure(contact: contact) }
+          assert_includes error.message, "Apple refuses every push", contact
+        end
+        configure(contact: "https://shop.com")
+        configure(contact: "mailto:ops@example.org.uk")
+      end
+    end
+  end
+
+  def test_in_development_an_unreachable_contact_is_a_warning
+    with_log do |dir|
+      with_settings do
+        with_monk_env("development") do
+          configure(contact: "http://localhost:9292")
+
+          assert Monk::Push.configured?
+          assert_includes File.read(File.join(dir, "development.log")), "WARN Monk::Push.configure(contact:)"
+        end
+      end
     end
   end
 
@@ -91,6 +122,6 @@ class PushConfigTest < Minitest::Test
   private
 
   def configure(**override)
-    Monk::Push.configure(db_name: :primary, contact: "mailto:ops@shop.test", **@pair, **override)
+    Monk::Push.configure(db_name: :primary, contact: "mailto:ops@shop.com", **@pair, **override)
   end
 end

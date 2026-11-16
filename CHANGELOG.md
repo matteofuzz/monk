@@ -22,8 +22,10 @@ in `lib/monk/version.rb`.
   Subscriptions are tied to the auth session they were made in, so
   logging out stops a device's notifications; a subscription the push
   service reports gone (404/410) is deleted. `push.js` handles the
-  page's on/off switch; pwa's `sw.js` shows the notification and opens
-  its page on a click. `Monk::Push.subscribed(subjects)` says who can be
+  page's on/off switch; pwa's `sw.js` shows the notification and brings
+  the app to its page on a click. The VAPID contact defaults to
+  `PUBLIC_URL`; one Apple refuses (`localhost`, `.example`) fails the
+  boot outside development and test. `Monk::Push.subscribed(subjects)` says who can be
   reached, in one query. ADR 0020; [`push.md`](docs/guides/push.md).
 - **`monk push keys`** prints a new VAPID key pair.
 - **`copy ..., app_name: true`** in a generator fills in `{{app}}` in a

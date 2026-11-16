@@ -11,6 +11,7 @@ We decided that `Monk::Push` writes the encryption and the VAPID token itself, o
 - **Keys as raw strings.** OpenSSL 3 keys are immutable, built only from DER, and can't be made Ractor-shareable. So the configuration keeps the base64url bytes browsers use, frozen, and each send rebuilds the keys it needs, which costs far less than the HTTP request. The VAPID JWT is signed for every send for the same reason: a Ractor can't hold a cache.
 - **One record, 3993 bytes.** Messages use one `aes128gcm` record of 4096 bytes, what every push service accepts, which leaves 3993 bytes of payload. `notify` checks the size in the caller, before anything is enqueued.
 - **A wrong pair fails the boot.** `configure` derives the public key from the private one and compares: a mismatched pair would have every push refused, with nothing at boot to say why.
+- **So does a contact no one can be reached at.** On an iPhone, Apple answered 403 `BadJwtToken` to every push signed with `mailto:push@shop.example`, and accepted the same push with the app's own https URL. The contact defaults to `PUBLIC_URL`, and outside development and test `configure` refuses `localhost`, an IP or a placeholder domain (a warning in development, where `PUBLIC_URL` is `http://localhost`).
 
 ## A subscription per browser, tied to a session
 
@@ -27,12 +28,13 @@ We decided that `Monk::Push` writes the encryption and the VAPID token itself, o
 ## The browser side
 
 - `push.js`, served from the gem, follows Live's client: no JS API, `data-push-enable` and `data-push-disable` buttons, the state as `<html data-push-state>` and `monk-push:state` events. It asks for permission inside the click, as iOS requires. A person's "off" is remembered in that browser, so page loads don't subscribe it again.
-- pwa's `sw.js` shows every push as a notification and opens its URL on a click, same-origin only. iOS and Chrome penalise a push that shows nothing, so there are no silent pushes. The handlers are in `sw.js` from `monk add pwa`, active: they do nothing until a subscription exists.
+- pwa's `sw.js` shows every push as a notification and brings the app to its URL on a click, same-origin only: a window already on that URL comes forward, otherwise the app's open window navigates there, and a new window opens only when none is open. Matching on the path alone (the first version) focused a window without going to the URL's query, and would have opened a second window for another page; on an iPhone, `openWindow(url)` from a closed Home Screen app opens that URL in the app. iOS and Chrome penalise a push that shows nothing, so there are no silent pushes. The handlers are in `sw.js` from `monk add pwa`, active: they do nothing until a subscription exists.
 - `sw.js` has no `fetch` handler, so it never answers Live's resync refetch (ADR 0011), a login redirect or a `/_monk/` path from a cache.
 
 ## Consequences
 
 - Push depends on `auth`, `jobs` (and so `postgres`) and `pwa`.
 - Changing an app's VAPID pair ends every subscription; browsers subscribe again on their next visit, while notifications are allowed.
+- Apple keeps accepting messages for an iOS app that was deleted, or whose notifications were blocked in Settings (checked for half an hour): no 410, so its row stays until its session ends. A page loaded with the permission gone tells the server to forget its subscription.
 - Headless Chrome reaches no push service, so subscribing end to end is checked on devices, not in the suite. The suite delivers to a push service stood up on loopback, and delivers a message to `sw.js` through DevTools.
 - `monk check` (0.26) can check a deployed environment's VAPID settings; the boot already refuses a mismatched pair.

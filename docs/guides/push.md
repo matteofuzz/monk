@@ -12,7 +12,8 @@ adds `pwa`, `jobs` and `auth` first if they're missing, and writes:
 
 - `config/push.rb`: `Monk::Push.configure` with the VAPID key pair, a
   contact, and the subscribe route's path;
-- a fresh VAPID pair in `.env`, and another in `.env.test`;
+- a fresh VAPID pair in `.env`, and another in `.env.test` (the contact
+  is `PUBLIC_URL` unless `VAPID_CONTACT` is set);
 - a migration for `push_subscriptions` (`bin/setup_db` runs it);
 - `app/routes/push.rb`: the examples `push-subscribe` and `push-notify`;
 - `app/views/push/_settings.erb`: a switch to turn notifications on and
@@ -37,8 +38,10 @@ adds `pwa`, `jobs` and `auth` first if they're missing, and writes:
    Monk::Push.notify(recipient, { title: "Ann", body: "Lunch?", url: "/chats/7", tag: "chat-7" })
    ```
 
-`public/sw.js` (pwa) shows the notification, and opens `url` on a click
-(this app's own pages only). A newer notification with the same `tag`
+`public/sw.js` (pwa) shows the notification. A click on it brings the
+app to `url` (this app's own pages only): a window already there comes
+forward, otherwise the app's open window goes there, and a new one opens
+only when the app has none. A newer notification with the same `tag`
 replaces the older one.
 
 ## Sending
@@ -123,7 +126,10 @@ wouldn't send (answer 422).
   `monk-push:state` (`{ state }`): `off`, `subscribed`, `denied`
   (blocked in the browser's settings), `needs-install` (iOS in a Safari
   tab), `unsupported`. Failures come as `monk-push:error` (`{ message }`).
-  `_settings.erb` uses the attribute to show the right button and note.
+  `_settings.erb` uses the attribute to show the right button and note;
+- a page loaded after notifications were blocked in the browser's
+  settings tells the server to forget its subscription (not as "off":
+  allowing them again subscribes on the next load).
 
 ## Keys
 
@@ -131,7 +137,11 @@ wouldn't send (answer 422).
   `monk push keys` prints a new one (`--json` too). Each environment has
   its own. The boot fails if the private key isn't the public key's.
 - `VAPID_CONTACT`: a `mailto:` or `https:` URL where push services can
-  reach you. Apple refuses pushes without one.
+  reach you, on a real domain; `PUBLIC_URL` when it's unset. Apple
+  refuses every push signed with a contact on `localhost`, an IP or a
+  placeholder domain (`.example`, `.test`), answering 403
+  `BadJwtToken`: outside development and test, `configure` refuses one
+  at boot.
 - Changing a deployed app's pair ends every subscription: the push
   services refuse the old ones. Browsers with notifications allowed
   subscribe again on their next visit.
@@ -140,7 +150,11 @@ wouldn't send (answer 422).
 
 - **iPhone and iPad:** iOS 16.4 and later, only in an app added to the
   Home Screen ([`pwa.md`](pwa.md)). In a Safari tab the state is
-  `needs-install`.
+  `needs-install`. Adding the app copies Safari's login into it, so sign
+  in in Safari first. Apple keeps accepting messages (201) for an app
+  that was deleted, or whose notifications were blocked in Settings
+  (checked for half an hour): its row goes when its session ends
+  (logout, expiry), or, when blocked, on the app's next page load.
 - **Android, desktop Chrome, Edge, Firefox, macOS Safari:** in the
   browser, no install needed.
 - Everywhere, https (or `localhost`) and a service worker: pwa.

@@ -15,7 +15,7 @@ class PushSubscriptionsTest < Minitest::Test
     Monk::Persistence::Pg.reset!
     setup_push_tables(DB_NAME)
     pair = Monk::Push::Keys.generate
-    Monk::Push.configure(db_name: DB_NAME, contact: "mailto:ops@shop.test", **pair)
+    Monk::Push.configure(db_name: DB_NAME, contact: "mailto:ops@shop.com", **pair)
     @ann = sign_in("ann@shop.test")
   end
 
