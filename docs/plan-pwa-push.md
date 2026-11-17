@@ -359,7 +359,51 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+
     Home Screen app. Enable, receive, open from a notification, permission
     revoked in settings, app reinstalled (a 410), logout on one device.
-    Open: needs a deployed app on https (or a tunnel) and real devices.
+    Open: needs real devices, and the app on https.
+
+    **The test app.** `monk new push_check --with live,push
+    --transport=postgres`, run from this repo, with:
+    - its `Gemfile` on this checkout (`gem "monkrb", path: "..."`) and a
+      `.ruby-version` of 4.0.6;
+    - the examples `auth-routes`, `push-subscribe` and `push-notify`
+      uncommented;
+    - `/push/test` sending through an app job (`PushCheckJob`, with
+      `?wait=10`), so a notification can arrive with the app closed;
+    - an index page showing who is signed in, the push state, a log of
+      the `monk-pwa:*` and `monk-push:*` events, "Send a test
+      notification", "Send in 10 s", "Log out", and a banner when it's
+      opened from a notification (`/?from=notification`);
+    - `bin/check [PUBLIC_URL]`, which runs `bin/server`,
+      `bin/websocket_server` and `bin/jobs` together, and sets
+      `PUBLIC_URL` and `LIVE_WS_URL` (`wss://…/ws`) from its argument.
+
+    Scaffolding it found two bugs, both fixed:
+    - `JOBS_QUEUES` was `mailers,default`, so `bin/jobs` never ran
+      `DeliveryJob` (queue `push`). Jobs now writes, and `bin/jobs`
+      defaults to, `mailers,push,default`.
+    - `VAPID_CONTACT` was `mailto:push@push_check.example`, an underscore
+      in a domain. The app's name now has `-` for `_` there.
+
+    **https: Tailscale Funnel.** One public `https://<mac>.<tailnet>.ts.net`
+    with a real certificate, no account or app on the phones, and paths
+    routed to two ports. The first `funnel` prints a link to switch on
+    HTTPS and Funnel for the tailnet.
+
+    ```
+    tailscale up
+    tailscale funnel --bg 9292                                  # bin/server
+    tailscale funnel --bg --set-path /ws http://localhost:9293  # bin/websocket_server
+    bin/check https://<mac>.<tailnet>.ts.net
+    # when done: tailscale funnel reset (the URL is public while it's on)
+    ```
+
+    `bin/websocket_server` accepts the upgrade on any path, so Funnel
+    stripping `/ws` is fine. The app runs as development: the magic link
+    is printed in `bin/check`'s output (open it on the device: Universal
+    Clipboard or AirDrop), cookies aren't `Secure` (harmless on https),
+    and the login is limited to one link per address per interval.
+    Desktop Chrome and Firefox also work at `http://localhost:9292`.
+
     For each platform:
     - [ ] installs (address bar or Share › Add to Home Screen), opens
       standalone, and Live reconnects and resyncs when it comes back to
@@ -373,6 +417,94 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
       says `denied`, and the next send gets a 404/410 and deletes the row;
     - [ ] the app uninstalled: the next send deletes the row;
     - [ ] logging out on one device: it gets nothing more, others do.
+
+    **iPhone, iOS 18.7, Home Screen app (2026-11-14): done.**
+    - [x] `needs-install` in the Safari tab; installed, opens standalone,
+      and the Safari login carries over into the app.
+    - [x] "Turn on" asks and subscribes (`web.push.apple.com`).
+    - [x] A notification arrives with the app open, locked, or closed;
+      a click lands on its URL in all three, after fix 2 below.
+    - [x] Live (A4): the counter catches up after the app comes back.
+    - [x] "Turn off", then reopening: stays off; a send reaches 0 devices.
+    - [x] Blocked in Settings: the switch says `denied`. Apple still
+      answers 201, so the row stays (fix 3 forgets it on the next page
+      load). Allowing again resubscribes on its own.
+    - [x] App deleted: Apple still answers 201 after half an hour; the
+      row stays until its session ends.
+    - [x] Logout on the iPhone: later sends reach only the Mac (Chrome,
+      FCM, 201).
+
+    Found on the iPhone, fixed:
+    1. Apple answers 403 `BadJwtToken` to a VAPID contact on a
+       placeholder domain (`mailto:push@push-check.example`). The contact
+       now defaults to `PUBLIC_URL`, `monk add push` writes none, and
+       `configure` refuses `localhost`, an IP or a placeholder domain
+       outside development and test.
+    2. A click with the app open focused the window without going to
+       the notification's URL (it matched on the path, ignoring the
+       query); for another page it would have opened a second window.
+       `sw.js` now focuses a window already on that URL, otherwise
+       navigates the open window there, and opens one only when none is.
+    3. With notifications blocked, the browser kept its subscription and
+       the server its row. `push.js` now forgets both on the next page
+       load when the permission isn't granted.
+
+    **Chrome on macOS, installed app (2026-11-16): done.**
+    - [x] Installs from the address bar, opens in its own window
+      (`standalone: true`); Live catches up after it comes back (A4).
+    - [x] `subscribed` carries over from the Chrome tab (same profile).
+    - [x] Notifications arrive through FCM (201). macOS shows a banner
+      or files them silently in Notification Center, per its setting
+      for Chrome.
+    - [x] A click with the app open navigates its window to the URL
+      (`focus-navigate`); with it closed, Chrome opens the URL in the
+      app's own window (`openWindow`). With a Chrome tab of the site and
+      the app both open, the click goes to the most recently focused.
+    - [x] "Turn off", then reopening: stays off; 0 devices.
+    - [x] Blocked in the site settings: `denied`. Chrome drops the
+      subscription itself, so the page has nothing to forget; the next
+      send gets 404/410 (`:gone`) and deletes the row. (Fix 3 is for
+      Apple, which keeps answering 201.)
+    - [x] App uninstalled: the subscription is the site's, so Chrome
+      still receives; a click goes to the site's tab, focusing it even on
+      another macOS desktop (`focus-exact`).
+    - [x] Logout on another device (the iPhone): Chrome alone receives.
+
+    **Safari 26.3 on macOS, in a tab (2026-11-17): done.**
+    - [x] "Turn on" asks and subscribes (`web.push.apple.com`).
+    - [x] Notifications arrive with the tab focused, another tab
+      focused, the window closed, and Safari quit. A click brings the tab
+      forward, opens a window when none is, and relaunches Safari on the
+      URL when it was quit.
+    - [x] Live (A4) through the Funnel's `/ws`.
+    - [x] "Turn off", then reload: stays off; 0 devices.
+    - [x] Denied in Safari's website settings: until the page reloads,
+      the open page's worker still shows pushes (Apple 201). On reload
+      the state is `denied` and fix 3 forgets the subscription (`DELETE`
+      200); then 0 devices. Allowing again and reloading resubscribes.
+    - [x] Logout: `subscribed?` false at once (the row stays until the
+      sweep). Signing in again moves the row to the new session on page
+      load, with no click; a send reaches it.
+
+    **Firefox on macOS, in a tab (2026-11-17): done.**
+    - [x] "Turn on" asks and subscribes
+      (`updates.push.services.mozilla.com`).
+    - [x] Mozilla answers 201, but nothing showed until macOS's own
+      notification setting for Firefox was turned on (it was off); then
+      they arrive in Notification Center.
+    - [x] Tab focused, another tab, window closed: arrive; a click lands
+      on the URL. Firefox quit: Mozilla holds the message and it shows
+      when Firefox starts again; a click opens the right tab.
+    - [x] Live (A4).
+    - [x] "Turn off", then reload: stays off; 0 devices.
+    - [x] Permission removed (the ✕ in the address bar's panel): Firefox
+      drops the subscription itself, like Chrome; the next send gets
+      `:gone` and deletes the row. The permission goes back to "ask", so
+      the page shows `off`, not `denied`, and "Turn on" asks again.
+    - [x] Logout: `subscribed?` false at once; signing in again moves the
+      row to the new session on page load; a send reaches it.
+
+    Still to check: Android Chrome.
 11. Docs: ADR 0020; `docs/guides/pwa.md`, `docs/guides/push.md`; CONTEXT.md
     (Push subscription, VAPID keys, Notification payload); the 0.25
     section of `docs/guides/upgrading.md`; CHANGELOG; roadmap entry Done.

@@ -156,7 +156,15 @@ wouldn't send (answer 422).
   (checked for half an hour): its row goes when its session ends
   (logout, expiry), or, when blocked, on the app's next page load.
 - **Android, desktop Chrome, Edge, Firefox, macOS Safari:** in the
-  browser, no install needed.
+  browser, no install needed. macOS Safari shows notifications even
+  while Safari is quit. Notifications blocked in its website settings
+  take effect when the page next loads (that load also forgets the
+  subscription); until then, an open page still shows them. Firefox
+  shows nothing while quit: the push service keeps the message for its
+  `ttl:`, and Firefox shows it when it starts again. On a Mac, each
+  browser also needs its notifications allowed in System Settings ▸
+  Notifications; a push the browser accepted (201) shows nothing
+  otherwise.
 - Everywhere, https (or `localhost`) and a service worker: pwa.
 
 ## Testing
