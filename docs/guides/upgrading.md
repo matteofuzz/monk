@@ -16,7 +16,8 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.25
 
-In the `Gemfile`, `gem "monkrb", "~> 0.25", require: "monk"`, then
+In the `Gemfile`, `gem "monkrb", "~> 0.25", require: "monk"` (what a new
+app gets; `"~> 0.24"` would also install 0.25, but not require it), then
 `bundle update monkrb`. Both modules below are optional; an app that adds
 neither needs none of this.
 

@@ -66,8 +66,9 @@ gets its own design doc and plan when work on it starts.
      whether each page is visible (ADR 0019).
 
 4. **0.25: PWA and web push.** Together because on iOS web push needs the
-   app installed on the Home Screen. Done (`docs/history/plan-pwa-push.md`),
-   checked on an iPhone, Android, and Chrome, Safari and Firefox on macOS.
+   app installed on the Home Screen. Done (2026-11-18,
+   `docs/history/plan-pwa-push.md`), checked on an iPhone, Android, and
+   Chrome, Safari and Firefox on macOS.
    - **PWA scaffolding.** Done: `monk add pwa` (`docs/guides/pwa.md`): a
      web app manifest and a `sw.js` served at the root scope, checked at
      boot, with no `fetch` handler, so it never gets in the way of the

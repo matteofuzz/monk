@@ -1,10 +1,10 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase at v0.24.0 (LOC recomputed for this version, which brings presence: who is online, away or offline, kept in Postgres by each WebSocket process, with an `on_change` hook and `monk add presence`; and Live on real networks: the WebSocket server closes a connection silent for two ping intervals, and the Live client pings, notices a dead socket and reconnects when its page is shown. Since 0.23.0, route blocks also run as methods, and models and views allocate less per request). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at v0.25.0 (LOC recomputed for this version, which brings an installable app, `Monk::Pwa`: a manifest, icons and a service worker checked at boot; and web push, `Monk::Push`: notifications encrypted (RFC 8291) and signed (VAPID) by Monk over OpenSSL, sent one job per device, with subscriptions tied to auth sessions, and `monk add push`). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
-- **Monk**: 11,922 lines of Ruby across 102 files (`lib/monk.rb` plus `lib/monk`, excluding the
+- **Monk**: 13,019 lines of Ruby across 119 files (`lib/monk.rb` plus `lib/monk`, excluding the
   scaffold templates) — routing, context, ERB views/layouts,
   a boot-time static-asset manifest, settings/env tiers, auth
   (sessions/tokens/cookies/CSRF/rate-limiting), Postgres persistence + model +
@@ -17,18 +17,20 @@ Complexity and weight comparison, based on the codebase at v0.24.0 (LOC recomput
   (`Monk::Storage`: S3-compatible buckets through its own SigV4 signer,
   browser uploads and downloads by signed link, local files in
   development), presence (`Monk::Presence`: who has a page open and
-  visible, across tabs, devices and processes, kept in Postgres),
+  visible, across tabs, devices and processes, kept in Postgres), an
+  installable app (`Monk::Pwa`) and web push (`Monk::Push`: its own
+  RFC 8291 encryption and VAPID signing, no gem),
   `Monk::Live` (~640 lines of Ruby plus ~490 lines of browser JS and a
   vendored, minified idiomorph) for server-rendered live page updates, and
   the scaffolding that writes an app and adds each of these to it
   (`monk new`, `monk add`).
   Runtime dependencies: `rack` and `base64` only; `pg`, `redis`, `rqrcode`,
   `net-smtp` and `dotenv` are opt-in per app (dev-only for Monk itself), and `kino` is only in the
-  repo's `Gemfile` for the demo app. 21,533 lines of tests.
+  repo's `Gemfile` for the demo app. 23,125 lines of tests.
 - **Sinatra**: core is comparable in size (~2,000 lines), but ships as a
   thin routing DSL only — everything else (sessions/CSRF protection,
   persistence, websockets, live updates, presence, email, background
-  jobs, file storage) is a
+  jobs, file storage, web push) is a
   separate gem you add yourself.
 - **Rails**: hundreds of thousands of lines across railties, Action Pack,
   Active Record, Active Support, Action View, Action Cable, Active Job,
@@ -46,22 +48,25 @@ that covers each module.
 | Module | Files | LOC | Test LOC | What it holds |
 |---|---|---|---|---|
 | WebSocket | 10 | 1,845 | 2,802 | handshake, frames, connection incl. a heartbeat that closes a peer silent for two ping intervals and runs a per-connection check after each ping, server incl. `authenticate: :optional`, `db_pool:`, `presence:`, a cap on handshakes in flight and a handshake deadline, `SO_REUSEPORT` and stop on `TERM`, registry incl. `close_all`, Redis fan-out, Postgres fan-out incl. pooled publishing, listeners that reconnect, a socket's connections closed when it ends |
-| Scaffolding (`monk new`, `monk add`) | 17 | 1,654 | 2,856 (incl. `exe/monk`, and real `bin/websocket_server` processes counting presence) | the generator engine: plan every module and option, check every file, then write (449); its result as text, JSON and an exit code (279); the CLI (277); the module DSL (153); the `bin/` scripts' error explanations and process spawning; one generator of ~20 lines per module |
-| Jobs | 12 | 1,554 | 2,908 (incl. child job processes) | Postgres adapter incl. the scheduler's one statement per occurrence (362), runtime/supervisor (275), configure/enqueue/registry/`drain!`/`recurring`/`run_scheduler!`, cron parser (180), scheduler (91), `Monk::Job` and its settings, worker loop, argument check, errors, claim, firing and recurring-task values |
+| Scaffolding (`monk new`, `monk add`) | 19 | 1,763 | 3,199 (incl. `exe/monk`, and real `bin/websocket_server` processes counting presence) | the generator engine: plan every module and option, check every file, then write (449); its result as text, JSON and an exit code (279); the CLI (277); the module DSL (153); the `bin/` scripts' error explanations and process spawning; one generator of ~20 lines per module |
+| Jobs | 12 | 1,555 | 2,908 (incl. child job processes) | Postgres adapter incl. the scheduler's one statement per occurrence (362), runtime/supervisor (275), configure/enqueue/registry/`drain!`/`recurring`/`run_scheduler!`, cron parser (180), scheduler (91), `Monk::Job` and its settings, worker loop, argument check, errors, claim, firing and recurring-task values |
 | Persistence | 8 | 1,455 | 1,703 | connection pools for Ractors (513: dispatcher, workers, errors that keep their class across Ractors), registry and checkout with the dropped-connection probe and pool lifecycle, Postgres model, migrator, Postgres backend incl. a `json`/`jsonb` decoder |
 | Storage | 13 | 1,283 | 1,772 (incl. a fake S3 server, and one contract run on both backends and against floci) | file backend that behaves like a bucket (242), S3 backend over `Net::HTTP` (197), configure and the API (184), `STORAGE_URL` parsing (126), SigV4 signer (124), the `/_monk/storage` routes (110), input checks, `Sniff`, HMAC tokens, keys, errors |
-| Core | 10 | 1,002 | 2,230 (core + shared helpers) | `Monk::Base` routing/dispatch incl. route blocks defined as methods at `freeze!`, settings, logging, context incl. `monk_head`, environment, errors, `StateRactor`, freeze hooks |
+| Core | 10 | 1,002 | 2,297 (core + shared helpers) | `Monk::Base` routing/dispatch incl. route blocks defined as methods at `freeze!`, settings, logging, context incl. `monk_head`, environment, errors, `StateRactor`, freeze hooks |
 | Presence | 5 | 755 | 1,106 (incl. the reactor as a child process, and a real browser) | the store's SQL: rows per process, transitions settled once under an advisory lock, `NOTIFY` in batches, expiry of a dead process's rows (271); configure, `status`/`online?` and `on_change` (129); the reactor in `bin/server`, elected by an advisory lock, that `LISTEN`s and calls `on_change` (126); the per-process counts Ractor (118) and the tracker thread that writes them once a second (111) |
-| Auth | 8 | 664 | 1,654 | sessions, tokens, cookies, CSRF, the login-email rate limit, batched `sweep!` and its job, per-process rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
+| Push | 11 | 819 | 778 (incl. a push service on loopback that decrypts each message as a browser would) | configure and the API incl. the boot check of the key pair and contact (191), the subscriptions' SQL, tied to auth sessions (123), delivery and the push service's answers (120), keys, `aes128gcm` encryption, the VAPID token, subscription parsing, `notify` and its job (loaded with jobs) |
+| Auth | 8 | 669 | 1,654 | sessions, tokens, cookies, CSRF, the login-email rate limit, batched `sweep!` and its job, per-process rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
 | Mail | 9 | 641 | 1,320 (incl. a fake SMTP server) | MIME builder, configure/deliver/render, SMTP and log transports, `MAIL_URL` parsing, message value, `deliver_later` and its job (loaded with jobs), address handling |
 | Live | 8 | 637 | 2,536 | publisher, session incl. the client's ping and `hidden` messages and whether its page is visible, policy incl. pooled rules, renderer, envelope, `live_topic` and its `<head>` tags, `listen!`, the client served from the gem |
-| Assets | 1 | 231 | 293 | boot-time static-asset manifest, plus modules' own files mounted under `/_monk/` |
+| Assets | 1 | 232 | 293 | boot-time static-asset manifest, plus modules' own files mounted under `/_monk/` |
 | Views | 1 | 201 | 353 | ERB views/layouts/partials |
-| **Total** | **102** | **11,922** | **21,533** | |
+| Pwa | 4 | 162 | 404 (incl. real headless Chrome) | the manifest checked the way Chrome does (74), configure, `monk_head`'s tags, errors |
+| **Total** | **119** | **13,019** | **23,125** | |
 
-Not counted above: the Live browser runtime (`monk_live.js` 356,
-`protocol.js` 129, vendored minified idiomorph) and the JS tests under
-`test/js`.
+Not counted above: the browser code, Live's runtime (`monk_live.js` 356,
+`protocol.js` 129, vendored minified idiomorph), push's (`push.js` 132,
+`state.js` 65) and pwa's `register.js` (47), the app's `sw.js` template,
+and the JS tests under `test/js`.
 
 Live has the highest test-to-code ratio (about 4:1) because it is covered
 by real-browser and multi-process tests, run against both fan-out
@@ -70,6 +75,11 @@ closing it, as a phone changing networks does. Presence, new in 0.24, is
 about 1.5:1, plus its generator's tests: they run real
 `bin/websocket_server` processes and kill them with `KILL`, checking that
 a person still connected through another process stays online.
+Push, new in 0.25, is about 1:1, but its delivery tests send every
+message through a real push service on loopback that decrypts it as a
+browser would; subscribing in a real browser can't be tested headless,
+so it was checked on devices (iPhone, Android, and Chrome, Safari and
+Firefox on macOS).
 WebSocket is the largest module, after 0.22.1's work on connect bursts
 and 0.24's heartbeat; Scaffolding comes next, but it is tooling, not runtime: no app loads it. Its tests generate real apps and run their own
 suites, uncomment every example and exercise it (a real socket for the
@@ -94,14 +104,15 @@ connections, STARTTLS and implicit TLS.
 
 | | Sinatra | Monk | Rails |
 |---|---|---|---|
-| Core LOC | ~2,000 (comparable) | ~11,900 (+ ~490 JS) | hundreds of thousands across railties/AP/AR/AS/etc. |
+| Core LOC | ~2,000 (comparable) | ~13,000 (+ ~730 JS) | hundreds of thousands across railties/AP/AR/AS/etc. |
 | Runtime deps | rack, rack-protection, tilt, mustermann | rack, base64 | ~10 first-party gems, each with their own tree (~30+ total) |
-| Feature scope | routing + DSL only — everything else is a gem you bolt on | routing, views/layouts, static assets, settings/env, auth, Postgres ORM + migrator, websockets incl. Redis or Postgres fan-out, live HTML patching, presence, text/HTML email over SMTP, background jobs on Postgres, file storage in S3-compatible buckets — all built-in and opinionated (ERB only, Postgres only, one auth scheme) | routing, ORM (multi-DB), views (multi-engine), jobs, mailers, cable, storage, text, i18n, asset pipeline — pluggable at every layer |
+| Feature scope | routing + DSL only — everything else is a gem you bolt on | routing, views/layouts, static assets, settings/env, auth, Postgres ORM + migrator, websockets incl. Redis or Postgres fan-out, live HTML patching, presence, text/HTML email over SMTP, background jobs on Postgres, file storage in S3-compatible buckets, an installable app and web push — all built-in and opinionated (ERB only, Postgres only, one auth scheme) | routing, ORM (multi-DB), views (multi-engine), jobs, mailers, cable, storage, text, i18n, asset pipeline — pluggable at every layer |
 | Concurrency model | none prescribed — thread-safety is your problem | Ractor-safety is load-bearing: routes/handlers are statically checked to be `Ractor.shareable?` at boot | threads/processes; no Ractor-native design |
 | Live page updates | none — bring your own websocket gem and client JS | `Monk::Live`: render a partial once, push it to topic subscribers, client morphs it in; deny-by-default subscribe rules; resync by refetch; reconnects when a phone's page is shown again. Server → client only. Presence (`Monk::Presence`): online, away (only hidden pages) or offline per signed-in person, with an `on_change` hook | Action Cable + Turbo Streams (`turbo-rails`): broadcast partials, plus client → server channels, presence-style patterns, and pluggable adapters |
 | Email | none — bring the `mail` gem (or `pony`) and configure it yourself | `Monk::Mail`: text and/or HTML (from a view), MIME built by Monk, one `MAIL_URL` (any provider's SMTP relay or a local one), sent from the worker Ractor, or from the job process with `deliver_later`. No attachments, no previews | Action Mailer: mailer classes and views, attachments, previews, interceptors, `deliver_later` via Active Job, pluggable delivery methods |
 | Background jobs | none — bring Sidekiq (and Redis) or a database-backed queue gem | `Monk::Jobs`: a Postgres-only queue (a narrow state table plus a payload table, `SKIP LOCKED`) and a job process, `bin/jobs`, running worker Ractors. Retries with backoff, scheduled jobs, recurring jobs on a cron schedule (UTC), `never_retry`, enqueue inside the app's own transaction, `drain!` and `run_scheduler!` for tests; at-least-once. No concurrency limits, pausing, batches or dashboard | Active Job with a pluggable backend; since Rails 8 Solid Queue (database-backed) by default, with recurring tasks, concurrency controls, pausing, and a dashboard (Mission Control, a separate gem) |
 | File storage | none — bring `shrine` or `aws-sdk-s3`, and parse uploads yourself | `Monk::Storage`: one S3-compatible backend (SigV4 written in Monk, no gem) and local files in development and test that behave like a bucket. Browsers upload straight to the bucket through a presigned PUT and download through an app route that redirects to a signed link, so no worker Ractor waits on the bytes; the first bytes tell the common types apart. No attachments model, no variants, no multipart uploads | Active Storage: attachments on models, variants and previews, direct uploads, mirroring, pluggable services (S3, GCS, Azure Blob, disk) |
+| Web push | none — bring the `web-push` gem, a service worker and the page's subscribe code | `Monk::Push`: encryption and VAPID signing written in Monk over OpenSSL (no gem), one job per device, subscriptions tied to auth sessions (logout stops a device's notifications), rows deleted when the push service says they're gone; `push.js` for the page's switch, and `monk add pwa` for the manifest and service worker it needs. Notifications only, no silent pushes, no native apps | a PWA manifest and service worker in a new app; web push itself is the `web-push` gem and the app's own code |
 | Scaffolding | none built in | `monk new` makes the core app, `monk add <module>` adds a module to any app, new or old: one generator per module, which only creates files and appends lines, adding its dependencies first. Each brings its wiring, commented examples of how to use it (tested by Monk), a test in the app, and `SETUP.md`/`AGENTS.md` sections; `--json` and exit codes for agents | `rails new` with its options, then `bin/rails generate` (resources, `authentication`) and install tasks (`solid_queue:install`, ...) that edit existing files; app templates for recipes |
 | "Magic" | almost none — DSL is thin, behavior is traceable | almost none — explicit `Context`, explicit boot/freeze step, explicit `StateRactor` for shared mutable state | heavy convention-over-configuration (autoloading, callbacks, concerns, generators) — powerful but harder to trace |
 
@@ -111,10 +122,10 @@ Monk carries meaningfully more feature scope than Sinatra ships with while
 staying more than an order of magnitude under Rails, achieved by narrowing choices
 rather than adding abstraction: one template engine, one database, one auth
 pattern, one server-concurrency model. That's the opposite of Rails'
-strategy (breadth via pluggability), which is why Monk stays around 11,900
+strategy (breadth via pluggability), which is why Monk stays around 13,000
 lines of Ruby while doing things Sinatra needs `sinatra-contrib` + `warden` +
 `sequel`/`activerecord` + `faye-websocket` + `mail` + `sidekiq` (and Redis)
-+ `aws-sdk-s3` or `shrine`
++ `aws-sdk-s3` or `shrine` + `web-push`
 (plus a hand-rolled Redis or Postgres fan-out for cross-process broadcast,
 and your own DOM-patching client) to match.
 
