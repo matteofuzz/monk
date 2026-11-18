@@ -512,7 +512,12 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
       the screen locked, and swiped away; they go to the shade without a
       pop-up (the site's Android notification category decides that, not
       the page). A tap opens the app, after fix 4 below.
-    - [ ] Live (A4) after the app was in the background.
+    - [x] Live (A4), in the Android Emulator (Android 15, Chrome 124,
+      the app installed as a standalone shortcut), read over adb and
+      DevTools: live while in front; in the background with the screen
+      off and Doze forced (`dumpsys deviceidle force-idle`) for 90 s it
+      missed three hits (5, server at 8); brought back from recents, it
+      refetched the page and showed 8.
     - [ ] Notifications off in the app's Android App info: what the page
       reports, and whether FCM keeps answering 201.
     - "Turn off" and logout are the same code as on the four platforms
@@ -531,8 +536,10 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
        app stays in front, and from closed the app opens
        (`openWindow-installed`).
 
-    Still to check: the two Android items above, in the Android Emulator
-    (a Google Play image: Chrome, WebAPK install, FCM).
+    Left open: notifications off in the app's App info. That screen
+    exists only for a WebAPK, and the emulator's Chrome, with no Google
+    account, installs a shortcut instead; to check it, sign in to Play in
+    the emulator (`monk_push` AVD), update Chrome, and install again.
 11. Docs: ADR 0020; `docs/guides/pwa.md`, `docs/guides/push.md`; CONTEXT.md
     (Push subscription, VAPID keys, Notification payload); the 0.25
     section of `docs/guides/upgrading.md`; CHANGELOG; roadmap entry Done.
