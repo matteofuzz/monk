@@ -3,7 +3,7 @@ require_relative "../push/base64_url"
 require_relative "../push/keys"
 
 # Web push (Monk::Push): notifications to the devices where a signed-in
-# person turned them on, sent from jobs (docs/plan-pwa-push.md, part B).
+# person turned them on, sent from jobs (docs/history/plan-pwa-push.md, part B).
 Monk::Generator.define(:push) do
   summary "Web push notifications, from jobs"
   installed_if "config/push.rb"

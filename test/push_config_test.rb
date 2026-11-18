@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "monk/push"
 
-# Monk::Push.configure (docs/plan-pwa-push.md, B1): a VAPID pair that
+# Monk::Push.configure (docs/history/plan-pwa-push.md, B1): a VAPID pair that
 # doesn't belong together, or a missing contact, fails the boot instead of
 # every push service refusing every message later.
 class PushConfigTest < Minitest::Test

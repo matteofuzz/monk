@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "json"
 require "monk/pwa"
 
-# Monk::Pwa (docs/plan-pwa-push.md, part A): configure checks the app's
+# Monk::Pwa (docs/history/plan-pwa-push.md, part A): configure checks the app's
 # manifest and the files it names at boot, <%= monk_head %> links them, and
 # the files are served the way a browser installing the app needs.
 class PwaTest < Minitest::Test

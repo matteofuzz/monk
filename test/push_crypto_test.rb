@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "json"
 require "monk/push"
 
-# Web push's crypto, written over OpenSSL (docs/plan-pwa-push.md, B2):
+# Web push's crypto, written over OpenSSL (docs/history/plan-pwa-push.md, B2):
 # RFC 8291's message encryption, checked against the RFC's own test vector
 # and against a browser-side decryption; RFC 8292's VAPID header; P-256 keys
 # from raw bytes; all of it inside a worker Ractor too.

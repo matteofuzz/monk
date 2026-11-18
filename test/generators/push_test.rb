@@ -4,7 +4,7 @@ require "pg"
 require "monk/push"
 require "monk/jobs"
 
-# monk add push (docs/plan-pwa-push.md, B7): needs pwa, jobs and auth;
+# monk add push (docs/history/plan-pwa-push.md, B7): needs pwa, jobs and auth;
 # writes a fresh VAPID pair to .env and .env.test, its migration, the
 # subscribe and notify examples and the on/off switch.
 class GeneratorsPushTest < Minitest::Test

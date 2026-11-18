@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "json"
 
-# monk add pwa (docs/plan-pwa-push.md, part A): the manifest with the
+# monk add pwa (docs/history/plan-pwa-push.md, part A): the manifest with the
 # app's name filled in, placeholder icons, sw.js, no service and no env.
 class GeneratorsPwaTest < Minitest::Test
   include GeneratorTestHelpers

@@ -1,7 +1,7 @@
 require_relative "test_helper"
 require "monk/push"
 
-# Monk::Push's subscriptions (docs/plan-pwa-push.md, B3), on real
+# Monk::Push's subscriptions (docs/history/plan-pwa-push.md, B3), on real
 # Postgres: each belongs to the auth session it was made in, and counts
 # only while that session is neither revoked nor expired.
 class PushSubscriptionsTest < Minitest::Test

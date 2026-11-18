@@ -77,7 +77,7 @@ module Monk
       # block taking the options, decides whether it's copied at all.
       # `app_name: true` replaces {{app}} with the app's name, in the file
       # written and in `monk help MODULE --file` (pwa's manifest); opt-in, so
-      # every other file stays byte for byte (docs/plan-pwa-push.md
+      # every other file stays byte for byte (docs/history/plan-pwa-push.md
       # decision 3).
       def copy(*paths, role:, from: nil, executable: false, if: nil, app_name: false)
         raise ArgumentError, "unknown role #{role.inspect}, one of #{ROLES.inspect}" unless ROLES.include?(role)

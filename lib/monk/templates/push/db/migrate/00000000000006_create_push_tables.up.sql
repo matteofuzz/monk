@@ -1,5 +1,5 @@
 -- Monk::Push: one row per browser that allowed notifications
--- (docs/plan-pwa-push.md, B3). Each belongs to the auth session it was
+-- (docs/history/plan-pwa-push.md, B3). Each belongs to the auth session it was
 -- made in, so notifications go only to devices where the person is
 -- signed in: a session swept by Monk::Auth.sweep! takes its rows with it
 -- (ON DELETE CASCADE), and a revoked one stops counting at once and is

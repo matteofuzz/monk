@@ -8,7 +8,7 @@ module Monk
   module Push
     # One message to one subscription: encrypted, signed, POSTed to its
     # endpoint, and the push service's answer turned into what to do
-    # (docs/plan-pwa-push.md, B4).
+    # (docs/history/plan-pwa-push.md, B4).
     module Delivery
       # How long a push service keeps a message for a device that's
       # offline: a day by default. 0 means now or never.

@@ -5,7 +5,7 @@ require "pg"
 # A generated app with pwa (monk new shop --with pwa), served by its own
 # bin/server, in real headless Chrome: Chrome registers /sw.js for the
 # whole site and finds nothing stopping it installing the app, from the
-# files exactly as monk add writes them (docs/plan-pwa-push.md, A4).
+# files exactly as monk add writes them (docs/history/plan-pwa-push.md, A4).
 class PwaBrowserTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
@@ -132,7 +132,7 @@ class PwaBrowserTest < Minitest::Test
   # push.js in a generated push app (monk add push): the page learns its
   # state at once, even with notifications allowed and a push service that
   # never answers -- headless Chrome reaches none, so subscribing itself is
-  # left to the device checks (docs/plan-pwa-push.md step 10).
+  # left to the device checks (docs/history/plan-pwa-push.md step 10).
   def test_push_js_reports_the_state_of_this_browser
     with_new_app(:push) do |dest|
       with_generated_database do |database|

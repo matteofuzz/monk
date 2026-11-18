@@ -1,6 +1,11 @@
 # 0.25: PWA and web push — plan
 
-Drafted 2026-11-13, analysis only: nothing is built yet. Roadmap item 4
+Status: done, for monkrb 0.25.0. Drafted 2026-11-13; built 2026-11-13 to
+2026-11-14, device checks (step 10) 2026-11-14 to 2026-11-18, with four
+fixes from them. Companion record:
+[`adr/0020-web-push-own-crypto-subscriptions-per-session-one-job-per-device.md`](../adr/0020-web-push-own-crypto-subscriptions-per-session-one-job-per-device.md).
+
+The draft as written follows. Roadmap item 4
 (`docs/roadmap.md`). Two Monk modules, shipped together because on iOS
 web push only reaches an app installed on the Home Screen (16.4+):
 
@@ -295,8 +300,8 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 2. The `app_name:` flag on `copy` and in `monk help --file`, with tests.
    Done: `Generator.fill_app_name` (also used for sections now), tests in
    `test/generator_test.rb` and `test/exe_monk_test.rb`.
-3. A1-A3 with tests; A4 on desktop, Android, iOS. Done, except the
-   device checks (step 10):
+3. A1-A3 with tests; A4 on desktop, Android, iOS. Done, with the
+   device checks of step 10:
    - `Monk::Pwa.configure` checks the manifest the way Chrome does
      (`Pwa::Manifest.check!`): JSON, `name`/`short_name` without `{{app}}`,
      `start_url`, an installable `display`, a 192 and a 512 icon for
@@ -359,7 +364,8 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
 10. Devices: Chrome, Firefox, macOS Safari, Android Chrome, iOS 16.4+
     Home Screen app. Enable, receive, open from a notification, permission
     revoked in settings, app reinstalled (a 410), logout on one device.
-    Open: needs real devices, and the app on https.
+    Done 2026-11-18, but for one Android item, judged not worth
+    blocking the release (below).
 
     **The test app.** `monk new push_check --with live,push
     --transport=postgres`, run from this repo, with:
@@ -504,7 +510,8 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
     - [x] Logout: `subscribed?` false at once; signing in again moves the
       row to the new session on page load; a send reaches it.
 
-    **Chrome 157 on Android, installed app (2026-11-17): in part.**
+    **Chrome 157 on Android, installed app (2026-11-17/18): done, but
+    for one item.**
     - [x] Signed in in Chrome, installed from the ⋮ menu: the maskable
       icon fills the launcher's shape; opens standalone, still signed in.
     - [x] "Turn on" asks and subscribes (`fcm.googleapis.com`).
@@ -536,10 +543,14 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
        app stays in front, and from closed the app opens
        (`openWindow-installed`).
 
-    Left open: notifications off in the app's App info. That screen
+    Not checked: notifications off in the app's App info. That screen
     exists only for a WebAPK, and the emulator's Chrome, with no Google
     account, installs a shortcut instead; to check it, sign in to Play in
     the emulator (`monk_push` AVD), update Chrome, and install again.
+    Left for now: Chrome ties a WebAPK's notification switch to the
+    site's permission, so the page most likely sees `denied` and fix 3
+    forgets the subscription; at worst the row counts until its session
+    ends, as for an iPhone app that was deleted.
 11. Docs: ADR 0020; `docs/guides/pwa.md`, `docs/guides/push.md`; CONTEXT.md
     (Push subscription, VAPID keys, Notification payload); the 0.25
     section of `docs/guides/upgrading.md`; CHANGELOG; roadmap entry Done.
@@ -556,4 +567,4 @@ Suite with 0 skips, with the Postgres, Redis and S3 containers up.
 
 ## Open
 
-- Device checks (A4, step 10).
+- Android: notifications off in a WebAPK's App info (step 10).

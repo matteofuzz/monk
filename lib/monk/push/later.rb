@@ -6,7 +6,7 @@ module Monk
   module Push
     # Sends one message to one subscription, from a job process. Enqueued
     # by Monk::Push.notify, one per subscription, so a retry resends only
-    # to the device that failed (docs/plan-pwa-push.md decision 5).
+    # to the device that failed (docs/history/plan-pwa-push.md decision 5).
     class DeliveryJob < Monk::Job
       queue "push"
       never_retry RejectedError, PayloadTooLargeError, InvalidSubscriptionError

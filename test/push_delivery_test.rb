@@ -3,7 +3,7 @@ require_relative "support/fake_s3_server"
 require "monk/jobs"
 require "monk/push"
 
-# Sending (docs/plan-pwa-push.md, B4) against a push service stood up on
+# Sending (docs/history/plan-pwa-push.md, B4) against a push service stood up on
 # loopback (FakeS3Server is a generic recorder of HTTP requests with
 # canned answers): what's POSTed, and what each answer leads to. notify's
 # jobs run through Monk::Jobs.drain!, each in a worker Ractor, as bin/jobs

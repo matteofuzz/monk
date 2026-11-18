@@ -7,7 +7,7 @@ module Monk
     # sessions). A subscription counts -- gets notifications, makes its
     # subject subscribed -- only while its session is neither revoked nor
     # expired, and while the browser's own expirationTime hasn't passed
-    # (docs/plan-pwa-push.md decision 1). Module functions over a db_name,
+    # (docs/history/plan-pwa-push.md decision 1). Module functions over a db_name,
     # each reaching Postgres through Monk::Persistence::Pg in whatever
     # Ractor calls it, as the job workers do.
     module Store
