@@ -16,6 +16,10 @@
 # old login requests, every night at 03:17 UTC.
 Monk::Jobs.recurring "monk_auth_sweep", Monk::Auth::Sweep, cron: "17 3 * * *" if defined?(Monk::Auth::Sweep)
 
+# With push (monk add push): deletes subscriptions whose session was
+# revoked or expired, or that the browser said end, every night at 03:27 UTC.
+Monk::Jobs.recurring "monk_push_sweep", Monk::Push::Sweep, cron: "27 3 * * *" if defined?(Monk::Push::Sweep)
+
 # monk:example jobs-recurring -- the demo job (app/jobs/hello_job.rb) at the top of every hour.
 # Monk::Jobs.recurring "hello_hourly", HelloJob, cron: "@hourly", args: ["cron"]
 # monk:end

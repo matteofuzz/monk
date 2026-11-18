@@ -11,7 +11,7 @@ class GeneratorsJobsTest < Minitest::Test
       assert File.executable?(File.join(dest, "bin/jobs"))
       assert_equal template("jobs/config/jobs.rb"), generated(dest, "config/jobs.rb")
       assert_equal 2, Dir.children(File.join(dest, "db/migrate")).grep(/_create_jobs_tables\./).size
-      assert_includes generated(dest, ".env"), "JOBS_QUEUES=mailers,default\n"
+      assert_includes generated(dest, ".env"), "JOBS_QUEUES=mailers,push,default\n"
       refute_includes generated(dest, ".env.test"), "JOBS_", "tests run jobs with drain!, never bin/jobs"
     end
   end

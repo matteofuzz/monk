@@ -103,6 +103,41 @@ class GeneratorTest < Minitest::Test
     assert_includes app_file("AGENTS.md"), "<!-- monk:module login -->\n## login\n"
   end
 
+  def test_app_name_fills_only_the_files_that_ask_for_it
+    result = add(:badge)
+
+    assert_equal :ok, result.status
+    assert_equal %({"name": "shop"}\n), app_file("public/badge.json")
+    assert_equal "# {{app}} stays\n", app_file("config/badge.rb")
+  end
+
+  def test_an_app_name_file_already_filled_in_is_not_a_conflict
+    write_app_file("public/badge.json", %({"name": "shop"}\n))
+
+    result = add(:badge)
+
+    assert_equal :ok, result.status
+    refute(result.files.any? { |entry| entry[:path] == "public/badge.json" })
+  end
+
+  def test_an_app_name_file_from_a_renamed_app_is_a_conflict
+    write_app_file("public/badge.json", %({"name": "oldshop"}\n))
+
+    result = add(:badge)
+
+    assert_equal :conflict, result.status
+    refute File.exist?(File.join(@app, "config/badge.rb"))
+  end
+
+  def test_app_name_takes_a_non_ascii_directory_name
+    @app = File.join(File.dirname(@app), "café")
+    FileUtils.mkdir_p(@app)
+
+    add(:badge)
+
+    assert_equal %({"name": "café"}\n), app_file("public/badge.json")
+  end
+
   # --- dependencies and options ---
 
   def test_dependencies_are_added_first_and_say_who_needed_them
@@ -451,6 +486,10 @@ class GeneratorTest < Minitest::Test
       next_step "open the demo", if: ->(options) { options[:demo] == "on" }
       closing ->(options) { "Remove the demo when done." if options[:demo] == "on" }
     end
+    registry.define(:badge) do
+      copy "config/badge.rb", role: :wiring
+      copy "public/badge.json", role: :wiring, app_name: true
+    end
     registry.define(:sockets) do
       option :transport, values: %w[db cache], dependency: true,
         describe: { db: "the database carries it", cache: "needs the cache running" }
@@ -480,6 +519,8 @@ class GeneratorTest < Minitest::Test
       "login/agents.md" => "## login\n",
       "widget/config/widget.rb" => "WIDGET = true\n",
       "widget/app/widget_demo.rb" => "# demo\n",
+      "badge/config/badge.rb" => "# {{app}} stays\n",
+      "badge/public/badge.json" => %({"name": "{{app}}"}\n),
       "sockets/config/sockets_db.rb" => "SOCKETS = :db\n",
       "sockets/config/sockets_cache.rb" => "SOCKETS = :cache\n",
     }.each { |path, content| write_file(@templates, path, content) }

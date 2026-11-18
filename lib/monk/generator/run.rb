@@ -156,6 +156,9 @@ module Monk
       def copy_entry(definition, copy, options)
         from = copy.from.respond_to?(:call) ? copy.from.call(options) : copy.from
         content = File.binread(template(from || "#{definition.name}/#{copy.path}"))
+        # Filled in before comparing, so an unchanged file is still the same
+        # on a second run (and a renamed app directory makes it a conflict).
+        content = Generator.fill_app_name(content, app_name) if copy.app_name
         entry = { path: copy.path, module: definition.name, role: copy.role }
 
         case @files.compare(copy.path, content)
@@ -229,7 +232,7 @@ module Monk
             marker = "<!-- monk:module #{definition.name} -->"
             next if section.nil? || @files.read(path).include?(marker)
 
-            body = File.read(template(section)).gsub("{{app}}", app_name)
+            body = Generator.fill_app_name(File.read(template(section)), app_name)
             @files.append(path, "#{"\n" unless @files.read(path).empty?}#{marker}\n#{body}")
             definition.name
           end

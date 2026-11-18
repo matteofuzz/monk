@@ -102,7 +102,7 @@ _Avoid_: Cron, dispatcher, stager (that moves due scheduled jobs)
 
 
 **Monk module**:
-A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `storage`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
+A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `presence`, `storage`, `pwa`, `push`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
 _Avoid_: Feature, plugin, flag (`monk new` had flags before ADR 0017)
 
 **Generator**:
@@ -141,3 +141,15 @@ _Avoid_: Presigned URL (fine for S3, but the file backend's isn't one), public U
 **Cache window**:
 The period (an hour by default) `url` rounds its signing time down to, so every link for a key within it is the same URL and the browser's cache works. A link is valid until the end of its window plus `expires_in`, at most 7 days in all.
 _Avoid_: TTL, expiry (that's `expires_in`)
+
+**Push subscription**:
+One browser's permission to be sent notifications: an endpoint at its vendor's push service, and two keys (`p256dh`, `auth`) to encrypt for it. Stored as a row of `push_subscriptions` tied to the auth session it was made in, and counts only while that session is neither revoked nor expired (ADR 0020). The endpoint is a secret: whoever knows it can send to that browser.
+_Avoid_: Device token, registration, push token
+
+**VAPID keys**:
+The app's P-256 key pair (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, base64url): browsers subscribe with the public one, and every push carries a token signed with the private one. One pair per environment, from `monk push keys`; changing it ends every subscription.
+_Avoid_: Push keys, server keys, application server key (the browser's name for the public one)
+
+**Notification payload**:
+What `Monk::Push.notify` sends, at most 3993 bytes once JSON: by the scaffold's convention `{ title, body, url, tag }`, which `sw.js` shows as a notification and opens on a click. Monk doesn't enforce the shape.
+_Avoid_: Message (the encrypted request as a whole), push data

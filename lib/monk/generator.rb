@@ -9,6 +9,16 @@ module Monk
   module Generator
     TEMPLATES_DIR = File.expand_path("templates", __dir__)
 
+    # Stands for the app's name (its directory's) in setup.md and agents.md
+    # sections, and in files copied with `app_name: true`.
+    APP_NAME_PLACEHOLDER = "{{app}}".freeze
+
+    # text with every placeholder replaced by name, in text's own encoding,
+    # so a copied template read as binary takes a non-ASCII name too.
+    def self.fill_app_name(text, name)
+      text.gsub(APP_NAME_PLACEHOLDER.b.force_encoding(text.encoding), name.dup.force_encoding(text.encoding))
+    end
+
     # The modules `monk add` knows, by name. Monk's own live in
     # lib/monk/generators/; tests build their own registry, over their own
     # templates.

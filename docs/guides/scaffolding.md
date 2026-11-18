@@ -42,6 +42,8 @@ modules it needs, first:
 | `live` | HTML pushed to open pages | `websocket` |
 | `presence` | who is online, from the sockets ([`presence.md`](presence.md)) | `auth`, `websocket` |
 | `storage` | files users send: local files in development, an S3 bucket in production | — |
+| `pwa` | an installable app: manifest, icons, service worker ([`pwa.md`](pwa.md)) | — |
+| `push` | web push notifications, from jobs ([`push.md`](push.md)) | `pwa`, `jobs`, `auth` |
 
 - **What it prints:** the files created (`+`), the lines appended (`~`),
   the files it left alone (`!`), the values to set before production, and
@@ -116,6 +118,14 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   reads it back and fetches its signed link. No migration and no
   JavaScript: the uploads table and the browser code depend on the app,
   and `docs/guides/storage.md` has them to copy.
+- **pwa:** `config/pwa.rb`, `public/manifest.webmanifest` (with the app's
+  name), placeholder icons in `public/icons/`, and `public/sw.js`; a test
+  that the manifest, its icons and the worker are served and linked.
+- **push:** `config/push.rb`, a fresh VAPID pair in `.env` and
+  `.env.test`, the subscriptions' migration, the `push-subscribe` and
+  `push-notify` examples in `app/routes/push.rb`, the on/off switch in
+  `app/views/push/_settings.erb`; a test that the keys and the table are
+  in place.
 
 ## Examples
 
@@ -147,7 +157,7 @@ config.ru              # require_relative "config/load"; require_relative "app/a
 config/
   settings.rb          # the app's settings; loads .env
   load.rb              # every module's config that exists, then app/ by role
-  persistence.rb redis.rb auth.rb mail.rb jobs.rb websocket.rb live.rb storage.rb   # one per module added
+  persistence.rb redis.rb auth.rb ... storage.rb pwa.rb push.rb   # one per module added
 app/
   app.rb               # class App < Monk::Base, its base routes; loads app/routes/*.rb
   routes/              # more routes, one file per module or feature, each reopening class App
@@ -161,7 +171,7 @@ SETUP.md  AGENTS.md  CLAUDE.md
 
 `config.ru` is the same for every app. `config/load.rb` is too: it
 requires `config/settings`, then each module's config that exists, in a
-fixed order (`persistence redis auth mail jobs websocket live presence storage`),
+fixed order (`persistence redis auth mail jobs websocket live presence storage pwa push`),
 then loads `app/`. It never boots the app; `config.ru`'s `Monk.boot(App)`
 does. `bin/jobs`, `bin/console` and the test helper require `config/load`
 too, so they see the same configs, models, mailers and jobs as

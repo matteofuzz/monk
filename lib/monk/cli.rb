@@ -28,6 +28,7 @@ module Monk
         monk add MODULE... [options]           add modules to the app here
         monk add --list                        the modules, and which are installed
         monk help [MODULE] [--file PATH]       this, a module's details, or Monk's version of one of its files
+        monk push keys                         a new VAPID key pair, for an environment's VAPID_* settings
 
       Options:
         --transport=postgres|redis   websocket's transport (inferred when only one is installed)
@@ -53,6 +54,7 @@ module Monk
       when nil, "help", "--help", "-h" then help
       when "new" then new_app
       when "add" then @args[:list] ? list : add
+      when "push" then push
       else raise Error.new("Unknown command: #{command}.", suggestion: "monk help")
       end
     rescue Error => e
@@ -158,6 +160,26 @@ module Monk
 
     def monk_app? = File.exist?(File.join(@cwd, "config/load.rb"))
 
+    # `monk push keys`: a fresh VAPID pair, as the lines an env file
+    # takes (or --json). Each environment gets its own; changing a
+    # deployed app's pair ends every subscription it has.
+    def push
+      unless @args[:positional] == ["keys"]
+        raise Error.new("monk push takes one command: keys.", suggestion: "monk push keys")
+      end
+
+      require_relative "push/errors"
+      require_relative "push/base64_url"
+      require_relative "push/keys"
+      keys = Push::Keys.generate
+      if @args[:json]
+        @stdout.puts JSON.generate(keys)
+      else
+        @stdout.puts "VAPID_PUBLIC_KEY=#{keys[:public_key]}", "VAPID_PRIVATE_KEY=#{keys[:private_key]}"
+      end
+      0
+    end
+
     def list
       installed = monk_app? ? @registry.definitions.select { |d| File.exist?(File.join(@cwd, d.installed_if)) } : []
       rows = @registry.definitions.reject { |definition| definition.name == :base }.map do |definition|
@@ -231,8 +253,18 @@ module Monk
         raise Error.new("#{definition.name} doesn't write #{path}.", suggestion: "monk help #{definition.name}")
       end
 
-      @stdout.print File.read(source)
+      @stdout.print file_help_content(definition, path, source)
       0
+    end
+
+    # A file copied with `app_name: true` shows this app's name, as monk add
+    # writes it; outside an app it keeps {{app}}.
+    def file_help_content(definition, path, source)
+      content = File.read(source)
+      copy = definition.copies.find { |candidate| candidate.path == path }
+      return content unless copy&.app_name && monk_app?
+
+      Generator.fill_app_name(content, File.basename(@cwd))
     end
 
     def migration_template(definition, path)

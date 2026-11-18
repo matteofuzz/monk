@@ -187,9 +187,9 @@ Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
   "When a job fails"), so after fixing a bad `MAIL_URL`,
   `Monk::Jobs.retry_failed(id)` resends.
 - **The `mailers` queue.** Mail jobs run on it, and `monk new` sets
-  `JOBS_QUEUES=mailers,default` so they're served before other work. Once
-  the app has slow jobs, run a separate `bin/jobs` just for `mailers`
-  (`JOBS_QUEUES=mailers`), so an email never waits behind them.
+  `JOBS_QUEUES=mailers,push,default` so they're served before other
+  work. Once the app has slow jobs, run a separate `bin/jobs` just for
+  `mailers` (`JOBS_QUEUES=mailers`), so an email never waits behind them.
 - **Delivery is at-least-once.** A job process killed mid-send can send the
   same email twice. That's rare, and usually harmless for mail, but it's
   why `deliver_later` isn't for anything that must go out exactly once.
