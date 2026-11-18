@@ -504,7 +504,35 @@ Branches `main_dev/pwa` then `main_dev/push`, each merged into
     - [x] Logout: `subscribed?` false at once; signing in again moves the
       row to the new session on page load; a send reaches it.
 
-    Still to check: Android Chrome.
+    **Chrome 157 on Android, installed app (2026-11-17): in part.**
+    - [x] Signed in in Chrome, installed from the ⋮ menu: the maskable
+      icon fills the launcher's shape; opens standalone, still signed in.
+    - [x] "Turn on" asks and subscribes (`fcm.googleapis.com`).
+    - [x] Notifications arrive with the app open, in the background, with
+      the screen locked, and swiped away; they go to the shade without a
+      pop-up (the site's Android notification category decides that, not
+      the page). A tap opens the app, after fix 4 below.
+    - [ ] Live (A4) after the app was in the background.
+    - [ ] Notifications off in the app's Android App info: what the page
+      reports, and whether FCM keeps answering 201.
+    - "Turn off" and logout are the same code as on the four platforms
+      above; not repeated.
+
+    Found on Android, fixed:
+    4. With a Chrome tab of the site left open (the one signed in from
+       before installing), a click went to that tab: with the app swiped
+       away (`focus-navigate` on the tab), and with the app open when the
+       tab was listed first. The worker sees tabs and app windows alike.
+       Pages running as the app now tell it so (`register.js`), and
+       `sw.js` keeps that per window in the Cache API, with a mark that
+       the app is installed: a click prefers an app window, then, with
+       the app installed but closed, `openWindow` (opened in the app),
+       and only then a tab. Checked on the phone with the tab open: the
+       app stays in front, and from closed the app opens
+       (`openWindow-installed`).
+
+    Still to check: the two Android items above, in the Android Emulator
+    (a Google Play image: Chrome, WebAPK install, FCM).
 11. Docs: ADR 0020; `docs/guides/pwa.md`, `docs/guides/push.md`; CONTEXT.md
     (Push subscription, VAPID keys, Notification payload); the 0.25
     section of `docs/guides/upgrading.md`; CHANGELOG; roadmap entry Done.

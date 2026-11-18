@@ -98,6 +98,37 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # A page running as the installed app tells sw.js so (register.js posts
+  # it; headless Chrome is never standalone, so the page posts it here),
+  # and the worker records the window and that the app is installed, for
+  # a notification's click (test/js/sw_click.test.js has the choice itself).
+  def test_the_worker_records_a_window_of_the_installed_app
+    with_new_app(:pwa) do |dest|
+      with_server(dest) do |port|
+        @page.go_to("http://127.0.0.1:#{port}/")
+        @page.evaluate_async(<<~JS, 10)
+          navigator.serviceWorker.ready
+            .then((r) => r.active.postMessage({ monkPwa: { standalone: true } }))
+            .then(() => arguments[0](true))
+        JS
+
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+        paths = []
+        loop do
+          paths = @page.evaluate_async(<<~JS, 10)
+            caches.open("monk-pwa-app-windows").then((c) => c.keys())
+              .then((keys) => arguments[0](keys.map((k) => new URL(k.url).pathname).sort()))
+          JS
+          break if paths.size == 2 || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+          sleep 0.05
+        end
+        assert_match %r{\A/_monk/pwa/app-window/.+\z}, paths[0]
+        assert_equal "/_monk/pwa/installed", paths[1]
+      end
+    end
+  end
+
   # push.js in a generated push app (monk add push): the page learns its
   # state at once, even with notifications allowed and a push service that
   # never answers -- headless Chrome reaches none, so subscribing itself is

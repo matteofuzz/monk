@@ -41,8 +41,12 @@ adds `pwa`, `jobs` and `auth` first if they're missing, and writes:
 `public/sw.js` (pwa) shows the notification. A click on it brings the
 app to `url` (this app's own pages only): a window already there comes
 forward, otherwise the app's open window goes there, and a new one opens
-only when the app has none. A newer notification with the same `tag`
-replaces the older one.
+only when the app has none. Where the app is installed, the click goes
+to the app, never to a browser tab left open from before: with no app
+window open, a new one opens (Android and desktop Chrome open it in the
+app). After the app is uninstalled, a click opens a new tab rather than
+reusing one. A newer notification with the same `tag` replaces the
+older one.
 
 ## Sending
 

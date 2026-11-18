@@ -64,7 +64,11 @@ redirect, and never touches `/_monk/` paths. An offline page or caching
 needs one: keep those requests out of it.
 
 The end of the file shows web push messages as notifications; it does
-nothing until push is set up ([`push.md`](push.md)).
+nothing until push is set up ([`push.md`](push.md)). For their clicks,
+each page running as the installed app (`display-mode: standalone`)
+tells the worker so, through `register.js`, and the worker keeps the
+note in a cache named `monk-pwa-app-windows`. Caching code that deletes
+the caches it doesn't know should keep that one.
 
 `register.js` reports on `document`: `monk-pwa:registered` (`{ scope }`),
 `monk-pwa:unsupported` (`{ reason: "no-service-worker" | "insecure" }`)
