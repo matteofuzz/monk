@@ -1,6 +1,6 @@
 # 0.26: Richer HTML support, forms first — plan
 
-Status: in progress. Drafted 2026-11-20; steps 1-6 built 2026-11-20.
+Status: in progress. Drafted 2026-11-20; steps 1-7 built 2026-11-20.
 Roadmap item 5 (`docs/roadmap.md`).
 
 Make a plain `<form method="post">` work in a Monk app, safely, with no
@@ -112,6 +112,14 @@ Settled while building steps 1-6:
     route renders it again with `@error` and `halt(422 | 429, render(...))`,
     or with `@sent`. Logout's example is a form with `csrf_field` and
     redirects to `/login`.
+13. **Security headers on every response, by default** (`Base::SECURITY_HEADERS`):
+    `x-content-type-options: nosniff`, `content-security-policy:
+    frame-ancestors 'none'`, `referrer-policy:
+    strict-origin-when-cross-origin`, merged under the app's own headers
+    in `Base.call`, so static files, 404s and refusals carry them too. A
+    route replaces one by setting it in `headers`; no switch to turn them
+    off. An app that sets its own `content-security-policy` replaces
+    `frame-ancestors` with it, so it should include it.
 
 ## Part A: the basics (committed)
 
@@ -205,7 +213,7 @@ works with Live).
 6. Done. `require_csrf!` form field and `csrf_field` (A3; decisions 11,
    12); `docs/guides/routing.md` and `docs/design/auth-sessions.md`
    updated for the new behaviour.
-7. Security headers (A6), if kept.
+7. Done. Security headers (A6; decision 13).
 8. Guide `docs/guides/forms.md`: a form end to end, failed submit with
    422, the direct-upload-then-post pattern, the cross-origin opt-out.
    Update `docs/design/views.md`'s "no form helpers" note and the agents
@@ -214,5 +222,4 @@ works with Live).
 
 ## Open
 
-- Security headers: kept or not; on by default, scope, opt-out.
 - Part B, item by item.

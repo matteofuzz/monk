@@ -18,6 +18,18 @@ module Monk
     BACKTRACE_LINES = 10
     private_constant :BACKTRACE_LINES
 
+    # On every response, under the app's own headers: a route that sets
+    # one (`headers["content-security-policy"] = ...`) replaces it.
+    # nosniff: a browser never runs an upload or a JSON body as a script
+    # or stylesheet. frame-ancestors: no other site can show this app in a
+    # frame and trick a click on its forms. Referrer-Policy: another site
+    # sees only the origin, never a path or a token in it.
+    SECURITY_HEADERS = Ractor.make_shareable({
+      "x-content-type-options" => "nosniff",
+      "content-security-policy" => "frame-ancestors 'none'",
+      "referrer-policy" => "strict-origin-when-cross-origin",
+    })
+
     # Sec-Fetch-Site values a state-changing request may carry: from a page
     # of this same origin, or typed or bookmarked by the user ("none").
     SAME_ORIGIN_SITES = Ractor.make_shareable(%w[same-origin none])
@@ -162,7 +174,7 @@ module Monk
         start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         status, headers, body = dispatch(env)
         log_request(env, status, start)
-        [status, headers, body]
+        [status, SECURITY_HEADERS.merge(headers), body]
       end
 
       private
