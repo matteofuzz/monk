@@ -32,6 +32,9 @@ A Monk app (Ruby, Ractor-based). Read this before changing code.
   constant or a class variable.
 - Templates escape what they print. `raw(...)` is only for HTML the app
   built itself.
+- A browser request from another site to any route but a GET gets a 403.
+  A route that must take one (a webhook) declares
+  `allow_cross_origin: true`.
 
 ## Examples
 

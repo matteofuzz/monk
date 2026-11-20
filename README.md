@@ -54,6 +54,7 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | Feature | What it is | Opt-in | Guide |
 |---|---|---|---|
 | Routing, context, errors | `get`/`post`/…, path params, `halt`, `json`, `error`, experimental `resources` | — | [`routing.md`](docs/guides/routing.md) |
+| Forms | plain HTML forms: form bodies and nested `params`, `_method`, cross-site requests refused, `csrf_field` with auth, security headers | — | [`forms.md`](docs/guides/forms.md) |
 | Boot and shared state | `Monk.boot`, Ractor-shareability checks, `Monk::StateRactor` | — | [`boot-and-shared-state.md`](docs/guides/boot-and-shared-state.md) |
 | Settings | `Monk::Settings`, `MONK_ENV`, env-var config validated at boot | — | [`settings.md`](docs/guides/settings.md) |
 | Views and static assets | ERB compiled at boot, escaped by default, layouts/partials, frozen asset manifest | — | [`views.md`](docs/guides/views.md) |

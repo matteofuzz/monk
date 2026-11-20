@@ -1,6 +1,6 @@
 # 0.26: Richer HTML support, forms first — plan
 
-Status: in progress. Drafted 2026-11-20; steps 1-7 built 2026-11-20.
+Status: in progress. Drafted 2026-11-20; steps 1-8 built 2026-11-20.
 Roadmap item 5 (`docs/roadmap.md`).
 
 Make a plain `<form method="post">` work in a Monk app, safely, with no
@@ -214,10 +214,13 @@ works with Live).
    12); `docs/guides/routing.md` and `docs/design/auth-sessions.md`
    updated for the new behaviour.
 7. Done. Security headers (A6; decision 13).
-8. Guide `docs/guides/forms.md`: a form end to end, failed submit with
-   422, the direct-upload-then-post pattern, the cross-origin opt-out.
-   Update `docs/design/views.md`'s "no form helpers" note and the agents
-   templates.
+8. Done. Guide `docs/guides/forms.md` (its example checked against the
+   code), a README row, `docs/design/views.md`'s "no form helpers" note,
+   the storage guide's 415, and a cross-site rule in the base app's
+   `AGENTS.md`. At release: the CHANGELOG, and in
+   `docs/guides/upgrading.md` what an existing app must do: routes taking
+   another site's browser requests need `allow_cross_origin: true`, JSON
+   bodies are capped at 1 MB, and the new login page is optional.
 9. Part B, item by item, recording each decision here.
 
 ## Open
