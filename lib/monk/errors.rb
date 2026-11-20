@@ -31,4 +31,7 @@ module Monk
 
   class TemplateSyntaxError < StandardError
   end
+
+  class UnsafeRedirectError < StandardError
+  end
 end

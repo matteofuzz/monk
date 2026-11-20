@@ -111,6 +111,26 @@ the token from either place:
 
 Bearer-authenticated requests skip it: another site can't set that header.
 
+## Redirects
+
+`redirect` goes only to this app: a path (`/notes`, `notes/1`) or an
+`http(s)` URL on the request's `Host`. Anything else raises
+`Monk::UnsafeRedirectError`, so `redirect(params[:return_to])` can't
+send someone to a lookalike site. Tabs, newlines, spaces and backslashes
+are refused too, since browsers read `/\evil.example` as
+`//evil.example`. For a location the app built itself on another host,
+such as a file's signed link:
+
+```ruby
+redirect Monk::Storage.url(key), allow_other_host: true
+```
+
+To send a bad `return_to` home instead of raising:
+
+```ruby
+error(Monk::UnsafeRedirectError) { redirect "/" }
+```
+
 ## Verbs other than POST
 
 A form can only send `GET` and `POST`. A `_method` field of `patch`, `put`

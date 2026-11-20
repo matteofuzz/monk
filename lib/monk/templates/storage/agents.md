@@ -8,7 +8,7 @@ under `storage/<env>` until `STORAGE_URL` names a bucket.
 file; `put(key, body, content_type:)`, `get(key, range: 0..99)`,
 `head(key)` (an object with `byte_size`, `content_type`, `etag`, or nil),
 `delete(key)`, `copy(from, to)`. Downloads: `redirect
-Monk::Storage.url(key)`. Browser uploads:
+Monk::Storage.url(key), allow_other_host: true`. Browser uploads:
 `presigned_put(key, content_type:, byte_size:)` gives the `url` and
 `headers` to PUT the file with. At confirm,
 `Monk::Storage.get(key, range: Monk::Storage::Sniff::RANGE)` and

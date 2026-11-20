@@ -247,7 +247,8 @@ worker Ractor.
 
 Pages link to the app's own stable URL, never to a signed link. The
 route checks that the viewer may see the file, then redirects (302) to
-`url(key)`:
+`url(key)`, with `allow_other_host: true`, since the bucket is another
+host (`redirect` refuses one otherwise):
 
 ```ruby
 class App
@@ -259,7 +260,7 @@ class App
     end
     halt 404, "" unless key
 
-    redirect Monk::Storage.url(key)
+    redirect Monk::Storage.url(key), allow_other_host: true
   end
 end
 ```

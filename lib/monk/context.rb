@@ -1,4 +1,5 @@
 require "json"
+require "uri"
 
 require_relative "views"
 require_relative "assets"
@@ -45,7 +46,19 @@ module Monk
       throw :monk_halt, [status, headers, [body]]
     end
 
-    def redirect(location, status: 302)
+    # Only to this app, unless the route says otherwise: a location built
+    # from a param (`redirect(params[:return_to])`) could otherwise send
+    # the browser to another site that looks like this one. A path
+    # ("/notes", "notes/1") or an http(s) URL on this request's Host is
+    # this app; anything else raises, a bug to fix, not a page to show.
+    # `allow_other_host: true` is for a location the app built itself,
+    # such as a Monk::Storage.url.
+    def redirect(location, status: 302, allow_other_host: false)
+      unless allow_other_host || this_app?(location)
+        raise UnsafeRedirectError, "redirect to #{location.inspect}: another host, or not a plain path " \
+          "(allow_other_host: true if the app built it)"
+      end
+
       headers["location"] = location
       throw :monk_halt, [status, headers, [""]]
     end
@@ -95,6 +108,26 @@ module Monk
     # so an undeclared key raises the exact same way through either path.
     def settings
       Monk::Settings
+    end
+
+    private
+
+    # Browsers forgive what URI doesn't: they drop tabs and newlines, read
+    # "\\" as "/" ("/\\evil.example" is "//evil.example") and "http:/x" as
+    # "http://x". So: no control characters, spaces or backslashes at all,
+    # and a scheme only with a host, this one. Empty (a nil param) is a
+    # bug too.
+    def this_app?(location)
+      return false if location.to_s.empty? || location.to_s.match?(/[\x00-\x20\x7f\\]/)
+
+      uri = URI.parse(location.to_s)
+      return uri.host.nil? if uri.scheme.nil?
+      return false unless %w[http https].include?(uri.scheme) && uri.host
+
+      authority = uri.port == uri.default_port ? uri.host : "#{uri.host}:#{uri.port}"
+      authority == env["HTTP_HOST"]
+    rescue URI::InvalidURIError
+      false
     end
   end
 end

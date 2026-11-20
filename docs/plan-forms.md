@@ -120,6 +120,15 @@ Settled while building steps 1-6:
     route replaces one by setting it in `headers`; no switch to turn them
     off. An app that sets its own `content-security-policy` replaces
     `frame-ancestors` with it, so it should include it.
+14. **`redirect` goes only to this app** unless `allow_other_host: true`
+    (Part B; the name agents know from Rails). A path, or an http(s) URL
+    whose host and port equal the request's `Host`; control characters,
+    spaces, backslashes, an empty location and a scheme without a host are
+    refused, as browsers would read them as another host. Anything else
+    raises `Monk::UnsafeRedirectError` (a 500 unless the app handles it,
+    e.g. `error(Monk::UnsafeRedirectError) { redirect "/" }`) rather than
+    silently going home: the bug shows up while writing the route. The
+    storage download example and guide pass `allow_other_host: true`.
 
 ## Part A: the basics (committed)
 
@@ -188,8 +197,7 @@ kept only if it clearly pays for itself.
   enough, in which case the guide shows the pattern and Monk adds nothing.
 - **Validation errors**: a convention for an errors hash and showing a
   message next to its field. Possibly only a documented pattern.
-- **Redirect guard**: `redirect` refusing another origin unless asked,
-  so `redirect(params[:return_to])` isn't an open redirect.
+- **Redirect guard**: kept, built (decision 14).
 
 ## Out of scope
 
@@ -222,6 +230,9 @@ works with Live).
    another site's browser requests need `allow_cross_origin: true`, JSON
    bodies are capped at 1 MB, and the new login page is optional.
 9. Part B, item by item, recording each decision here.
+   - Done. Redirect guard (decision 14). At release, the upgrade guide:
+     a redirect to another host needs `allow_other_host: true`.
+   - Flash: next.
 
 ## Open
 

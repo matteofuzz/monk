@@ -61,7 +61,8 @@
 #   get("/media/*") do
 #     halt 404, "" unless params[:splat].match?(/\A[0-9a-f]{32}\z/)
 #
-#     redirect Monk::Storage.url("media/#{params[:splat]}")
+#     # The bucket is another host: allowed, since the app built the link.
+#     redirect Monk::Storage.url("media/#{params[:splat]}"), allow_other_host: true
 #   end
 # end
 # monk:end
