@@ -1,6 +1,7 @@
 # 0.26: Richer HTML support, forms first — plan
 
-Status: in progress. Drafted 2026-11-20; steps 1-8 built 2026-11-20.
+Status: in progress. Drafted 2026-11-20; steps 1-9 built 2026-11-20;
+Part C added 2026-11-20.
 Roadmap item 5 (`docs/roadmap.md`).
 
 Make a plain `<form method="post">` work in a Monk app, safely, with no
@@ -214,6 +215,175 @@ kept only if it clearly pays for itself.
 - **Validation errors**: a documented pattern, no code (decision 16).
 - **Redirect guard**: kept, built (decision 14).
 
+## Part C: fixes from the first app's deployment
+
+Three things found running monk_talk on a real server and an iPhone
+(2026-11-20). Not forms, but small and in the way of any Monk app shipped
+the same way, so they ride in this release. Each needs its own look
+before it's built; the notes are a starting point.
+
+### C1. A closed iPhone app reads as online for about a minute
+
+**Found:** closing the installed app on an iPhone leaves the person
+online for about a minute, so a push meant for when they're gone is
+skipped.
+
+**Today:** the Live client reports hidden and visible on
+`visibilitychange` only (`lib/monk/live/client/monk_live.js`). The
+WebSocket server closes a socket silent for two ping intervals, and the
+scaffolded `bin/websocket_server` pings every 25 s: about 50 s, plus
+`Monk::Presence`'s 20 s grace before offline.
+
+**Options:**
+
+- The client also reports hidden on `pagehide`, which may fire where
+  `visibilitychange` doesn't (closing from the app switcher). The page
+  goes away while away, not online, and push isn't skipped for an away
+  person. Cheap; whether iOS fires it on close has to be measured on the
+  device.
+- The server closes a silent socket sooner: a shorter interval for
+  everyone, or a shorter limit only for a socket whose page said hidden.
+  More sockets dropped and reconnected on flaky mobile networks.
+
+**Measured in monk_talk (2026-11-20):** with the app in the background a
+message notifies; swiped away, a message within about a minute sends no
+push at all, because presence still reads online; two minutes after, it
+arrives. iOS froze the page before it reported itself hidden, so
+`visibilitychange` never reached the server, and `pagehide` may not
+either.
+
+**Leaning:** try `pagehide` on the iPhone first, since it costs a few
+lines; expect the server side to be needed, and measure what a shorter
+limit for silent sockets costs on a flaky mobile network.
+
+### C2. A session whose CSRF cookie no longer verifies is stuck
+
+**Found:** after `AUTH_SECRET` changed (restoring a backup), a signed-in
+browser still read its pages, but every route calling `require_csrf!`
+answered 403, logout included, until its cookies were cleared.
+
+**Why:** the session lives in the database as a SHA-256 of its token,
+which doesn't depend on the secret, so it still verifies. The
+`csrf_token` cookie is `HMAC(AUTH_SECRET, session token)`, set only at
+login, so it no longer matches. Since 0.26 a form with `csrf_field` is
+not stuck: the field is computed from the session with the current
+secret. A `fetch` that sends the cookie's value is.
+
+**Options:**
+
+- Reissue `csrf_token` when a request has a valid session and a
+  `csrf_token` cookie that doesn't match it: one HMAC per signed-in
+  request, and the next `fetch` works. Where it lives (in
+  `current_subject`, or on `require_csrf!`'s 403) is to settle.
+- Let logout through without the token. Since 0.26 Monk's cross-origin
+  check already refuses another site's logout, so the token adds little
+  there, but it only unsticks logout.
+
+**Leaning:** reissue; logout then needs no special case.
+
+### C3. Deploying an app with websocket, jobs and auth
+
+**Found:** the Compose stack and the Hetzner scripts written for the
+first app (`../monk_talk`, commit `96357f1`, its
+`doc/hetzner-deployment_plan.md`) are what any Monk app with websocket,
+jobs and auth needs. They were themselves adapted from a second app's
+(standup-quiz), with extraction to Monk planned "after a third".
+
+**Today:** `docs/guides/deploying.md` section 4 has a Compose file and
+Caddy's `/ws` route, written by hand from the guide. Secrets, push keys,
+the log volume and health checks are left to the reader.
+
+**What monk_talk's files are made of:**
+
+| Part | Generic? |
+|---|---|
+| `compose.yaml`: the image run as `web`, `ws` (`bin/websocket_server`) and `jobs` (`bin/jobs`); Postgres with a `pg_isready` health check the Ruby services wait on; Caddy; `stop_grace_period: 35s` (over kino's and `bin/jobs`' 30 s drains); `restart: unless-stopped`; a `log` volume | Yes. Which services appear follows the installed modules: `ws` with websocket, `jobs` with jobs, `postgres` with postgres, `redis` with redis. |
+| `Caddyfile`: `{$SITE_ADDRESS}`, `/ws*` to `ws:9293`, the rest to `web:9292`, same host so the session cookie reaches the handshake | Yes, with websocket; without it, one `reverse_proxy`. |
+| `.env.production.example`: `MONK_ENV=staging`, `PUBLIC_URL`, `SITE_ADDRESS`, then each module's settings | Mostly. Each Monk generator already declares its env vars (`env :example`, `set_before_production ... placeholder: true`), so the file can be built from the installed modules. `MESSAGE_KEY` and `DEPLOY_LABEL` are the app's own. No inline comments: the scripts read values with `sed`. |
+| First deploy: secrets made on the host (`openssl rand -hex 32` for `AUTH_SECRET`, one password for `DB_PASSWORD` and `POSTGRES_PASSWORD`, `monk push keys` run in the built image), file mode 600 | Yes, following the modules. |
+| `smoke_test.sh`: containers running, no pending migrations, https with the http redirect, the PWA files, the page's push key equal to the server's, a login link sent through `bin/jobs` (with `MAIL_URL=log://`), the `/ws` handshake answering 101 | The checks are generic, and mostly what 0.27's `monk check` is for. The version and badge checks are the app's. |
+| `deploy/hetzner/`: `hcloud` server and firewall, cloud-init (Docker, swap, capped logs), DNS in Hetzner, `git archive` over SSH and a build on the host, `snapshot.sh`/`restore.sh`, `restore_dump.sh`, `mail.sh` | No: one host's tooling and one person's accounts. |
+
+**Lessons for Monk, whichever form this takes:**
+
+- **The env file is a backup.** A dump restored with a new `AUTH_SECRET`
+  left every session stuck (C2), with a new VAPID pair every push
+  subscription dead, with `MESSAGE_KEY` lost every message. monk_talk
+  saves `.env.production` beside each dump. Worth saying in
+  `deploying.md`, whatever C2 does.
+- **Monk logs to `log/<MONK_ENV>.log`, not stdout**, so a container
+  needs a log volume and `docker compose logs` shows nothing of the app.
+  Whether Monk should also log to stdout in a container is a question of
+  its own.
+- **The lockfile's platforms.** monk_talk's existing lockfile listed only
+  `arm64-darwin` and needed `bundle lock --add-platform x86_64-linux
+  aarch64-linux`; `deploying.md` and the scaffolded Dockerfile say a
+  plain `bundle install` locks every platform, which seems to hold only
+  for a new lockfile. To check, then fix the docs or the scaffold.
+- **`VAPID_CONTACT`**: a production-like run on `https://localhost` fails
+  the boot (Apple refuses a localhost contact), so a local run sets it.
+  Already Monk's behaviour; the env example says so.
+
+**Design: `monk add deploy` for the stack; Hetzner and Brevo as docs.**
+(Decided 2026-11-20: no provider in the command for now, and no tests of
+host scripts.)
+
+- **`deploy`, a module.** It writes `compose.yaml`, the `Caddyfile`,
+  `.env.production.example` and `bin/deploy_env` (run on the host: fills
+  in the secrets, `monk push keys` in the built image when push is
+  installed), all from the installed modules; a later `monk add` of
+  another module adds its service and settings, as generators already do
+  for `SETUP.md`. Installed when `compose.yaml` exists. Nothing in it
+  names a host: it runs on any Linux box with Docker.
+- **Hetzner and Brevo, in a guide**: `docs/guides/deploy-hetzner.md`,
+  everything needed to reproduce the deploy monk_talk runs, tested there
+  (25 smoke checks, real mail with DKIM and DMARC passing, push on an
+  iPhone, both backup tests):
+  - **Accounts, once**: a Hetzner Cloud project and a Read & Write API
+    token (`hcloud context create <project>`), an SSH key; a domain with
+    its DNS zone in Hetzner (or `<ip>.sslip.io`, no DNS, a URL that
+    changes with the IP); Brevo with the domain authenticated (DKIM,
+    DMARC), an SMTP key per app, the sender on that domain and not on
+    the app's subdomain, the free plan's 300 mails a day.
+  - **The server**: `cx23` (2 vCPU, 4 GB, 40 GB, about €7.31 a month,
+    billed by the hour), Ubuntu 24.04, a firewall allowing 22, 80, 443
+    and 443/udp, cloud-init for Docker, Compose, 2 GB of swap and capped
+    container logs; the exact `hcloud` commands.
+  - **DNS**: the A record pointed with `hcloud zone rrset`, a 300 s TTL,
+    waiting until a public resolver sees it before Caddy asks for its
+    certificate; hyphens, not underscores, in the host name.
+  - **Shipping**: `git archive HEAD` over SSH, built on the server (no
+    registry), the env file kept across deploys, `bin/deploy_env` on the
+    first one, `bin/setup_db`, then `docker compose up -d`.
+  - **Mail**: `MAIL_URL=smtp://<login>:<key>@smtp-relay.brevo.com:587`
+    with an `@` in the login percent-encoded, in single quotes so Compose
+    doesn't expand a `$`; the SMTP key over stdin, never in a command
+    line; `log://` until then, reading login links from the log.
+  - **Checking it**: the checks monk_talk's smoke test makes, as
+    commands (until `monk check`, 0.27, does them).
+  - **Backups**: a snapshot with the server shut down (Postgres
+    consistent), `--destroy` to stop paying; a `pg_dump` with the env
+    file beside it, since a restore without its `AUTH_SECRET`, VAPID pair
+    or the app's own keys loses sessions, push subscriptions or data;
+    restoring onto a fresh server with that env file.
+  - **Costs and capacity**: what the box holds, as monk_talk estimated.
+  The guide links to `docs/guides/mail.md`'s Brevo section rather than
+  repeating it.
+- **For agents.** The gem ships no `docs/`, so an app's agents read only
+  its `AGENTS.md`. The deploy module's section carries the essentials in
+  a few lines: the services and when each exists, `bin/deploy_env`,
+  `.env.production` never committed and saved with each backup, logs in
+  the `log` volume (`docker compose exec web tail log/<env>.log`), and
+  `docs/guides/deploy-hetzner.md` in the monk repo for the host steps,
+  as other modules' `SETUP.md` sections already point to Monk's guides.
+- **The smoke test's generic checks go to `monk check`** (0.27), which
+  then runs on the host as `docker compose run --rm web bin/check`.
+
+**Later, not in 0.26:** `--provider hetzner` writing the scripts, once a
+third app confirms their shape, with tests using a fake `hcloud` and
+`ssh` on `PATH`. Adding a provider to an app already deployed would need
+`monk add` to add what a new option value brings to an installed module.
+
 ## Out of scope
 
 Multipart (decision 1); tag builders and `link_to`; `content_for`/named
@@ -250,8 +420,15 @@ works with Live).
    - Done. Flash (decision 15).
    - Done. Form helpers and validation errors: patterns, not code
      (decision 16).
+10. C2: CSRF cookie reissued (or logout let through).
+11. C1: presence on a closed iPhone app, measured on the device.
+12. C3: `monk add deploy`, then `docs/guides/deploy-hetzner.md` and the
+    deploy module's `AGENTS.md` section.
 
 ## Open
 
-Nothing. Left for release: the CHANGELOG and the upgrade guide (step 8,
+- C1, C2: the options above.
+- C3: none for 0.26; `--provider` later.
+
+Left for release: the CHANGELOG and the upgrade guide (step 8,
 step 9's redirect guard).

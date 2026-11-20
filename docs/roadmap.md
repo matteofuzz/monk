@@ -86,7 +86,18 @@ gets its own design doc and plan when work on it starts.
    `application/x-www-form-urlencoded` body (only the query string and JSON
    bodies are parsed today), and `require_csrf!` accepting a form field, not
    only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
-   the auth module's login page does.
+   the auth module's login page does. Plan: `docs/plan-forms.md`.
+   Also in this release, from a first real deployment:
+   - **Presence on a closed iPhone app**: it reads as online for about a
+     minute, so a push meant for when the person is gone is skipped.
+   - **A CSRF cookie that no longer verifies**: after `AUTH_SECRET`
+     changes, a signed-in browser gets 403 on every `require_csrf!` route,
+     logout included, until its cookies are cleared.
+   - **Deploying websocket, jobs and auth together**: `monk add deploy`
+     writes the Compose stack, Caddy's `/ws` route and the env example from
+     the app's modules, with secrets and push keys generated on the host;
+     a guide covers a tested deploy on Hetzner Cloud with Brevo for mail,
+     from the accounts to backups and restore.
 
 6. **0.27: `monk check`: verifying an environment's wiring.** `bin/check`
    (written by the base app) loads `config/load` and runs a read-only check
