@@ -260,9 +260,51 @@ arrives. iOS froze the page before it reported itself hidden, so
 `visibilitychange` never reached the server, and `pagehide` may not
 either.
 
-**Leaning:** try `pagehide` on the iPhone first, since it costs a few
-lines; expect the server side to be needed, and measure what a shorter
-limit for silent sockets costs on a flaky mobile network.
+**Where the minute comes from:** the server already has a fallback for a
+page frozen before it says hidden: `Live::Session` turns a socket Away
+once no Live ping has come for `visible_for = 2 × HEARTBEAT` (50 s),
+checked on the server's own ping every 25 s, so 50-75 s after the last
+ping (ADR 0019). A check of its own per connection, every 10 s, was
+measured and dropped: at 15K sockets it took the WebSocket process from
+40% to 83% CPU.
+
+**Prepared (2026-11-20), client side:** `monk_live.js` also says hidden
+on `pagehide` and `freeze`, through the same `goneHidden` as
+`visibilitychange`. A page closed or frozen with no `visibilitychange`
+first now reads Away at once, if the browser runs the page long enough
+to send it. Browser tests dispatch both events on a visible page, with
+a server silence window far longer than the test, and see Away at once
+(both time out without the change).
+
+**The device test decides the rest.** On the iPhone, with the app open
+and visible, swipe it away from the app switcher, and time Away on a
+second device:
+
+- **Away within a second or two**: iOS fired `pagehide` (or a late
+  `visibilitychange`) before freezing. C1 is done; the push gap closes.
+- **Still about a minute**: nothing ran before the freeze, so only the
+  server can see it. Then one of:
+  - **S1. A shorter window, at no cost**: `visible_for = HEARTBEAT +
+    PONG_TIMEOUT` (35 s) instead of `2 × HEARTBEAT`, still checked on
+    the server's ping: Away 35-60 s after the last ping, not 50-75 s.
+    A visible page pings every 25 s, so 35 s of silence is already one
+    missed ping and a pong timeout. Changes ADR 0019's rule.
+  - **S2. Away on time**: the heartbeat thread already sleeps until the
+    earlier of its next ping and the idle deadline; it also wakes at the
+    visibility deadline. Away exactly 35 s after the last ping, at about
+    one extra wake per visible socket per interval: to measure with
+    `bin/benchmark_ws_connect --presence` against ADR 0019's numbers
+    before deciding.
+  - Either way the gap stays above half a minute: what a WebSocket can
+    tell from a phone that went silent. The rest is the app's choice
+    (send the push anyway when the page hasn't pinged for a while).
+
+**To run the device test,** monk_talk needs this branch's Monk on the
+staging server: its deploy builds from `git archive` there, so a
+`path: "../monk"` gem won't reach it. Either the branch pushed and
+monk_talk's Gemfile pointing at it (`git:`, `branch: "main_dev/v_0_26"`)
+for the test, or `monk_live.js` swapped by hand in the image for one
+deploy.
 
 ### C2. A session whose CSRF cookie no longer verifies is stuck
 
@@ -431,13 +473,14 @@ works with Live).
    - Done. Form helpers and validation errors: patterns, not code
      (decision 16).
 10. Done. C2: a stale CSRF cookie is reissued (decision 17).
-11. C1: presence on a closed iPhone app, measured on the device.
+11. C1: client side done (`pagehide`, `freeze`); the iPhone test, then
+    S1, S2 or nothing.
 12. C3: `monk add deploy`, then `docs/guides/deploy-hetzner.md` and the
     deploy module's `AGENTS.md` section.
 
 ## Open
 
-- C1: the options above.
+- C1: the iPhone test's result, then S1, S2 or nothing.
 - C3: none for 0.26; `--provider` later.
 
 Left for release: the CHANGELOG and the upgrade guide (step 8,

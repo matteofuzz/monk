@@ -65,7 +65,12 @@ class PresenceBrowserTest < Minitest::Test
 
   def ws_server_options = { authenticate: true, presence: @counts, ping_interval: 5 }
   # The server starts in setup, before a test's body runs.
-  def ws_handler = name == "test_a_hidden_page_says_so_and_reads_away_at_once" ? SLOW_SILENCE_HANDLER : HANDLER
+  SAYS_SO = %w[
+    test_a_hidden_page_says_so_and_reads_away_at_once
+    test_a_page_closed_without_being_hidden_says_so_on_pagehide
+    test_a_frozen_page_says_so_on_freeze
+  ].freeze
+  def ws_handler = SAYS_SO.include?(name) ? SLOW_SILENCE_HANDLER : HANDLER
 
   def test_a_visible_page_is_online_hidden_away_and_online_again_when_shown
     open_page(PAGE)
@@ -87,6 +92,29 @@ class PresenceBrowserTest < Minitest::Test
     wait_for_status(:away)
 
     assert_equal [[@subject, :online], [@subject, :away]], changes
+  end
+
+  # iOS can close an app from the switcher, or freeze its page, with no
+  # visibilitychange first (docs/plan-forms.md C1): the page still visible,
+  # then pagehide or freeze. Chrome can't freeze a page on command, so the
+  # events are dispatched as the browser would.
+  def test_a_page_closed_without_being_hidden_says_so_on_pagehide
+    open_page(PAGE)
+    wait_for_status(:online)
+
+    run_js(%(window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }))))
+
+    wait_for_status(:away)
+    assert_equal "visible", evaluate("document.visibilityState")
+  end
+
+  def test_a_frozen_page_says_so_on_freeze
+    open_page(PAGE)
+    wait_for_status(:online)
+
+    run_js(%(document.dispatchEvent(new Event("freeze"))))
+
+    wait_for_status(:away)
   end
 
   def test_a_closed_page_is_offline_after_the_grace_with_last_seen_at
