@@ -16,7 +16,8 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.26
 
-In the `Gemfile`, `gem "monkrb", "~> 0.26", require: "monk"`, then
+In the `Gemfile`, `gem "monkrb", "~> 0.26", require: "monk"` (what a new
+app gets; `"~> 0.25"` would also install 0.26, but not require it), then
 `bundle update monkrb`. Most of 0.26 needs nothing from an app, but four
 changes can turn a request that worked into an error. Check each against
 your routes first.
