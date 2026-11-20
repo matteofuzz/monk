@@ -68,9 +68,10 @@ Monk::Bin.run(__FILE__) do
   presence = (Monk::Presence.start!(start_visible: !live) if defined?(Monk::Presence) && authenticate)
   begin
     port = ENV.fetch("WS_PORT", "9293").to_i
-    # Defaults to public_url (config/settings.rb): one PUBLIC_URL keeps both
-    # in sync. More than one origin: comma-separated.
-    allowed_origins = ENV.fetch("WS_ALLOWED_ORIGINS", Monk::Settings[:public_url]).split(",")
+    # The app's own pages (public_url, config/settings.rb), plus any other
+    # origins in WS_ALLOWED_ORIGINS, comma-separated.
+    extra_origins = ENV.fetch("WS_ALLOWED_ORIGINS", "").split(",").map(&:strip).reject(&:empty?)
+    allowed_origins = [Monk::Settings[:public_url], *extra_origins].uniq
 
     # A ping every 25 s keeps a quiet socket open through a proxy's idle
     # timeout (nginx's is 60 s), and a socket that answers nothing for two

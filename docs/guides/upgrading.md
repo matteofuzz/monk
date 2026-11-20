@@ -14,6 +14,26 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.27
+
+Boot now refuses some settings that are present but wrong
+([`settings.md`](settings.md#values-refused-at-boot)). Check them before
+deploying, and in CI if it boots the app as staging or production:
+
+- **`PUBLIC_URL`**: no trailing slash or path, anywhere. In staging and
+  production, `https://` and the real host, not a placeholder like
+  `app.example.com`.
+- **`LIVE_WS_URL`**, if set: `wss://` in staging and production.
+- **`AUTH_SECRET`** in staging and production: at least 32 characters,
+  without `change-me`. Make one with `openssl rand -hex 32`. A new secret
+  signs everybody out.
+
+With websocket, `WS_ALLOWED_ORIGINS` now lists only the origins allowed
+besides `PUBLIC_URL`. A new app's `bin/websocket_server` always allows
+`PUBLIC_URL`; in an existing one, replace the `allowed_origins = ...`
+line with the one from `monk help websocket --file bin/websocket_server`,
+then drop `PUBLIC_URL` from `WS_ALLOWED_ORIGINS` (leaving it is harmless).
+
 ## 0.26
 
 In the `Gemfile`, `gem "monkrb", "~> 0.26", require: "monk"` (what a new

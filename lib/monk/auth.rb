@@ -19,6 +19,7 @@ module Monk
   # persistence backend the app may not use (docs/design/auth-sessions.md).
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
+    MIN_SECRET_LENGTH = 32
 
     # The login-email rate limit (docs/history/plan-auth-housekeeping.md decision
     # 5): records a request unless one was recorded for the address less
@@ -76,7 +77,7 @@ module Monk
         deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
       )
         config = {
-          db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
+          db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
@@ -360,6 +361,20 @@ module Monk
 
       # An absolute path, kept without a trailing slash so login_link
       # adds exactly one before the token.
+      # Outside development and test, a secret anyone could guess is
+      # refused: every template's placeholder has "change-me" in it, and
+      # bin/deploy_env makes 64 characters (openssl rand -hex 32).
+      def checked_secret(secret)
+        return secret if secret.nil? || Monk.env.development? || Monk.env.test?
+
+        if secret.include?("change-me") || secret.length < MIN_SECRET_LENGTH
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(secret:) (AUTH_SECRET) is a placeholder or shorter than #{MIN_SECRET_LENGTH} " \
+            "characters (MONK_ENV=#{Monk.env}): set it to `openssl rand -hex 32`. Changing it signs everybody out."
+        end
+        secret
+      end
+
       def checked_callback_path(path)
         unless path.is_a?(String) && path.start_with?("/")
           raise Monk::InvalidAuthConfigError,

@@ -150,8 +150,8 @@ should keep `true`, which refuses them at the door.
   and counts the signed-in sockets in Postgres, through a connection of
   its own ([`presence.md`](presence.md)); on `TERM` its people keep their
   status for the grace while their pages reconnect elsewhere.
-- **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (default `PUBLIC_URL`)
-  configure it, and **`WS_PROCESSES`** (1) how many server processes it
+- **`WS_PORT`** (9293) and **`WS_ALLOWED_ORIGINS`** (origins allowed
+  besides `PUBLIC_URL`, which always is; comma-separated) configure it, and **`WS_PROCESSES`** (1) how many server processes it
   runs on that port ([Several processes](#several-processes)).
 - **GC settings**: `bin/websocket_server` keeps Ruby's heap 60–90% free
   (`RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.6`, `_GOAL_RATIO=0.8`,

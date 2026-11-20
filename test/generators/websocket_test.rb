@@ -50,6 +50,22 @@ class GeneratorsWebSocketTest < Minitest::Test
     end
   end
 
+  # WS_ALLOWED_ORIGINS reaches Server.new, which refuses an entry the
+  # browser's Origin could never match (PUBLIC_URL is always allowed).
+  def test_a_ws_allowed_origin_that_isnt_an_origin_stops_the_server
+    skip_unless_redis_available
+
+    with_new_app(:websocket, options: { transport: "redis" }) do |dest|
+      uncomment_examples(dest) # a handler to serve: the chat example
+      out, status = run_generated_script(dest, "bin/websocket_server", "REDIS_URL" => redis_test_url,
+                                                                        "WS_ALLOWED_ORIGINS" => "https://other.monkrb.org/")
+
+      refute status.success?, out
+      assert_includes out, "allowed_origins must be origins"
+      assert_includes out, "https://other.monkrb.org/"
+    end
+  end
+
   def test_the_apps_own_tests_pass_over_postgres
     with_new_app(:websocket, options: { transport: "postgres" }) do |dest|
       with_generated_database { |env| assert_generated_tests_pass(dest, env) }

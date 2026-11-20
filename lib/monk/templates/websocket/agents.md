@@ -22,7 +22,8 @@ over the transport.
   `config/load.rb` calls it, so a script that loads `config/websocket.rb`
   without it calls it itself, at boot, in the main Ractor.
 - With Postgres, a broadcast is capped at just under 8000 bytes (NOTIFY).
-- `WS_ALLOWED_ORIGINS` must list your pages' origins.
+- Sockets are allowed from `PUBLIC_URL`; `WS_ALLOWED_ORIGINS` lists any
+  other origins.
 - Switching transports is three steps in SETUP.md, websocket.
 
 **Examples:** `websocket-chat` in `app/sockets/chat.rb`.

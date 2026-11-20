@@ -236,8 +236,10 @@ recipient's spam folder.
 
 ## 7. Checking it
 
-Until `monk check` does this (planned for 0.27), check from your
-machine:
+Boot refuses a `PUBLIC_URL`, `LIVE_WS_URL` or `AUTH_SECRET` that's
+present but wrong ([`settings.md`](settings.md#values-refused-at-boot)),
+so a service that keeps restarting says why in
+`docker compose logs`. The rest, check from your machine:
 
 ```bash
 url=https://shop.example.com

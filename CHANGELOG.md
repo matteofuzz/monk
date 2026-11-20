@@ -4,6 +4,36 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased (0.27.0)
+
+### Changed
+
+- **Settings that are present but wrong are refused at boot**, in every
+  process, instead of failing the first time someone uses the app
+  ([`settings.md`](docs/guides/settings.md#values-refused-at-boot)):
+  - `PUBLIC_URL` must be an origin only (no path or trailing slash), in
+    every environment. Outside development and test it must be
+    `https://` and not on a placeholder host (`example.com`, `*.test`,
+    ...); `localhost` and IP addresses pass.
+  - `LIVE_WS_URL` must be `wss://` outside development and test.
+  - `AUTH_SECRET` is refused outside development and test if it contains
+    `change-me` or is shorter than 32 characters.
+  - `Monk::WebSocket::Server.new(allowed_origins:)` refuses an entry that
+    isn't an origin.
+  - New `Monk::InvalidSettingError`.
+- **`WS_ALLOWED_ORIGINS` lists the origins allowed besides `PUBLIC_URL`**,
+  which the scaffolded `bin/websocket_server` now always allows.
+- `docs/guides/settings.md` has a table of what each `MONK_ENV` changes.
+
+### Fixed
+
+- **Stopping a database pool no longer hangs** when a worker is still
+  connecting, a replacement for one that died, say: `reset!` and the
+  process's shutdown waited forever.
+- Ruby 4.1 (checked on 4.1.0-preview1): `Monk::Base.freeze!` still names
+  the route whose block can't be shared, and the pool logs a worker's
+  death the same way as on 4.0.
+
 ## 0.26.0 - 2026-11-20
 
 ### Added

@@ -33,7 +33,7 @@ modules it adds.
 | `mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp` |
 | `auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
 | `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
-| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
+| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (origins besides `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
 | `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
 | `presence` | (websocket's and `bin/server`) | Postgres, **a direct connection** from `bin/server` (below) | — | — |
 | `storage` | — | an S3-compatible bucket, with a CORS rule for `PUBLIC_URL` and a `tmp/` lifecycle rule (see [`storage.md`](storage.md)) | `STORAGE_URL`; `STORAGE_SECRET` only with `file://` | — |
@@ -51,16 +51,19 @@ unset.
 
 `PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
 own origin. Its default, `http://localhost:9292`, is only harmless without
-auth and live: auth's magic link builds itself from it, and websocket's
-`WS_ALLOWED_ORIGINS` and live's `LIVE_WS_URL` default from it too, so
-setting it once keeps all three in sync instead of drifting apart. See
-auth.md's "Sending the magic link" and live.md's "Running it".
+auth and live: auth's magic link builds itself from it, the WebSocket
+server always allows it as an origin, and live's `LIVE_WS_URL` defaults
+from it, so setting it once keeps all three in sync instead of drifting
+apart. See auth.md's "Sending the magic link" and live.md's "Running it".
+Outside development and test, boot refuses a `PUBLIC_URL` on `http://` or
+on a placeholder host like `example.com`, and the other values in
+[`settings.md`](settings.md#values-refused-at-boot).
 
 When the WebSocket process runs:
 
-- It is its own deploy unit: its own port and public URL, and
-  `WS_ALLOWED_ORIGINS` must match the app's origin — set `PUBLIC_URL` and
-  it does, by default (below).
+- It is its own deploy unit: its own port and public URL. It allows
+  sockets from `PUBLIC_URL`, plus any origins in `WS_ALLOWED_ORIGINS`
+  (below).
 - With auth, a socket carries its user's session: required for the app's
   own socket handler, optional with live (whose rules decide what visitors
   get).
@@ -252,13 +255,11 @@ their page to catch up, which is a burst of page requests to `bin/server`
 after every WebSocket deploy. Any other client has to do the same; see
 [`websocket.md`](websocket.md), "Stopping and restarting".
 
-Setting `PUBLIC_URL=https://example.com` (matching whichever proxy config
-you use below) is what makes `WS_ALLOWED_ORIGINS` and `LIVE_WS_URL` default
-to values that actually fit this routing, with nothing else to configure:
-`WS_ALLOWED_ORIGINS` defaults to `PUBLIC_URL` itself (`https://example.com`,
-the origin browsers connect from), and `LIVE_WS_URL` defaults to
-`wss://example.com/ws` outside development — exactly the `/ws` path both
-snippets below route to the WebSocket process.
+Setting `PUBLIC_URL=https://app.your-domain.com` (matching whichever proxy
+config you use below) is all this routing needs: the WebSocket server
+allows that origin, the one browsers connect from, and `LIVE_WS_URL`
+defaults to `wss://app.your-domain.com/ws` outside development — exactly
+the `/ws` path both snippets below route to the WebSocket process.
 
 **Caddy** (shown here since it needs no separate config-reload step and
 the whole routing rule fits in a few lines):

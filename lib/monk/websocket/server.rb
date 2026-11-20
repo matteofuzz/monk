@@ -1,4 +1,5 @@
 require "socket"
+require_relative "../settings"
 
 module Monk
   module WebSocket
@@ -132,6 +133,14 @@ module Monk
         end
 
         raise ArgumentError, "db_pool requires authenticate: true or :optional" if db_pool && !authenticate
+        # Compared exactly with the browser's Origin header, which is only
+        # scheme, host and port: an entry with a path or a trailing slash
+        # would refuse every signed-in socket.
+        wrong_origins = Array(allowed_origins).grep_v(Monk::Settings::ORIGIN)
+        unless wrong_origins.empty?
+          raise ArgumentError, "allowed_origins must be origins, scheme and host only (https://app.your-domain.com, " \
+                               "no path or trailing slash): #{wrong_origins.inspect} would never match a browser's Origin"
+        end
         raise ArgumentError, "presence requires authenticate: true or :optional" if presence && !authenticate
         # A Live page that went silent turns hidden on the heartbeat
         # (Connection#on_heartbeat), and a socket whose peer vanished is

@@ -5,6 +5,11 @@ module Monk
   class InvalidLogLevelError < StandardError
   end
 
+  # PUBLIC_URL or LIVE_WS_URL present but wrong: refused at Boot
+  # (Settings#freeze_registry!), not the first time a link or socket uses it.
+  class InvalidSettingError < StandardError
+  end
+
   class DuplicateSettingError < StandardError
   end
 

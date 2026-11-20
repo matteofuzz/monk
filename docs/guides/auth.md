@@ -80,8 +80,11 @@ end
 
 `login_link` starts from a configured origin, `Monk::Settings[:public_url]`,
 declared in `config/settings.rb` (every `monk new` app has this, with or
-without auth — `Monk::Live`'s `live_ws_url` and `WS_ALLOWED_ORIGINS` read the
-same setting, see `docs/guides/live.md`). If you build a link yourself,
+without auth — `Monk::Live`'s `live_ws_url` and the WebSocket's allowed
+origins read the same setting, see `docs/guides/live.md`). Outside
+development and test, boot refuses it on `http://` or a placeholder host
+like `example.com`, and refuses a placeholder or short `AUTH_SECRET`
+([`settings.md`](settings.md#values-refused-at-boot)). If you build a link yourself,
 start from it too, never from request headers like
 `X-Forwarded-Proto` or `Host`. Those come from
 whoever is making the request, so a direct client (not just a trusted proxy)

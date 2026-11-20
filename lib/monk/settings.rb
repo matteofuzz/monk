@@ -23,6 +23,17 @@ module Monk
     # Ractor::IsolationError.
     LOG_LEVEL_VALUES = Ractor.make_shareable(%w[debug info warn error])
 
+    # public_url, and the WebSocket origins defaulting to it, are an origin:
+    # scheme, host and port, nothing after. A browser's Origin header never
+    # has a trailing slash, so with one every signed-in socket is refused.
+    ORIGIN = %r{\Ahttps?://[^/?#@\s]+\z}
+
+    # A placeholder domain, never a real one: example.com/.net/.org (the
+    # deploy template's app.example.com) and the reserved .example, .test
+    # and .invalid (RFC 2606). localhost and IPs pass: the deploy stack run
+    # locally in production mode is on https://localhost.
+    PLACEHOLDER_HOST = /(\A|\.)example\.(com|net|org)\z|(\A|\.)(example|test|invalid)\z/i
+
     DEFAULT_DECLARATIONS = {
       monk_env: { required: false, default: "development" },
       log_level: { required: false, default: "info" },
@@ -102,6 +113,12 @@ module Monk
 
         validate_monk_env!(values[:monk_env])
         validate_log_level!(values[:log_level])
+        # Declared by the app (config/settings.rb, config/live.rb), but read
+        # by Monk itself: Auth's magic links, Live's socket, WebSocket's
+        # allowed origins. So Monk checks them, when they're declared.
+        deployed = !%w[development test].include?(values[:monk_env])
+        validate_public_url!(values[:public_url], deployed) if values.key?(:public_url)
+        validate_live_ws_url!(values[:live_ws_url]) if deployed && values.key?(:live_ws_url)
 
         @frozen_values = Ractor.make_shareable(values)
         @booted = true
@@ -126,6 +143,31 @@ module Monk
         return if LOG_LEVEL_VALUES.include?(value)
 
         raise InvalidLogLevelError, "LOG_LEVEL must be one of #{LOG_LEVEL_VALUES.join(", ")}, got #{value.inspect}"
+      end
+
+      def validate_public_url!(value, deployed)
+        unless value.to_s.match?(ORIGIN)
+          raise InvalidSettingError, "PUBLIC_URL must be an origin, scheme and host only (https://app.your-domain.com, " \
+                                     "no path or trailing slash), got #{value.inspect}"
+        end
+        return unless deployed
+
+        unless value.start_with?("https://")
+          raise InvalidSettingError, "PUBLIC_URL must be https:// outside development and test: the session cookie " \
+                                     "is Secure, so over http:// nobody stays signed in. Got #{value.inspect}"
+        end
+        host = value.delete_prefix("https://").sub(/:\d+\z/, "")
+        return unless host.match?(PLACEHOLDER_HOST)
+
+        raise InvalidSettingError, "PUBLIC_URL #{value.inspect} is a placeholder: set it to this app's real origin " \
+                                   "(https://localhost for the deploy stack run locally)"
+      end
+
+      def validate_live_ws_url!(value)
+        return if value.to_s.start_with?("wss://")
+
+        raise InvalidSettingError, "LIVE_WS_URL must be wss:// outside development and test: an https:// page can't " \
+                                   "open a ws:// socket. Got #{value.inspect} (unset, it's PUBLIC_URL's /ws)"
       end
 
       def declarations
