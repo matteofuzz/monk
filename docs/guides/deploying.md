@@ -332,93 +332,54 @@ above: it has no per-platform port or process limits, and `/ws` routing
 (section 3) is just a Caddy rule. The cost is operational — OS patching,
 backups and the firewall are yours.
 
-Build one image from the app's own (scaffolded) Dockerfile and run it
-twice with different commands — `web` needs none, since its command is
-already the image's default `CMD`; `ws` overrides it. Drop the `postgres`
-service for apps without Postgres, and the `redis` service for ones
-without Redis. Keep the `ws` service only with websocket (and so live),
-and the `jobs` service only with jobs.
+`monk add deploy` writes the stack, from the modules the app has:
 
-```yaml
-# compose.yaml
-services:
-  web:
-    build: .
-    env_file: .env.production
-    depends_on: [postgres, redis]
-  ws:
-    build: .
-    command: bin/websocket_server
-    env_file: .env.production
-    depends_on: [redis]
-  jobs:                         # with jobs
-    build: .
-    command: bin/jobs
-    env_file: .env.production
-    stop_grace_period: 30s      # > bin/jobs's 25s wait for jobs in flight
-    depends_on: [postgres]
-  postgres:
-    image: postgres:16
-    env_file: .env.production   # POSTGRES_PASSWORD etc.
-    volumes: [pgdata:/var/lib/postgresql/data]
-  redis:
-    image: redis:7
-  caddy:
-    image: caddy:2
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-    depends_on: [web, ws]
-volumes:
-  pgdata:
-  caddy_data:
+- `compose.yaml`: the app's image as `web`, and as `ws` and `jobs` with
+  websocket and jobs; `postgres` and `redis` with theirs; Caddy in front.
+  A `log` volume holds `log/<MONK_ENV>.log`, since Monk doesn't log to
+  stdout.
+- `Caddyfile`: `/ws*` to `ws:9293`, the rest to `web:9292`, on one host,
+  so the session cookie reaches the WebSocket handshake (section 3).
+- `.env.production.example`: every setting the modules need, with
+  Compose's service names (`DB_HOST=postgres`,
+  `REDIS_URL=redis://redis:6379/0`).
+- `bin/deploy_env`: run on the server, it writes `.env.production` and
+  fills in the secrets there: `AUTH_SECRET`, the database password, and
+  the push key pair through `monk push keys` in the built image.
+
+A module added later adds its own services and settings. On the server:
+
 ```
-
-```caddyfile
-# Caddyfile -- same two rules as section 3, with the service names as hosts
-staging.example.com {
-    reverse_proxy /ws* ws:9293
-    reverse_proxy web:9292
-}
+bin/deploy_env
+docker compose build
+docker compose up -d --wait postgres          # with postgres
+docker compose run --rm web bin/setup_db      # with postgres, every deploy
+docker compose up -d
 ```
 
 Only `caddy` publishes ports; the other services are reachable solely on
 Compose's internal network, so Postgres and Redis are never exposed. Caddy
 obtains and renews the Let's Encrypt certificate on its own once
-`staging.example.com` points at the server.
+`SITE_ADDRESS` points at the server.
 
-**Env file** (`.env.production`, not committed): `MONK_ENV=staging`,
-the variables from the table for your combination (`DB_HOST=postgres`,
-`REDIS_URL=redis://redis:6379/0`, `AUTH_SECRET`, ...) and
-`PUBLIC_URL=https://staging.example.com` — which alone gives
-`WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` correct defaults (section 3, above); set
-either directly instead if this app needs something that default doesn't
-fit.
-
-**Migrations** — run once per deploy, against the Compose Postgres:
-
-```
-docker compose run --rm web bin/setup_db
-```
-
-**Deploying** — on the server: `git pull && docker compose up -d --build`,
-then the migration command above.
+Every step on Hetzner Cloud, with Brevo for mail, from the accounts to
+backups: [`deploy-hetzner.md`](deploy-hetzner.md).
 
 **Before the first build**
 
-- Nothing to do for `Gemfile.lock`'s platform list: a plain `bundle install`
-  already resolves and locks every compatible platform (`arm64-darwin`,
-  `x86_64-linux`, `aarch64-linux`, the `-musl` variants), not just the
-  machine that ran it — verified by copying a Mac-generated lockfile
-  unmodified into a Linux container and building on both `aarch64-linux`
-  and emulated `x86_64-linux`; both resolved the right precompiled `kino`
-  gem with no extra step. (Older Bundler versions needed an explicit
-  `bundle lock --add-platform`; this project's pinned toolchain doesn't.)
+- `Gemfile.lock` must list the server's platform (`x86_64-linux` or
+  `aarch64-linux`). A lockfile made with Ruby 4's Bundler lists every
+  platform (`arm64-darwin`, `x86_64-linux`, `aarch64-linux`, the `-gnu`
+  and `-musl` variants), checked on 2026-11-20. One made before keeps the
+  platforms it started with, often only the developer's machine:
+  `bundle lock --add-platform x86_64-linux aarch64-linux` adds them.
 - A `Gemfile` that points `monk` at a local `path:` can't build inside the
   image; switch it to a git or gem source first.
-- Open only ports 22, 80 and 443 in the firewall, and schedule a nightly
-  `pg_dump` — nothing here backs up the `pgdata` volume for you.
+- Open only ports 22, 80 and 443 (and UDP 443 for HTTP/3) in the
+  firewall.
+- `.env.production` is part of every backup: restoring a database under
+  a new `AUTH_SECRET` leaves every session stuck, and under a new VAPID
+  pair every push subscription dead. Save it beside each `pg_dump`.
 
 ## Open question
 

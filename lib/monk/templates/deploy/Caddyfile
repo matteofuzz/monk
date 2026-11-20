@@ -1,0 +1,10 @@
+# TLS, then path routing on one host: /ws to the WebSocket process (with
+# the websocket module; without it, nothing answers there), the rest to
+# the app. Same host, not a subdomain, so the session cookie reaches the
+# WebSocket handshake. SITE_ADDRESS is PUBLIC_URL's host: Caddy gets its
+# certificate once the name points at this server (localhost gets one
+# from Caddy's own local CA).
+{$SITE_ADDRESS} {
+	reverse_proxy /ws* ws:9293
+	reverse_proxy web:9292
+}

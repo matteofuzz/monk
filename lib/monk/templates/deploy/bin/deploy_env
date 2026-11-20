@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Writes .env.production from .env.production.example, on the host, the
+# first time: every secret the file asks for, made here, so it never
+# travels. Run it again any time: it only fills in what's empty.
+#
+#   bin/deploy_env
+#
+# AUTH_SECRET and STORAGE_SECRET: openssl rand -hex 32. DB_PASSWORD and
+# POSTGRES_PASSWORD: one password, the same in both. VAPID_PUBLIC_KEY and
+# VAPID_PRIVATE_KEY: `monk push keys`, run in this app's image (it builds
+# it). Everything else (PUBLIC_URL, SITE_ADDRESS, MAIL_URL, ...) is yours
+# to set: the script lists what's still a placeholder.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+env=.env.production
+
+if [[ ! -f $env ]]; then
+  (umask 077 && cp .env.production.example "$env")
+  echo "Wrote $env from .env.production.example"
+fi
+chmod 600 "$env"
+
+value() { sed -n "s/^$1=//p" "$env" | tail -1; }
+has() { grep -q "^$1=" "$env"; }
+set_value() { # KEY VALUE: the value is hex or base64url, safe in sed
+  sed -i.bak "s|^$1=.*|$1=$2|" "$env" && rm -f "$env.bak"
+  echo "Set $1"
+}
+
+for key in AUTH_SECRET STORAGE_SECRET; do
+  if has $key && [[ -z "$(value $key)" ]]; then set_value $key "$(openssl rand -hex 32)"; fi
+done
+
+if has DB_PASSWORD && [[ -z "$(value DB_PASSWORD)" ]]; then
+  password="$(value POSTGRES_PASSWORD)"
+  [[ -n $password ]] || password="$(openssl rand -hex 24)"
+  set_value DB_PASSWORD "$password"
+fi
+if has POSTGRES_PASSWORD && [[ -z "$(value POSTGRES_PASSWORD)" ]]; then
+  set_value POSTGRES_PASSWORD "$(value DB_PASSWORD)"
+fi
+
+if has VAPID_PRIVATE_KEY && [[ -z "$(value VAPID_PRIVATE_KEY)" ]]; then
+  echo "Building the image for monk push keys"
+  docker compose build web
+  keys="$(docker compose run --rm --no-deps -T web bundle exec monk push keys </dev/null)"
+  set_value VAPID_PUBLIC_KEY "$(sed -n 's/^VAPID_PUBLIC_KEY=//p' <<<"$keys")"
+  set_value VAPID_PRIVATE_KEY "$(sed -n 's/^VAPID_PRIVATE_KEY=//p' <<<"$keys")"
+fi
+
+placeholders="$(grep -nE '^[A-Z_]+=.*(example\.com|KEY:SECRET)' "$env" || true)"
+if [[ -n $placeholders ]]; then
+  echo "Still to set in $env:"
+  echo "$placeholders"
+fi

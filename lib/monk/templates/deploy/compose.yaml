@@ -1,0 +1,32 @@
+# The whole app on one Linux host with Docker (monk add deploy): this
+# app's image run as each of its processes, and Caddy in front for TLS.
+# Settings come from .env.production (bin/deploy_env writes it from
+# .env.production.example), never from the image. Each module adds its
+# services at the end, under `services:`: keep that key last.
+#
+#   bin/deploy_env                                # once: secrets
+#   docker compose build
+#   docker compose up -d --wait postgres          # with postgres
+#   docker compose run --rm web bin/setup_db      # with postgres
+#   docker compose up -d
+volumes:
+  log:          # Monk logs to log/<MONK_ENV>.log, not stdout
+  caddy_data:   # Caddy's certificates
+  pgdata:       # Postgres's data, with postgres
+services:
+  web:
+    build: .
+    image: {{app}}
+    env_file: .env.production
+    volumes: [log:/app/log]
+    stop_grace_period: 35s    # longer than kino's 30 s drain on TERM
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    env_file: .env.production # SITE_ADDRESS
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    restart: unless-stopped
+    depends_on: [web]

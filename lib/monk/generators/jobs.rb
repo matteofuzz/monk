@@ -17,6 +17,8 @@ Monk::Generator.define(:jobs) do
 
   setup_section "jobs/setup.md"
   agents_section "jobs/agents.md"
+  compose_section "jobs/deploy/compose.yaml"
+  production_env_section "jobs/deploy/env.production"
   next_step "bin/jobs", note: "beside bin/server"
   example "jobs-enqueue", todo: "uncomment, or enqueue your own jobs from any route"
   example "jobs-recurring", todo: "uncomment to run the demo job every hour"

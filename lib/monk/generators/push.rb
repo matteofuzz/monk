@@ -31,6 +31,7 @@ Monk::Generator.define(:push) do
 
   setup_section "push/setup.md"
   agents_section "push/agents.md"
+  production_env_section "push/deploy/env.production"
   set_before_production "VAPID_PUBLIC_KEY", "`monk push keys`, a pair of its own; changing it ends every subscription"
   set_before_production "VAPID_PRIVATE_KEY", "the same `monk push keys` pair"
   set_before_production "VAPID_CONTACT", "optional, PUBLIC_URL by default: mailto: or https: on a real domain"

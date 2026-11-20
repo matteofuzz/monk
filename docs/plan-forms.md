@@ -428,6 +428,49 @@ host scripts.)
 - **The smoke test's generic checks go to `monk check`** (0.27), which
   then runs on the host as `docker compose run --rm web bin/check`.
 
+**Built (2026-11-20):**
+
+- **One mechanism, two more section kinds.** `compose_section` and
+  `production_env_section` join `setup_section` and `agents_section`.
+  When `compose.yaml` or `.env.production.example` exists, each module
+  installed or being added appends its block, marked
+  `# monk:module <name>`, so deploy added first or last gives the same
+  files. `compose.yaml` keeps `services:` as its last key, so a block can
+  be appended under it.
+- **Which parts come from where.** `postgres`, `redis`, `jobs` and
+  `websocket` add services; every module with settings adds its lines.
+  The `Caddyfile` always routes `/ws*`: Caddy resolves upstreams per
+  request, so without websocket nothing answers there, and a later
+  websocket needs no edit.
+- **`bin/deploy_env`, in bash.** It fills in whatever is empty:
+  `AUTH_SECRET` and `STORAGE_SECRET` (`openssl rand -hex 32`), one
+  password for `DB_PASSWORD` and `POSTGRES_PASSWORD`, and the VAPID pair
+  via `monk push keys` in the built image. Then it lists what's still a
+  placeholder. A second run changes nothing.
+- **No `depends_on` on postgres.** `web` can't name a service that a
+  later module adds, so the docs start Postgres first
+  (`up -d --wait postgres`), and `restart: unless-stopped` covers a
+  reboot.
+- **Checked:**
+  - the generator tests;
+  - deploy in the module combinations test;
+  - `docker compose config` on a generated app;
+  - a full run on local Docker, with this branch's Monk vendored into a
+    generated app (live, jobs, push, deploy): `bin/deploy_env` wrote the
+    secrets and the VAPID pair, Postgres became healthy, `bin/setup_db`
+    migrated, and all five services ran. https answered 200 with the
+    security headers, http answered 308, and `/ws` answered 101. A job
+    enqueued from `web` ran in `jobs` and logged to the shared volume.
+- **The lockfile claim, checked.** Ruby 4's Bundler (4.0.16) locks every
+  platform for a new lockfile. The first app's lockfile, from September,
+  listed only `arm64-darwin`, and Bundler keeps an existing lockfile's
+  list. `deploying.md` and the Dockerfile's comment now say so, with the
+  `--add-platform` command.
+- **Docs.** `docs/guides/deploy-hetzner.md` covers accounts, server,
+  DNS, shipping, Brevo, checks, backups, costs and day-to-day work.
+  `deploying.md` section 4 now points at `monk add deploy`. The deploy
+  module's SETUP.md and AGENTS.md sections are added too.
+
 **Later, not in 0.26:** `--provider hetzner` writing the scripts, once a
 third app confirms their shape, with tests using a fake `hcloud` and
 `ssh` on `PATH`. Adding a provider to an app already deployed would need
@@ -472,8 +515,8 @@ works with Live).
 10. Done. C2: a stale CSRF cookie is reissued (decision 17).
 11. Done. C1: the client says hidden on `pagehide` and `freeze`; a
     closed socket is away for the grace, not online (iPhone measured).
-12. C3: `monk add deploy`, then `docs/guides/deploy-hetzner.md` and the
-    deploy module's `AGENTS.md` section.
+12. Done. C3: `monk add deploy`, `docs/guides/deploy-hetzner.md`, the
+    deploy module's `SETUP.md` and `AGENTS.md` sections.
 
 ## Open
 

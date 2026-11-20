@@ -70,12 +70,13 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | File storage | `Monk::Storage`: files by key in any S3-compatible bucket (Hetzner, R2, B2, AWS), local files in development and test; browser uploads and downloads through signed links, never through a worker Ractor | `require "monk/storage"`; no gem needed | [`storage.md`](docs/guides/storage.md) |
 | Installable app | `Monk::Pwa`: a web app manifest, icons and a service worker (`/sw.js`), checked at boot and linked by `<%= monk_head %>`, so the app installs on a Home Screen or as a desktop app | `require "monk/pwa"`; no gem needed | [`pwa.md`](docs/guides/pwa.md) |
 | Web push | `Monk::Push`: notifications to the devices where a signed-in person turned them on, encrypted and signed by Monk itself (RFC 8291, VAPID), one job per device; subscriptions tied to auth sessions | `require "monk/push"`; needs auth, jobs and Postgres, and pwa's service worker | [`push.md`](docs/guides/push.md) |
-| Scaffolding | `monk new` and `monk add`: one generator per module, for a new app or an existing one; text or `--json` output | — (the `monk` command: `monk new NAME --with ...`, `monk add MODULE`, `monk add --list`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
+| Scaffolding | `monk new` and `monk add`: one generator per module, for a new app or an existing one; text or `--json` output; `monk add deploy` for Docker Compose and Caddy on one host | — (the `monk` command: `monk new NAME --with ...`, `monk add MODULE`, `monk add --list`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 
 ## More documentation
 
 - [`docs/framework-comparison.md`](docs/framework-comparison.md): Monk vs. Sinatra vs. Rails, with LOC per module.
 - [`docs/guides/deploying.md`](docs/guides/deploying.md): worked deployment examples.
+- [`docs/guides/deploy-hetzner.md`](docs/guides/deploy-hetzner.md): one app on a Hetzner Cloud server with Brevo for mail, every step, as tested.
 - [`docs/design/ractor.md`](docs/design/ractor.md): how Monk uses Ruby's `Ractor`.
 - [`docs/adr/`](docs/adr) and [`CONTEXT.md`](CONTEXT.md): architectural decisions and domain vocabulary.
 - Design docs and phase-by-phase plans behind each feature: [`docs/design/views.md`](docs/design/views.md), [`docs/design/auth-sessions.md`](docs/design/auth-sessions.md), [`docs/design/websocket.md`](docs/design/websocket.md), [`docs/design/persistence-ractor-connections.md`](docs/design/persistence-ractor-connections.md), [`docs/design/live-pg-fanout.md`](docs/design/live-pg-fanout.md), and the phase-by-phase plans and archived notes in [`docs/history/`](docs/history).

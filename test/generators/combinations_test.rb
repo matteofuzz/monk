@@ -9,7 +9,7 @@ class GeneratorsCombinationsTest < Minitest::Test
   include PersistenceTestHelpers
   include RedisTestHelpers
 
-  MODULES = %i[postgres redis mail auth jobs websocket live storage pwa push].freeze
+  MODULES = %i[postgres redis mail auth jobs websocket live storage pwa push deploy].freeze
   # websocket and live need a transport; Postgres, so a pair adds it.
   OPTIONS = { transport: "postgres" }.freeze
   # push's VAPID pairs are fresh on every run, by design.
@@ -111,6 +111,7 @@ class GeneratorsCombinationsTest < Minitest::Test
   def normalized(path, content)
     case path
     when "SETUP.md", "AGENTS.md" then content.split(/^(?=<!-- monk:module )/).map(&:strip).sort
+    when "compose.yaml" then content.split(/^(?=# monk:module )/).map(&:strip).sort
     when /\A\.env/ then content.lines.map { |line| line.chomp.sub(VAPID_KEY, '\1<key>') }.reject(&:empty?).sort
     when "Gemfile", ".gitignore", ".dockerignore" then content.lines.map(&:chomp).reject(&:empty?).sort
     else content

@@ -3,10 +3,10 @@
 # cache, in the image that actually runs. The builder has a compiler for
 # the gems that build a native extension (irb's dependencies, with monk
 # add postgres); kino ships as precompiled platform gems, and pg 1.6+
-# ships precompiled with its own libpq. A plain `bundle install`
-# (Gemfile.lock committed) already resolves every compatible platform, not
-# just the machine that ran it -- nothing to add by hand before building on
-# a different host (docs/guides/deploying.md, "Before the first build").
+# ships precompiled with its own libpq. Gemfile.lock must list the
+# host's platform: a new one does, an older one may need
+# `bundle lock --add-platform x86_64-linux aarch64-linux`
+# (docs/guides/deploying.md, "Before the first build").
 FROM ruby:4.0-slim AS builder
 WORKDIR /app
 

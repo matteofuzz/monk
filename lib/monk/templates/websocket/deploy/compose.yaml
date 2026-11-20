@@ -1,0 +1,7 @@
+  ws:
+    image: {{app}} # web builds it
+    command: bin/websocket_server
+    env_file: .env.production
+    volumes: [log:/app/log]
+    restart: unless-stopped
+    depends_on: [web]

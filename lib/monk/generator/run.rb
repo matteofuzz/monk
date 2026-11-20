@@ -226,6 +226,10 @@ module Monk
       # SETUP.md and AGENTS.md: each added module's section, after the
       # others, marked so it's never added twice.
       def section_entries
+        doc_section_entries + deploy_section_entries
+      end
+
+      def doc_section_entries
         { setup: "SETUP.md", agents: "AGENTS.md" }.filter_map do |kind, path|
           names = @plan.filter_map do |definition, _|
             section = definition.sections[kind]
@@ -237,6 +241,28 @@ module Monk
             definition.name
           end
           { path: path, action: :appended, items: names, sections: true } unless names.empty?
+        end
+      end
+
+      # compose.yaml and .env.production.example, once deploy wrote them:
+      # the section of every module installed or being added that isn't
+      # there yet, so deploy added last or first gives the same files.
+      def deploy_section_entries
+        names = @installed + @plan.map { |definition, _| definition.name }
+        modules = @registry.definitions.select { |definition| names.include?(definition.name) }
+        { compose: "compose.yaml", production_env: ".env.production.example" }.filter_map do |kind, path|
+          next unless @files.exists?(path)
+
+          added = modules.filter_map do |definition|
+            section = definition.sections[kind]
+            marker = "# monk:module #{definition.name}"
+            next if section.nil? || @files.read(path).include?(marker)
+
+            body = Generator.fill_app_name(File.read(template(section)), app_name)
+            @files.append(path, "\n#{marker}\n#{body}")
+            definition.name
+          end
+          { path: path, action: :appended, items: added, sections: true } unless added.empty?
         end
       end
 
@@ -368,7 +394,7 @@ module Monk
       end
 
       def docs(entries)
-        entries.select { |entry| entry[:sections] }.flat_map do |entry|
+        entries.select { |entry| entry[:sections] && entry[:path].end_with?(".md") }.flat_map do |entry|
           entry[:items].map { |name| "#{entry[:path]}##{name}" }
         end
       end

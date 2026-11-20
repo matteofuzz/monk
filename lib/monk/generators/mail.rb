@@ -16,6 +16,7 @@ Monk::Generator.define(:mail) do
 
   setup_section "mail/setup.md"
   agents_section "mail/agents.md"
+  production_env_section "mail/deploy/env.production"
   set_before_production "MAIL_URL", "unset = printed to the console in development"
   set_before_production "MAIL_FROM", "a sender on a domain verified with your provider"
   example "mail-welcome", todo: lambda { |installed|
