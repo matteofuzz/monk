@@ -296,8 +296,12 @@ away ring until it's back; it never shows offline. ADR 0019 amended.
 Kept from the preparation: the client change stays, for a browser that
 does run `pagehide` or `freeze` before closing (a desktop tab, Chrome).
 S1 and S2 stay unbuilt: they matter only for a page frozen with its
-socket still open, which this test didn't show. To revisit if a locked
-or backgrounded iPhone is seen reading online for a minute.
+socket still open, and the same day's tests showed none. Locking the
+phone, going to the home screen, or switching to another app each read
+**away at once, then reachable about 20 s later**: the page says hidden
+before iOS freezes it, then iOS drops the socket and the grace runs
+out. To revisit only if an iPhone is ever seen reading online for a
+minute.
 
 ### C2. A session whose CSRF cookie no longer verifies is stuck
 
