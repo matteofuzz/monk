@@ -126,7 +126,8 @@ What the client does for you:
 - **Notices a dead socket.** While the page is visible it pings the server
   every 25 s; a socket that answers nothing within 10 s is given up on at
   once (a phone's network can vanish without the browser closing anything)
-  and the page reconnects and resyncs. Hidden, it stops pinging and says
+  and the page reconnects and resyncs. Hidden, closed or frozen
+  (`visibilitychange`, `pagehide`, `freeze`), it stops pinging and says
   so once (`{"op":"hidden"}`), which is how [presence](presence.md) knows
   a person is away.
 - **Comes back at once, and not before it can.** Shown again, back online,

@@ -21,7 +21,7 @@ module Monk
 
       # Whether a row counts toward its subject's status: an open one
       # while its process heartbeats, a gone one for the grace after it
-      # went, whatever its process does since (a stopping process's rows
+      # went (away, unless its process stopped), whatever its process does since (a stopping process's rows
       # carry its subjects through a deploy). A row whose process row is
       # gone counts only if it's inside the grace. $grace and $timeout are
       # replaced with each statement's own parameter numbers.
@@ -57,33 +57,36 @@ module Monk
       # One process's changes since its last flush, in one statement:
       # subjects with sockets ($2, their statuses in $3) upserted back to
       # open, subjects down to none ($4) marked gone. The lists never share
-      # a subject.
+      # a subject. A gone row is away for the grace, never online: no page
+      # is open there. iOS closes a swiped-away app's socket without a
+      # word of hidden first, and online would hold back its push.
       FLUSH_SQL = <<~SQL.freeze
         WITH open AS (
           INSERT INTO monk_presence (process_id, subject, status)
           SELECT $1, subject, status FROM unnest($2::text[], $3::text[]) AS u(subject, status)
           ON CONFLICT (process_id, subject) DO UPDATE SET status = excluded.status, gone_at = NULL
         )
-        UPDATE monk_presence SET gone_at = now()
+        UPDATE monk_presence SET gone_at = now(), status = 'away'
         WHERE process_id = $1 AND subject = ANY($4::text[]) AND gone_at IS NULL
       SQL
 
       # This process's rows written again from its whole state ($2, $3):
       # after an error lost a flush, or after its rows were pruned. A row
-      # not in the state is marked gone, so a close the lost flush carried
-      # isn't left open.
+      # not in the state is marked gone (and away, as FLUSH_SQL's), so a
+      # close the lost flush carried isn't left open.
       REWRITE_SQL = <<~SQL.freeze
         WITH open AS (
           INSERT INTO monk_presence (process_id, subject, status)
           SELECT $1, subject, status FROM unnest($2::text[], $3::text[]) AS u(subject, status)
           ON CONFLICT (process_id, subject) DO UPDATE SET status = excluded.status, gone_at = NULL
         )
-        UPDATE monk_presence SET gone_at = now()
+        UPDATE monk_presence SET gone_at = now(), status = 'away'
         WHERE process_id = $1 AND gone_at IS NULL AND subject <> ALL($2::text[])
       SQL
 
       # A stopping process (TERM): its rows count for the grace instead of
-      # vanishing, while its pages reconnect elsewhere.
+      # vanishing, while its pages reconnect elsewhere, and keep their
+      # status: a deploy changes nobody's.
       MARK_ALL_GONE_SQL = <<~SQL.freeze
         UPDATE monk_presence SET gone_at = now() WHERE process_id = $1 AND gone_at IS NULL
       SQL

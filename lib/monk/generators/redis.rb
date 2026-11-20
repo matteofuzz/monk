@@ -15,6 +15,8 @@ Monk::Generator.define(:redis) do
   next_step "start Redis (SETUP.md › redis)"
   setup_section "redis/setup.md"
   agents_section "redis/agents.md"
+  compose_section "redis/deploy/compose.yaml"
+  production_env_section "redis/deploy/env.production"
   set_before_production "REDIS_URL", "required outside development and test"
   example "redis-cache", todo: "uncomment and adapt; open a client per request, and close it"
 end

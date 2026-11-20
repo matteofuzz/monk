@@ -19,5 +19,7 @@ Monk::Generator.define(:postgres) do
   next_step "start Postgres and create the databases (SETUP.md › postgres)"
   setup_section "postgres/setup.md"
   agents_section "postgres/agents.md"
+  compose_section "postgres/deploy/compose.yaml"
+  production_env_section "postgres/deploy/env.production"
   example "postgres-model", todo: "uncomment, then move the table to a migration and the model to app/models/"
 end

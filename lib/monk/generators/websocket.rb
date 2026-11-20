@@ -18,6 +18,8 @@ Monk::Generator.define(:websocket) do
 
   setup_section "websocket/setup.md"
   agents_section "websocket/agents.md"
+  compose_section "websocket/deploy/compose.yaml"
+  production_env_section "websocket/deploy/env.production"
   set_before_production "WS_ALLOWED_ORIGINS", "defaults to PUBLIC_URL; list every origin your pages use"
   next_step "bin/websocket_server", note: "beside bin/server"
   example "websocket-chat", todo: "uncomment for one chat room, or write your own handler in app/sockets/"

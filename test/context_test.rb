@@ -35,6 +35,30 @@ class ContextTest < Minitest::Test
     assert_equal "bad", body.join
   end
 
+  def test_status_set_in_the_route_is_the_response_status
+    app = Class.new(Monk::Base) do
+      post("/x") do
+        self.status = 422
+        "invalid"
+      end
+    end
+
+    status, _headers, body = app.call(env_for("POST", "/x"))
+
+    assert_equal 422, status
+    assert_equal "invalid", body.join
+  end
+
+  def test_status_defaults_to_200
+    app = Class.new(Monk::Base) do
+      get("/x") { "ok" }
+    end
+
+    status, _headers, _body = app.call(env_for("GET", "/x"))
+
+    assert_equal 200, status
+  end
+
   def test_json_helper_serializes_and_sets_content_type
     app = Class.new(Monk::Base) do
       get("/x") { json(hello: "world") }

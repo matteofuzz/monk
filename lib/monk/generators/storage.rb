@@ -20,6 +20,7 @@ Monk::Generator.define(:storage) do
 
   setup_section "storage/setup.md"
   agents_section "storage/agents.md"
+  production_env_section "storage/deploy/env.production"
   set_before_production "STORAGE_URL", "an S3 bucket; file:// only on one server with a persistent volume"
   set_before_production "STORAGE_SECRET", "only with file://: signs its links"
   example "storage-upload", todo: "uncomment, and set the types and sizes this app accepts"

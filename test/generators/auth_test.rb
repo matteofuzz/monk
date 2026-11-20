@@ -33,7 +33,7 @@ class GeneratorsAuthTest < Minitest::Test
     with_new_app(:auth) do |dest|
       routes = generated(dest, "app/routes/auth.rb")
 
-      assert_includes routes, "#     halt(429) unless Monk::Auth.allow_login_request?(email)"
+      assert_includes routes, "#     unless Monk::Auth.allow_login_request?(email)"
       refute_includes routes, "RateLimiter"
       assert_includes generated(dest, "test/auth_test.rb"), "Monk::Auth.clear_login_requests!"
     end

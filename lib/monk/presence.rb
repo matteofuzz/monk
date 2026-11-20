@@ -18,7 +18,8 @@ module Monk
   #
   # :online is a page open and visible, :away only hidden ones, :offline
   # none, after the grace (20 s by default): a phone switching networks or
-  # a deploy reconnecting every page doesn't read as going offline.
+  # a deploy reconnecting every page doesn't read as going offline. In the
+  # grace a closed page is :away; a deploy's keep their status.
   module Presence
     class NotConfiguredError < StandardError
     end
@@ -41,8 +42,8 @@ module Monk
         status([subject]).fetch(subject.to_s)[:status] == :online
       end
 
-      # grace: seconds a subject stays as it was after its last socket
-      # closed, before it counts as offline.
+      # grace: seconds a subject stays away after its last socket closed
+      # (as it was, if a deploy closed it), before it counts as offline.
       def configure(db_name:, grace: DEFAULT_GRACE)
         unless grace.is_a?(Numeric) && grace >= 0
           raise ArgumentError, "grace must be a number of seconds, 0 or more, got #{grace.inspect}"

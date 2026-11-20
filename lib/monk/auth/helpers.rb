@@ -7,10 +7,20 @@ module Monk
     # memoizing current_subject on it is exempt from the app's
     # shareability constraints -- nothing here needs Ractor.make_shareable.
     module Helpers
+      # With a session cookie, also mends the csrf_token cookie when it
+      # doesn't match the session: after AUTH_SECRET changes (a restored
+      # backup, a rotated secret) the session still verifies, since it's
+      # stored as a plain hash, but the cookie was signed with the old
+      # secret, and every require_csrf! route, logout included, would be
+      # a 403 until the browser's cookies were cleared.
       def current_subject
         return @current_subject if defined?(@current_subject)
+        return @current_subject = Monk::Auth.verify(bearer_token) if bearer_token
 
-        @current_subject = Monk::Auth.verify(bearer_token || session_cookie_token)
+        token = session_cookie_token
+        session = Monk::Auth.verified_session(token)
+        reissue_csrf_cookie(token, session[:expires_at]) if session
+        @current_subject = session&.fetch(:subject)
       end
 
       def require_user!
@@ -21,14 +31,32 @@ module Monk
       # page has no channel to set an Authorization header at all, so the
       # CSRF vector only exists for the cookie-authenticated path
       # (docs/design/auth-sessions.md's "CSRF: stateless double-submit").
+      # The token comes in the X-CSRF-Token header (fetch) or a csrf_token
+      # field (a form, written by #csrf_field). Defence in depth: Monk's
+      # cross-origin check already refuses another site's requests.
       def require_csrf!
         return if bearer_token
 
         cookie_token = session_cookie_token
-        provided = header("x-csrf-token")
-        return if cookie_token && provided && OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
+        provided = header("x-csrf-token") || params[:csrf_token]
+        return if cookie_token && provided.is_a?(String) &&
+          OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
 
+        # A valid session gets a csrf_token cookie that matches before the
+        # 403, so a page that sent a stale one succeeds when it tries again.
+        current_subject
         halt(403)
+      end
+
+      # The hidden field that require_csrf! reads, for a form posted by a
+      # signed-in browser:
+      #   <form method="post" action="/logout"><%= csrf_field %>...</form>
+      # Empty without a session cookie: there's no token to send.
+      def csrf_field
+        token = session_cookie_token
+        return raw("") unless token
+
+        raw(%(<input type="hidden" name="csrf_token" value="#{h(Monk::Auth.csrf_token_for(token))}">))
       end
 
       def set_session_cookie(session)
@@ -63,18 +91,17 @@ module Monk
         token.empty? ? nil : token
       end
 
-      def add_response_cookie(name, value, http_only:, max_age:)
-        flags = ["Path=/", "SameSite=Lax", "Max-Age=#{max_age}"]
-        flags << "Secure" if Monk::Auth.config[:secure]
-        flags << "HttpOnly" if http_only
-        headers["set-cookie"] = Array(headers["set-cookie"]) + ["#{name}=#{value}; #{flags.join("; ")}"]
+      def reissue_csrf_cookie(session_token, expires_at)
+        expected = Monk::Auth.csrf_token_for(session_token)
+        sent = request_cookies["csrf_token"]
+        return if sent && OpenSSL.secure_compare(expected, sent)
+
+        max_age = [(expires_at - Time.now).to_i, 0].max
+        add_response_cookie("csrf_token", expected, http_only: false, max_age: max_age)
       end
 
-      def request_cookies
-        header("cookie").to_s.split(";").each_with_object({}) do |pair, cookies|
-          name, value = pair.strip.split("=", 2)
-          cookies[name] = value if name
-        end
+      def add_response_cookie(name, value, http_only:, max_age:)
+        add_cookie(name, value, http_only: http_only, max_age: max_age, secure: Monk::Auth.config[:secure])
       end
 
       def session_cookie_token

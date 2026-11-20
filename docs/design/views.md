@@ -290,6 +290,11 @@ Helpers added to `Monk::Context`: `render`, `h`, `raw`, `asset_path`.
 That's the whole surface. No tag builders, no `link_to`, no form helpers —
 the templates are HTML.
 
+Since 0.26 plain forms work without helpers (`docs/guides/forms.md`,
+`docs/history/plan-forms.md`): Monk reads form bodies, and auth adds the one
+helper this doc foresaw, `csrf_field`. Any further form helper has to
+earn its place against writing the HTML.
+
 ### Locals — decided: no declaration syntax
 
 **What shipped is option 1 below, plus ivars, and nothing else.**
@@ -580,7 +585,8 @@ filenames and a build manifest; asset serving from S3/CDN; HTTP caching
 beyond ETag + max-age; partial-layout nesting more than one level;
 `content_for`-style named slots; i18n; form/CSRF helpers (`docs/design/auth-sessions.md`
 owns CSRF, and its double-submit design will want one small view helper —
-that helper belongs to auth's plan, not this one); live code reloading of
+that helper belongs to auth's plan, not this one; it came in 0.26 as
+`csrf_field`); live code reloading of
 `.rb` files.
 
 ## What shipped

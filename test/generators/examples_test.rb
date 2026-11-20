@@ -69,12 +69,24 @@ class GeneratorsExamplesTest < Minitest::Test
         assert_equal [200, %({"email":"\#{email}"})], request("GET", "/me", nil, logged_in).first(2)
 
         csrf = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
-        assert_equal 200, request("POST", "/auth/logout", nil, csrf).first
+        status, _body, headers = request("POST", "/auth/logout", nil, csrf)
+        assert_equal 302, status
+        flash = Array(headers["set-cookie"]).find { |cookie| cookie.start_with?("flash=") }.split(";").first
+        assert_includes request("GET", "/", nil, "HTTP_COOKIE" => flash)[1], "You&#39;re logged out."
         assert_equal 401, request("GET", "/me", nil, logged_in).first
 
-        assert_equal 429, request("POST", "/auth/request", email: email).first, "one link per address a minute"
+        status, body = request("POST", "/auth/request", email: email)
+        assert_equal 429, status, "one link per address a minute"
+        assert_includes body, "A link was just sent"
+        assert_equal 422, request("POST", "/auth/request", email: "").first
         assert_equal 429, request("POST", "/auth/request", email: email.upcase).first, "whatever its case"
         assert_equal 200, request("POST", "/auth/request", email: "other-\#{email}").first
+
+        form = { "CONTENT_TYPE" => "application/x-www-form-urlencoded",
+                 "rack.input" => StringIO.new("email=form-\#{email}") }
+        status, body = request("POST", "/auth/request", nil, form)
+        assert_equal 200, status
+        assert_includes body, "Check your email"
       ensure
         Monk::Auth.clear_login_requests!
       end

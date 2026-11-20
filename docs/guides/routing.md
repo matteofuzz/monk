@@ -14,7 +14,7 @@ class App < Monk::Base
 end
 ```
 
-Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
+Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (`a=1`, `a[b]=1` for a hash, `a[]=1` for an array) and merged with a form or JSON body's params and path params, in that order, with path params always winning on conflict. A form posted with a `_method` field of `patch`, `put` or `delete` reaches that verb's route. A browser request from another site to any route but a GET gets a `403`, unless the route is declared with `allow_cross_origin: true`. An unmatched request gets a plain `404`.
 
 ## REST resources — `resources` (experimental)
 
@@ -48,12 +48,12 @@ resources("/orders", OrdersController, :index, :create) # only these two
 
 # Context
 
-Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `json(data)`, `settings` (see [`settings.md`](settings.md)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views.md`](views.md)). There are two ways to write a route block:
+Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `redirect(location)`, `json(data)`, `status`/`status=`, `headers`, `settings` (see [`settings.md`](settings.md)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views.md`](views.md)). There are two ways to write a route block:
 
 - **Zero-arg** (`get("/x") { params }`) — the common case; helpers are called bare via `instance_exec`.
 - **One-arg** (`get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.
 
-`halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to). Ivars set on the `Context` (`@title = "Home"`) are visible to any template the route renders, and to its layout.
+`halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to). A route's return value is the body, sent with `status` (`self.status = 422` before returning). `redirect` goes only to this app — a path, or a URL on the request's `Host` — and raises `Monk::UnsafeRedirectError` for anything else, unless the app built the location itself and says so: `redirect(Monk::Storage.url(key), allow_other_host: true)` (see [`forms.md`](forms.md), "Redirects"). Ivars set on the `Context` (`@title = "Home"`) are visible to any template the route renders, and to its layout.
 
 # Error handling
 

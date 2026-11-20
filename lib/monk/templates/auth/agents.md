@@ -29,8 +29,8 @@ A test that asks for links calls `Monk::Auth.clear_login_requests!` in
   included, would sit in the job queue. Use `SendLoginLink` instead.
 - Links come from `Monk::Settings[:public_url]`, never from request headers.
 - A `redirect_to` must be listed in `redirect_allowlist`.
-- Monk reads `params` from JSON bodies and query strings, not form bodies:
-  pages post with `fetch`. A cookie-authenticated POST sends the
-  `x-csrf-token` header (the `csrf_token` cookie's value).
+- A cookie-authenticated POST calls `require_csrf!`, and sends the token:
+  a form with `<%= csrf_field %>`, `fetch` with the `x-csrf-token` header
+  (the `csrf_token` cookie's value).
 
 **Examples:** `auth-routes` in `app/routes/auth.rb`.

@@ -102,7 +102,7 @@ _Avoid_: Cron, dispatcher, stager (that moves due scheduled jobs)
 
 
 **Monk module**:
-A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `presence`, `storage`, `pwa`, `push`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
+A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `presence`, `storage`, `pwa`, `push`, `deploy`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres; `compose.yaml` for deploy), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
 _Avoid_: Feature, plugin, flag (`monk new` had flags before ADR 0017)
 
 **Generator**:
@@ -153,3 +153,15 @@ _Avoid_: Push keys, server keys, application server key (the browser's name for 
 **Notification payload**:
 What `Monk::Push.notify` sends, at most 3993 bytes once JSON: by the scaffold's convention `{ title, body, url, tag }`, which `sw.js` shows as a notification and opens on a click. Monk doesn't enforce the shape.
 _Avoid_: Message (the encrypted request as a whole), push data
+
+**Cross-site request**:
+A browser's POST, PUT, PATCH or DELETE sent by a page of another site, which `Sec-Fetch-Site` says (or, without it, an `Origin` that isn't the request's `Host`). Monk refuses it with a 403 on every route unless the route says `allow_cross_origin: true`. A request with neither header (curl, a server's webhook) isn't one: no browser sent it.
+_Avoid_: CSRF (the attack; the token `require_csrf!` checks is a second, auth-only defence), cross-origin request (also covers reads, which aren't refused)
+
+**Flash**:
+One message for the next page after a redirect, `redirect(path, flash: "Saved.")`, read with `flash`: a short-lived cookie the reading page's response clears. A failed submit doesn't use it; it renders the form again with its own errors.
+_Avoid_: Notice, alert, flash hash (there's one message, not kinds)
+
+**Deploy stack**:
+What `monk add deploy` writes for one Linux host with Docker: `compose.yaml`, the `Caddyfile`, `.env.production.example` and `bin/deploy_env`. Each Monk module adds its own services and settings to it, before or after deploy is added. `.env.production`, made on the host from the example, holds the secrets and is part of every backup.
+_Avoid_: Production config, infrastructure

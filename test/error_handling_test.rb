@@ -39,6 +39,34 @@ class ErrorHandlingTest < Minitest::Test
     assert_equal '{"error":"handled"}', body.join
   end
 
+  def test_registered_error_handler_can_set_the_status
+    app = Class.new(Monk::Base) do
+      get("/x") { raise BoomError, "boom" }
+      error(BoomError) do
+        self.status = 409
+        "conflict"
+      end
+    end
+
+    status, _headers, body = app.call(env_for("GET", "/x"))
+
+    assert_equal 409, status
+    assert_equal "conflict", body.join
+  end
+
+  def test_registered_error_404_handler_can_set_the_status
+    app = Class.new(Monk::Base) do
+      error(404) do
+        self.status = 410
+        "gone"
+      end
+    end
+
+    status, _headers, _body = app.call(env_for("GET", "/nope"))
+
+    assert_equal 410, status
+  end
+
   def test_registered_error_404_handler_sees_env
     app = Class.new(Monk::Base) do
       error(404) { |ctx| ctx.env["PATH_INFO"] }

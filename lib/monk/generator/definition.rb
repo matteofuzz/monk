@@ -123,6 +123,13 @@ module Monk
       def setup_section(path) = @sections[:setup] = path
       def agents_section(path) = @sections[:agents] = path
 
+      # This module's part of deploy's files, appended once deploy is
+      # installed, whichever comes first: its services in compose.yaml
+      # (under `services:`, the file's last key) and its settings in
+      # .env.production.example. Template paths.
+      def compose_section(path) = @sections[:compose] = path
+      def production_env_section(path) = @sections[:production_env] = path
+
       def set_before_production(key, note, placeholder: false)
         @productions << Production.new(key: key, note: note, placeholder: placeholder)
       end

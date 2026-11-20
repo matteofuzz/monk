@@ -44,6 +44,7 @@ modules it needs, first:
 | `storage` | files users send: local files in development, an S3 bucket in production | — |
 | `pwa` | an installable app: manifest, icons, service worker ([`pwa.md`](pwa.md)) | — |
 | `push` | web push notifications, from jobs ([`push.md`](push.md)) | `pwa`, `jobs`, `auth` |
+| `deploy` | Docker Compose and Caddy on one host, from the modules installed ([`deploying.md`](deploying.md), [`deploy-hetzner.md`](deploy-hetzner.md)) | — |
 
 - **What it prints:** the files created (`+`), the lines appended (`~`),
   the files it left alone (`!`), the values to set before production, and
@@ -126,6 +127,12 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   `push-notify` examples in `app/routes/push.rb`, the on/off switch in
   `app/views/push/_settings.erb`; a test that the keys and the table are
   in place.
+- **deploy:** `compose.yaml` (`web` and `caddy`, and each module's
+  services: `postgres`, `redis`, `jobs`, `ws`), `Caddyfile`,
+  `.env.production.example` (each module's settings, with Compose's
+  service names) and `bin/deploy_env`, which writes `.env.production` on
+  the server with fresh secrets. A module added after deploy adds its
+  services and settings too; deploy added last adds everything installed.
 
 ## Examples
 

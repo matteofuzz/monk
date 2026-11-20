@@ -3,6 +3,7 @@ require "uri"
 
 require_relative "freeze_hooks"
 require_relative "environment"
+require_relative "params"
 
 module Monk
   class Base
@@ -16,6 +17,29 @@ module Monk
     # writes -- the same depth Monk::Jobs keeps for a failed job.
     BACKTRACE_LINES = 10
     private_constant :BACKTRACE_LINES
+
+    # On every response, under the app's own headers: a route that sets
+    # one (`headers["content-security-policy"] = ...`) replaces it.
+    # nosniff: a browser never runs an upload or a JSON body as a script
+    # or stylesheet. frame-ancestors: no other site can show this app in a
+    # frame and trick a click on its forms. Referrer-Policy: another site
+    # sees only the origin, never a path or a token in it.
+    SECURITY_HEADERS = Ractor.make_shareable({
+      "x-content-type-options" => "nosniff",
+      "content-security-policy" => "frame-ancestors 'none'",
+      "referrer-policy" => "strict-origin-when-cross-origin",
+    })
+
+    # Sec-Fetch-Site values a state-changing request may carry: from a page
+    # of this same origin, or typed or bookmarked by the user ("none").
+    SAME_ORIGIN_SITES = Ractor.make_shareable(%w[same-origin none])
+    private_constant :SAME_ORIGIN_SITES
+
+    OVERRIDABLE_VERBS = Ractor.make_shareable(%w[PATCH PUT DELETE])
+    private_constant :OVERRIDABLE_VERBS
+
+    # The largest form or JSON body Monk parses into params; past it, 413.
+    MAX_PARSED_BODY = 1024 * 1024
 
     # Action name -> path suffix (appended to the resource path) and verb(s)
     # it dispatches on, for #resources. :update registers both PATCH and PUT --
@@ -33,9 +57,13 @@ module Monk
     private_constant :REST_ACTIONS
 
     class << self
+      # `allow_cross_origin: true` turns off the cross-origin check
+      # (#cross_origin?) for this one route: a webhook, say, posted by
+      # another site's server -- which, being no browser, usually passes
+      # anyway.
       VERBS.each do |verb|
-        define_method(verb.downcase) do |path, &block|
-          routes << { verb: verb, path: path, block: block }
+        define_method(verb.downcase) do |path, allow_cross_origin: false, &block|
+          routes << { verb: verb, path: path, block: block, allow_cross_origin: allow_cross_origin }
         end
       end
 
@@ -146,7 +174,7 @@ module Monk
         start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         status, headers, body = dispatch(env)
         log_request(env, status, start)
-        [status, headers, body]
+        [status, SECURITY_HEADERS.merge(headers), body]
       end
 
       private
@@ -164,22 +192,33 @@ module Monk
         stored = Monk::Storage.response(env) if defined?(Monk::Storage)
         return stored if stored
 
+        # Query string, then the body's params on top (a form, or JSON),
+        # then path params over both in Context.new below: the route's own
+        # declared intent outranks anything a caller supplies. Before
+        # routing, since a form's _method field picks the route.
+        query, body = begin
+          [Monk::Params.parse(env["QUERY_STRING"]), parse_body(env)]
+        rescue Monk::Params::Error => e
+          return [e.status, {}, [""]]
+        end
+        override_method(env, body)
+
         route, path_params = find_route(env["REQUEST_METHOD"], env["PATH_INFO"])
         return not_found_response(env) unless route
+        return [403, {}, [""]] if cross_origin?(env) && !route[:allow_cross_origin]
 
-        params = parse_params(env).merge(path_params)
-        context = Context.new(params, env)
+        context = Context.new(query.merge(body).merge(path_params), env)
         catch(:monk_halt) do
           begin
             body = run_block(context, route[:block])
-            [200, context.headers, [body]]
+            [context.status, context.headers, [body]]
           rescue StandardError => e
             handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
             log_exception(env, e, handled: !handler.nil?)
             if handler
               context.status = 500
               body = run_block(context, handler.last)
-              [500, context.headers, [body]]
+              [context.status, context.headers, [body]]
             else
               [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
             end
@@ -267,42 +306,81 @@ module Monk
         context = Context.new({}, env, status: 404)
         catch(:monk_halt) do
           body = run_block(context, handler.last)
-          [404, context.headers, [body]]
+          [context.status, context.headers, [body]]
         end
       end
 
-      # Query string, then a JSON body on top (POST /auth/request's
-      # redirect_to; a callback token as ?token=... instead of a path
-      # segment -- docs/history/plan-auth.md Phase 9 step 29). Path segment params
-      # always win the final merge in #dispatch -- the route's own
-      # declared intent outranks anything a caller supplies.
-      def parse_params(env)
-        parse_query_string(env["QUERY_STRING"]).merge(parse_json_body(env))
+      # A browser request changing state (every verb but GET) that comes
+      # from another site: refused with 403 by #dispatch, on every route
+      # unless it opts out. This is what stops CSRF, with or without auth
+      # and with no token: a page on another site can still make the
+      # browser send the request, but the browser says where it came from.
+      # As Go's http.CrossOriginProtection: Sec-Fetch-Site, which every
+      # current browser sends, then Origin against Host for older ones.
+      # A request with neither is no browser's (curl, server to server)
+      # and passes: it carries no cookie a victim's browser attached.
+      def cross_origin?(env)
+        return false if env["REQUEST_METHOD"] == "GET"
+
+        site = env["HTTP_SEC_FETCH_SITE"]
+        return !SAME_ORIGIN_SITES.include?(site) if site
+
+        origin = env["HTTP_ORIGIN"]
+        return false if origin.nil?
+
+        origin.sub(%r{\A[a-z][a-z0-9+.-]*://}i, "") != env["HTTP_HOST"]
       end
 
-      # URI.decode_www_form, not Rack::Utils.parse_nested_query -- the
-      # latter memoizes an unfrozen QueryParser instance in a module ivar
-      # (Rack::Utils.default_query_parser) the moment "rack/utils" loads,
-      # in the main Ractor, and reading it back from a worker Ractor raises
-      # Ractor::IsolationError regardless of which Ractor set it. A bug in
-      # rack itself (not yet Ractor-safe), measured directly against a real
-      # worker Ractor rather than assumed -- no nested/array query syntax,
-      # consistent with Monk's minimal query surface elsewhere.
-      def parse_query_string(query_string)
-        return {} if query_string.to_s.empty?
+      # An HTML form can only send GET and POST, so a POSTed form's
+      # _method field (patch, put or delete) stands in for the verb, as
+      # `resources`' update and destroy need. Only from a form body: never
+      # the query string, never on another verb, never to GET.
+      def override_method(env, body)
+        return unless env["REQUEST_METHOD"] == "POST" && form_body?(env)
 
-        URI.decode_www_form(query_string).each_with_object({}) { |(k, v), h| h[k.to_sym] = v }
+        verb = body[:_method].to_s.upcase
+        env["REQUEST_METHOD"] = verb if OVERRIDABLE_VERBS.include?(verb)
       end
 
-      def parse_json_body(env)
-        return {} unless env["CONTENT_TYPE"].to_s.include?("application/json")
+      def form_body?(env)
+        env["CONTENT_TYPE"].to_s.start_with?("application/x-www-form-urlencoded")
+      end
 
-        body = env["rack.input"]&.read.to_s
+      # Files never come through here: they go straight to the bucket
+      # (Monk::Storage), so a multipart body is refused rather than
+      # silently read as no params (docs/history/plan-forms.md decision 1).
+      def parse_body(env)
+        type = env["CONTENT_TYPE"].to_s
+        if form_body?(env)
+          Monk::Params.parse(read_body(env))
+        elsif type.include?("application/json")
+          parse_json(read_body(env))
+        elsif type.start_with?("multipart/form-data")
+          raise Monk::Params::Error.new("multipart bodies aren't read: upload files with Monk::Storage", status: 415)
+        else
+          {}
+        end
+      end
+
+      # Kino already refuses a body over its max_body_size (50 MB by
+      # default) with a 413; a body Monk parses has a much smaller cap, so
+      # a worker never parses megabytes of a=1&a=1...
+      def read_body(env)
+        body = env["rack.input"]&.read(MAX_PARSED_BODY + 1).to_s
+        raise Monk::Params::Error.new("body over #{MAX_PARSED_BODY} bytes", status: 413) if body.bytesize > MAX_PARSED_BODY
+
+        body
+      end
+
+      def parse_json(body)
         return {} if body.empty?
 
-        JSON.parse(body, symbolize_names: true)
-      rescue JSON::ParserError
-        {}
+        parsed = JSON.parse(body, symbolize_names: true)
+        raise Monk::Params::Error, "a JSON body must be an object" unless parsed.is_a?(Hash)
+
+        parsed
+      rescue JSON::ParserError => e
+        raise Monk::Params::Error, e.message
       end
 
       # Routes are static (literal path, no ":param" or trailing "*") in

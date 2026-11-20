@@ -78,7 +78,30 @@ gets its own design doc and plan when work on it starts.
      auth sessions, sending from a job per device, and deleting
      subscriptions the push service reports as gone (404/410).
 
-5. **0.26: `monk check`: verifying an environment's wiring.** `bin/check`
+5. **0.26: Richer HTML support, forms first.** Done (2026-11-20,
+   `docs/history/plan-forms.md`). Plain HTML forms work with no
+   JavaScript, and the default answer to "should Monk do this?" stayed
+   no: no form helpers and no validation API, only documented patterns
+   (`docs/guides/forms.md`).
+   - **Forms.** Done: urlencoded bodies and nested `params`, `_method`,
+     `self.status` sent, `csrf_field`, flash messages, and redirects only
+     to the app unless `allow_other_host: true`.
+   - **Safe by default.** Done: other sites' browser requests are
+     refused on every route (`allow_cross_origin: true` opts out), there
+     are security headers on every response, and parsed bodies are
+     capped at 1 MB.
+   Also in this release, from a first real deployment:
+   - **Presence on a closed iPhone app.** Done: a closed page reads away
+     at once, so its push is sent. Measured on an iPhone.
+   - **A CSRF cookie that no longer verifies.** Done: it's reissued for
+     a valid session.
+   - **Deploying websocket, jobs and auth together.** Done:
+     `monk add deploy` writes the Compose stack, Caddy's `/ws` route and
+     the env example from the app's modules, with secrets and push keys
+     made on the host. `docs/guides/deploy-hetzner.md` is the tested
+     deploy on Hetzner Cloud with Brevo, from the accounts to backups.
+
+6. **0.27: `monk check`: verifying an environment's wiring.** `bin/check`
    (written by the base app) loads `config/load` and runs a read-only check
    for each loaded module. The checks belong to the framework modules
    (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
@@ -111,16 +134,6 @@ gets its own design doc and plan when work on it starts.
    (0.23), so this release adds its check too: bucket access, and CORS
    allowing `PUBLIC_URL` (the checks `bin/storage_check` runs by hand
    today).
-
-6. **0.27: Richer HTML support, forms first.** Views offer only `render`, `h`,
-   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
-   deliberately left them out). Templates write every form by hand, including
-   its CSRF field and the values to fill back in after a failed submit. Before
-   helpers, plain forms need two things Monk lacks: `params` from an
-   `application/x-www-form-urlencoded` body (only the query string and JSON
-   bodies are parsed today), and `require_csrf!` accepting a form field, not
-   only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
-   the auth module's login page does.
 
 ## To evaluate
 

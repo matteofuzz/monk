@@ -15,6 +15,10 @@
     <%= monk_head %>
   </head>
   <body>
-    <main><%= yield %></main>
+    <main>
+      <%# The message a redirect left with `flash:` (redirect "/", flash: "Saved."). %>
+      <% if flash %><p role="status"><%= flash %></p><% end %>
+      <%= yield %>
+    </main>
   </body>
 </html>

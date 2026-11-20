@@ -15,6 +15,7 @@ Monk::Generator.define(:live) do
 
   setup_section "live/setup.md"
   agents_section "live/agents.md"
+  production_env_section "live/deploy/env.production"
   set_before_production "LIVE_WS_URL", "defaults to /ws under PUBLIC_URL (wss:// for https)"
   next_step "open http://localhost:9292/demo/live in two tabs, press +1", if: demo
   example "live-rule", todo: "uncomment and adapt: nothing can be subscribed to until a rule allows it"

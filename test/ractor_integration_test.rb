@@ -112,6 +112,29 @@ class RactorIntegrationTest < Minitest::Test
     assert_equal "abc123", result
   end
 
+  # A form body, with nested params and a _method override, and the
+  # cross-origin check, all from a worker: every constant they read is
+  # frozen, and nothing writes module state.
+  def test_a_form_post_is_parsed_overridden_and_origin_checked_in_a_real_worker_ractor
+    app = Class.new(Monk::Base) do
+      patch("/items/:id") { "#{params[:id]} #{params[:item][:name]} #{params[:tags].join(",")}" }
+    end
+    boot_quietly(app)
+
+    results = Ractor.new(app) do |a|
+      form = lambda do |site|
+        { "REQUEST_METHOD" => "POST", "PATH_INFO" => "/items/7", "HTTP_SEC_FETCH_SITE" => site,
+          "CONTENT_TYPE" => "application/x-www-form-urlencoded",
+          "rack.input" => StringIO.new("_method=patch&item[name]=Ann&tags[]=a&tags[]=b"), }
+      end
+      same = a.call(form.call("same-origin"))
+      cross = a.call(form.call("cross-site"))
+      [same[0], same[2].join, cross[0]]
+    end.value
+
+    assert_equal [200, "7 Ann a,b", 403], results
+  end
+
   # The claim docs/design/views.md rests on: a template compiled to a method in
   # the main Ractor at Boot renders correctly from a worker, and two
   # workers rendering the same template don't bleed data into each other

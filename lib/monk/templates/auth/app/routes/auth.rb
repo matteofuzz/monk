@@ -8,20 +8,29 @@
 # class App
 #   get("/login") { @title = "Log in"; render "auth/login" }
 #
-#   # app/views/auth/login.erb sends {"email": "..."} as JSON.
+#   # The form in app/views/auth/login.erb; a failed submit renders it
+#   # again with the error and its status.
 #   post("/auth/request") do
+#     @title = "Log in"
 #     email = params[:email].to_s.strip.downcase
-#     halt(422) if email.empty?
+#     if email.empty?
+#       @error = "Enter your email."
+#       halt(422, render("auth/login"))
+#     end
 #     # One link per address per login_request_interval (config/auth.rb),
 #     # counted in the database, so across every bin/server process.
-#     halt(429) unless Monk::Auth.allow_login_request?(email)
+#     unless Monk::Auth.allow_login_request?(email)
+#       @error = "A link was just sent to this address: check your email, or try again in a minute."
+#       halt(429, render("auth/login"))
+#     end
 #
 #     # Sent here, in the request. With jobs, replace these two lines with
 #     # Monk::Auth::SendLoginLink.enqueue(email): the token is then made and
 #     # sent in bin/jobs, and never stored.
 #     token = Monk::Auth.request_login(email)
 #     Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(token), token: token)
-#     json(sent: true)
+#     @sent = true
+#     render "auth/login"
 #   end
 #
 #   # The link in the email: callback_path in config/auth.rb.
@@ -31,12 +40,12 @@
 #     redirect(session[:redirect_to] || "/")
 #   end
 #
-#   # From a page: fetch("/auth/logout", { method: "POST", headers: { "x-csrf-token": csrfToken } }),
-#   # where csrfToken is the csrf_token cookie's value.
+#   # From a page, a form with the CSRF token:
+#   #   <form method="post" action="/auth/logout"><%= csrf_field %><button>Log out</button></form>
 #   post("/auth/logout") do
 #     require_csrf!
 #     log_out!
-#     json(logged_out: true)
+#     redirect "/login", flash: "You're logged out."
 #   end
 #
 #   get("/me") { json(email: require_user!) }

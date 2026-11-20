@@ -1,0 +1,10 @@
+  # Mail (login links too) and push notifications are jobs: without this
+  # service they're never sent. TERM finishes the jobs in hand, then stops.
+  jobs:
+    image: {{app}} # web builds it
+    command: bin/jobs
+    env_file: .env.production
+    volumes: [log:/app/log]
+    stop_grace_period: 35s
+    restart: unless-stopped
+    depends_on: [web]

@@ -17,6 +17,7 @@ Monk::Generator.define(:auth) do
 
   setup_section "auth/setup.md"
   agents_section "auth/agents.md"
+  production_env_section "auth/deploy/env.production"
   set_before_production "AUTH_SECRET", "placeholder in .env — replace it", placeholder: true
   example "auth-routes", todo: lambda { |installed|
     if installed.include?("jobs")
