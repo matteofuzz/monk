@@ -45,7 +45,7 @@
 #   post("/auth/logout") do
 #     require_csrf!
 #     log_out!
-#     redirect "/login"
+#     redirect "/login", flash: "You're logged out."
 #   end
 #
 #   get("/me") { json(email: require_user!) }

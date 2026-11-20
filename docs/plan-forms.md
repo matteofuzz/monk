@@ -129,6 +129,16 @@ Settled while building steps 1-6:
     e.g. `error(Monk::UnsafeRedirectError) { redirect "/" }`) rather than
     silently going home: the bug shows up while writing the route. The
     storage download example and guide pass `allow_other_host: true`.
+15. **Flash is one keyword and one reader**: `redirect(path, flash:
+    "Saved.")` and `flash` (a String or nil), not a hash of kinds. A
+    flash only matters after a redirect, and a failed submit re-renders
+    with its own `@error`, so one plain message covers it. It's a cookie
+    (`flash`, URL-encoded, `HttpOnly`, `SameSite=Lax`, `Secure` but in
+    development, 60 s), cleared by the response of the page that reads it.
+    Not signed: a forged one is only text, escaped when shown. Reading and
+    setting cookies moved from `Monk::Auth::Helpers` into `Context` as
+    private methods both use; no public cookie API. The scaffolded layout
+    shows it, and auth's logout example uses it.
 
 ## Part A: the basics (committed)
 
@@ -189,9 +199,7 @@ every response or only HTML ones, and how an app turns one off.
 Candidates, none committed. Each is tried against real forms after A and
 kept only if it clearly pays for itself.
 
-- **Flash**: a one-shot message surviving the redirect after a POST.
-  Needs a cookie, so a public cookie API (today private to auth) may come
-  with it.
+- **Flash**: kept, built (decision 15).
 - **Form helpers**: fields filling their value back after a failed submit,
   `select` options. Plain ERB (`value="<%= params[:email] %>"`) may be
   enough, in which case the guide shows the pattern and Monk adds nothing.
@@ -232,7 +240,7 @@ works with Live).
 9. Part B, item by item, recording each decision here.
    - Done. Redirect guard (decision 14). At release, the upgrade guide:
      a redirect to another host needs `allow_other_host: true`.
-   - Flash: next.
+   - Done. Flash (decision 15).
 
 ## Open
 

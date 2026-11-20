@@ -69,7 +69,10 @@ class GeneratorsExamplesTest < Minitest::Test
         assert_equal [200, %({"email":"\#{email}"})], request("GET", "/me", nil, logged_in).first(2)
 
         csrf = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
-        assert_equal 302, request("POST", "/auth/logout", nil, csrf).first
+        status, _body, headers = request("POST", "/auth/logout", nil, csrf)
+        assert_equal 302, status
+        flash = Array(headers["set-cookie"]).find { |cookie| cookie.start_with?("flash=") }.split(";").first
+        assert_includes request("GET", "/", nil, "HTTP_COOKIE" => flash)[1], "You&#39;re logged out."
         assert_equal 401, request("GET", "/me", nil, logged_in).first
 
         status, body = request("POST", "/auth/request", email: email)

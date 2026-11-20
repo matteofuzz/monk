@@ -44,7 +44,8 @@ cross-site check below still covers the form.
   `render` the route returns. What the person typed comes back from
   `params`, escaped like everything `<%= %>` prints.
 - **A successful submit redirects** (`302`), so reloading the next page
-  doesn't post the form again.
+  doesn't post the form again. To say it worked:
+  `redirect "/notes", flash: "Saved."` (see "Flash" below).
 - **A checkbox left unchecked sends nothing**: `params[:remember]` is `nil`,
   not `"0"`.
 
@@ -110,6 +111,28 @@ the token from either place:
   value.
 
 Bearer-authenticated requests skip it: another site can't set that header.
+
+## Flash
+
+A message for the page after a redirect:
+
+```ruby
+redirect "/notes", flash: "Saved."
+```
+
+The next page reads it with `flash`, a String or `nil`. The scaffolded
+layout already shows it on every page:
+
+```erb
+<% if flash %><p role="status"><%= flash %></p><% end %>
+```
+
+It rides in a cookie (`flash`, `HttpOnly`, `SameSite=Lax`, `Secure` but in
+development) for a minute at most. Reading it uses it up, so a reload
+doesn't show it again; a page that doesn't read it leaves it for the next
+one that does. One message, plain text: keep it short (a cookie holds
+about 4 KB). A failed submit doesn't need it: it renders the page again
+with its own `@error`.
 
 ## Redirects
 

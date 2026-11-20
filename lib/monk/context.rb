@@ -23,6 +23,11 @@ module Monk
     CONTENT_TYPE = "content-type".freeze
     HTML_CONTENT_TYPE = "text/html; charset=utf-8".freeze
 
+    # The one-time message #redirect leaves for the next page (#flash).
+    # A minute is plenty for the redirect it rides on.
+    FLASH_COOKIE = "flash".freeze
+    FLASH_MAX_AGE = 60
+
     attr_reader :params, :env, :headers
     attr_accessor :status
 
@@ -53,12 +58,16 @@ module Monk
     # this app; anything else raises, a bug to fix, not a page to show.
     # `allow_other_host: true` is for a location the app built itself,
     # such as a Monk::Storage.url.
-    def redirect(location, status: 302, allow_other_host: false)
+    #
+    # `flash:` leaves a short message for the page redirected to, which
+    # reads it with #flash: redirect "/notes", flash: "Saved."
+    def redirect(location, status: 302, allow_other_host: false, flash: nil)
       unless allow_other_host || this_app?(location)
         raise UnsafeRedirectError, "redirect to #{location.inspect}: another host, or not a plain path " \
           "(allow_other_host: true if the app built it)"
       end
 
+      add_cookie(FLASH_COOKIE, URI.encode_www_form_component(flash), max_age: FLASH_MAX_AGE) if flash
       headers["location"] = location
       throw :monk_halt, [status, headers, [""]]
     end
@@ -96,6 +105,20 @@ module Monk
       Monk::Assets.path_for(path)
     end
 
+    # The message the previous request's redirect left (`flash:`), or nil.
+    # Reading it uses it up: the response clears the cookie, so a reload
+    # doesn't show it again. In the layout, for every page:
+    #   <% if flash %><p role="status"><%= flash %></p><% end %>
+    def flash
+      return @flash if defined?(@flash)
+
+      value = request_cookies[FLASH_COOKIE]
+      add_cookie(FLASH_COOKIE, "", max_age: 0) if value
+      @flash = value && URI.decode_www_form_component(value)
+    rescue ArgumentError # a cookie that isn't ours: bad %-encoding
+      @flash = nil
+    end
+
     # Every loaded module's <head> tags, one per line, for the layout:
     #   <head> ... <%= monk_head %> </head>
     # Each tag is built by Monk, which escapes what it interpolates.
@@ -111,6 +134,23 @@ module Monk
     end
 
     private
+
+    def request_cookies
+      header("cookie").to_s.split(";").each_with_object({}) do |pair, cookies|
+        name, value = pair.strip.split("=", 2)
+        cookies[name] = value if name
+      end
+    end
+
+    # Secure everywhere but development, where the app is served over
+    # plain http and Safari would drop a Secure cookie
+    # (docs/history/secure-cookie-dev-http.md).
+    def add_cookie(name, value, max_age:, http_only: true, secure: !Monk.env.development?)
+      flags = ["Path=/", "SameSite=Lax", "Max-Age=#{max_age}"]
+      flags << "Secure" if secure
+      flags << "HttpOnly" if http_only
+      headers["set-cookie"] = Array(headers["set-cookie"]) + ["#{name}=#{value}; #{flags.join("; ")}"]
+    end
 
     # Browsers forgive what URI doesn't: they drop tabs and newlines, read
     # "\\" as "/" ("/\\evil.example" is "//evil.example") and "http:/x" as
