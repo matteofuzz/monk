@@ -46,6 +46,8 @@ class AuthCookieFlowTest < Minitest::Test
         end
       end
 
+      get("/form") { |ctx| ctx.csrf_field }
+
       get("/me") do |ctx|
         ctx.json(subject: ctx.require_user!)
       end
@@ -110,5 +112,49 @@ class AuthCookieFlowTest < Minitest::Test
     me_after_logout_env = env_for("GET", "/me")
     me_after_logout_env["HTTP_COOKIE"] = session_cookie_header
     assert_equal 401, app.call(me_after_logout_env).first
+  end
+
+  # A plain HTML form: the page writes the token with csrf_field, the
+  # browser posts it back as a field, _method=delete reaches the DELETE
+  # route.
+  def test_a_plain_form_posts_the_csrf_token_as_a_field
+    setup_auth_tables(DB_NAME)
+    app = build_app
+    session_cookie_header = log_in(app)
+
+    assert_equal "", app.call(env_for("GET", "/form"))[2].join
+
+    form_env = env_for("GET", "/form")
+    form_env["HTTP_COOKIE"] = session_cookie_header
+    field = app.call(form_env)[2].join
+    token = field[/\A<input type="hidden" name="csrf_token" value="(\h{64})">\z/, 1]
+    refute_nil token, field
+
+    wrong = form_post(session_cookie_header, "_method=delete&csrf_token=#{"0" * 64}")
+    nested = form_post(session_cookie_header, "_method=delete&csrf_token[x]=#{token}")
+    right = form_post(session_cookie_header, "_method=delete&csrf_token=#{token}")
+
+    assert_equal 403, app.call(wrong).first
+    assert_equal 403, app.call(nested).first
+    assert_equal 200, app.call(right).first
+  end
+
+  private
+
+  def log_in(app)
+    request_env = env_for("POST", "/auth/request")
+    request_env["CONTENT_TYPE"] = "application/json"
+    request_env["rack.input"] = StringIO.new(JSON.generate(email: "a@b.com", redirect_to: "/dashboard"))
+    raw_token = JSON.parse(app.call(request_env)[2].join)["token"]
+    cookies = app.call(env_for("GET", "/auth/callback/#{raw_token}"))[1]["set-cookie"]
+    cookies.find { |c| c.start_with?("session_token=") }.split(";").first
+  end
+
+  def form_post(cookie, body)
+    env = env_for("POST", "/auth/session")
+    env["HTTP_COOKIE"] = cookie
+    env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
+    env["rack.input"] = StringIO.new(body)
+    env
   end
 end

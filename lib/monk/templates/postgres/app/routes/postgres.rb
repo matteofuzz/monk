@@ -14,7 +14,7 @@
 #   self.table_name = "notes"
 # end
 #
-# # 3. The routes, here. params come from the query string or a JSON body.
+# # 3. The routes, here. params come from the query string or a form or JSON body.
 # class App
 #   get("/notes") { json(notes: Note.where({}, order: :id, limit: 20)) }
 #   post("/notes") { json(note: Note.create(body: params[:body].to_s)) }

@@ -14,7 +14,7 @@ class App < Monk::Base
 end
 ```
 
-Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (flat `key=value` pairs, no nested/array syntax) and merged with any JSON body and path params, with path params always winning on conflict. An unmatched request gets a plain `404`.
+Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (`a=1`, `a[b]=1` for a hash, `a[]=1` for an array) and merged with a form or JSON body's params and path params, in that order, with path params always winning on conflict. A form posted with a `_method` field of `patch`, `put` or `delete` reaches that verb's route. A browser request from another site to any route but a GET gets a `403`, unless the route is declared with `allow_cross_origin: true`. An unmatched request gets a plain `404`.
 
 ## REST resources — `resources` (experimental)
 

@@ -507,9 +507,10 @@ Flow:
    (`X-CSRF-Token`) on every state-changing (`POST`/`PUT`/`PATCH`/`DELETE`)
    request. This is the "double submit": the same value arrives twice, once
    automatically (cookie) and once only same-origin JS could have attached
-   (header).
+   (header). A plain HTML form sends it as a `csrf_token` field instead,
+   written by the `csrf_field` view helper (0.26).
 3. `Monk::Auth::Helpers` verifies, for cookie-authenticated state-changing
-   requests only: `X-CSRF-Token` header equals
+   requests only: `X-CSRF-Token` header (or `csrf_token` field) equals
    `HMAC-SHA256(secret, session_cookie_value)`. Compare with
    `OpenSSL.secure_compare`, per the existing token-comparison rule below.
    Mismatch or missing header → `403`, distinct from the `401` an invalid
@@ -525,6 +526,12 @@ not a replacement for it: `Lax` already blocks the cookie from riding along
 on a cross-site `POST`, but the double-submit check is what makes CSRF
 protection independent of which browser (or how current a browser) is
 making the request.
+
+Since 0.26 a third layer sits in front of both, in `Monk::Base` and
+without auth: a state-changing request whose `Sec-Fetch-Site` (or, from
+older browsers, `Origin`) says it came from another site is refused with
+`403` before any route runs (`docs/plan-forms.md` decision 2). The
+double-submit check stays, as defence in depth.
 
 ## The WebSocket case: identity across a second process
 

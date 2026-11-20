@@ -1,6 +1,7 @@
 # 0.26: Richer HTML support, forms first — plan
 
-Status: draft, 2026-11-20. Roadmap item 5 (`docs/roadmap.md`).
+Status: in progress. Drafted 2026-11-20; steps 1-6 built 2026-11-20.
+Roadmap item 5 (`docs/roadmap.md`).
 
 Make a plain `<form method="post">` work in a Monk app, safely, with no
 JavaScript: the body parsed into `params`, cross-site requests refused,
@@ -81,6 +82,37 @@ So this plan is in two parts with different levels of commitment:
    in a urlencoded POST body changes the verb before routing. Never from
    the query string, never on GET.
 
+Settled while building steps 1-6:
+
+6. **One cap on parsed bodies, 1 MB, a constant** (`Base::MAX_PARSED_BODY`):
+   413 past it, for form and JSON bodies alike (JSON had no cap before).
+   Not a setting. Kino already refuses any body over its `max_body_size`
+   (50 MB by default) with a 413, so Monk needs no limit of its own beyond
+   what it parses. Param limits are constants too: `Params::MAX_PAIRS`
+   (1000) and `Params::MAX_DEPTH` (8).
+7. **400 for params that can't be read**: a key used as both a value and
+   a hash (`a=1&a[b]=2`), past a limit, malformed JSON, or a JSON body
+   that isn't an object (before, a JSON array crashed `dispatch`). A bad
+   `%`-sequence is not an error: `URI.decode_www_form` keeps it as written.
+8. **The opt-out is `allow_cross_origin: true`** on the route
+   (`post("/hook", allow_cross_origin: true) { ... }`), spelled out so an
+   agent reading it can't misread it. `resources` has none: a webhook is
+   a single route.
+9. **Origin is compared with `Host`, not `public_url`.** Every current
+   browser sends `Sec-Fetch-Site`, so the `Origin` fallback only serves
+   older ones; a proxy that rewrites `Host` breaks only those. Not worth a
+   dependency on an app setting.
+10. **The override rewrites `env["REQUEST_METHOD"]`**, so the request log
+    and `env` show the verb that was routed.
+11. **`csrf_field`** is the helper's name; it writes nothing without a
+    session cookie. `require_csrf!` reads the header first, then
+    `params[:csrf_token]`, and only a String counts (a nested
+    `csrf_token[x]` is a 403, not a 500).
+12. **The scaffolded login page is a plain form now**, with no script: the
+    route renders it again with `@error` and `halt(422 | 429, render(...))`,
+    or with `@sent`. Logout's example is a form with `csrf_field` and
+    redirects to `/login`.
+
 ## Part A: the basics (committed)
 
 ### A1. Parsing a form body
@@ -159,15 +191,20 @@ works with Live).
 
 ## Steps
 
-1. Status fix (A5), with a test that fails today.
-2. Params parser (decision 4) for the query string, with its limits.
-3. Urlencoded body, body size limit, 415 for multipart, 400 for bad JSON
-   (A1). Check Kino's limit first.
-4. Method override (A4).
-5. Cross-origin protection and its opt-out (A2), including a
-   Ractor-integration test and the Live demo's form.
-6. `require_csrf!` form field and the hidden-field helper (A3); move the
-   scaffolded auth pages to plain forms if simpler.
+1. Done. Status fix (A5), with a test that fails today. Error handlers
+   (`error(Class)`, `error(404)`) can set the status too.
+2. Done. Params parser (decision 4) for the query string, with its
+   limits: `lib/monk/params.rb`.
+3. Done. Urlencoded body, body size limit, 415 for multipart, 400 for bad
+   JSON (A1; decisions 6, 7).
+4. Done. Method override (A4; decision 10).
+5. Done. Cross-origin protection and its opt-out (A2; decisions 8, 9),
+   with a worker-Ractor test of a form post (it caught two `%w[].freeze`
+   constants a worker couldn't read). The Live demo's form needed no
+   change.
+6. Done. `require_csrf!` form field and `csrf_field` (A3; decisions 11,
+   12); `docs/guides/routing.md` and `docs/design/auth-sessions.md`
+   updated for the new behaviour.
 7. Security headers (A6), if kept.
 8. Guide `docs/guides/forms.md`: a form end to end, failed submit with
    422, the direct-upload-then-post pattern, the cross-origin opt-out.
@@ -177,8 +214,5 @@ works with Live).
 
 ## Open
 
-- Body size limit default, and how it's configured.
-- Cross-origin opt-out DSL; `Host` vs `public_url` behind proxies.
-- Hidden-field helper name.
-- Security headers: on by default, scope, opt-out.
+- Security headers: kept or not; on by default, scope, opt-out.
 - Part B, item by item.

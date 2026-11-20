@@ -21,14 +21,29 @@ module Monk
       # page has no channel to set an Authorization header at all, so the
       # CSRF vector only exists for the cookie-authenticated path
       # (docs/design/auth-sessions.md's "CSRF: stateless double-submit").
+      # The token comes in the X-CSRF-Token header (fetch) or a csrf_token
+      # field (a form, written by #csrf_field). Defence in depth: Monk's
+      # cross-origin check already refuses another site's requests.
       def require_csrf!
         return if bearer_token
 
         cookie_token = session_cookie_token
-        provided = header("x-csrf-token")
-        return if cookie_token && provided && OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
+        provided = header("x-csrf-token") || params[:csrf_token]
+        return if cookie_token && provided.is_a?(String) &&
+          OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
 
         halt(403)
+      end
+
+      # The hidden field that require_csrf! reads, for a form posted by a
+      # signed-in browser:
+      #   <form method="post" action="/logout"><%= csrf_field %>...</form>
+      # Empty without a session cookie: there's no token to send.
+      def csrf_field
+        token = session_cookie_token
+        return raw("") unless token
+
+        raw(%(<input type="hidden" name="csrf_token" value="#{h(Monk::Auth.csrf_token_for(token))}">))
       end
 
       def set_session_cookie(session)
