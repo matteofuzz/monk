@@ -101,39 +101,41 @@ gets its own design doc and plan when work on it starts.
      made on the host. `docs/guides/deploy-hetzner.md` is the tested
      deploy on Hetzner Cloud with Brevo, from the accounts to backups.
 
-6. **0.27: `monk check`: verifying an environment's wiring.** `bin/check`
-   (written by the base app) loads `config/load` and runs a read-only check
-   for each loaded module. The checks belong to the framework modules
-   (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
-   they work in a deployed app. Output and exit codes match `monk add`'s (text
-   and `--json`). It covers what boot (missing settings) and `rake test`
-   (wiring in the test environment) can't: problems that otherwise show up the
-   first time a real user hits them.
-   - **Before switching traffic to a deploy**, the main use:
-     - SMTP connect and login without sending;
-     - Postgres reachable with no migrations pending (including a module's
-       new ones, such as recurring jobs');
-     - Redis and `LISTEN` reachable (`LISTEN` doesn't work through
-       PgBouncer in transaction mode);
-     - values that are present but wrong: a placeholder `AUTH_SECRET`,
-       `PUBLIC_URL` on `http://`, `LIVE_WS_URL` not on `wss://`,
-       `WS_ALLOWED_ORIGINS` missing `PUBLIC_URL`, VAPID keys that don't
-       match.
-   - **A local "doctor"**: services up, env files filled in, versions
-     matching `.ruby-version`/`Gemfile.lock`.
-   - **Agents** get one diagnosis to act on (`--json`).
-   - **Bug reports** get versions, modules and failed checks, with secrets
-     redacted.
-   - **After upgrading Monk**, a first signal that a module needs something
-     the app lacks, such as a new migration.
+6. **0.27: Catching wrong settings early, and other enhancements.** A
+   smaller release than the `monk check` command first planned. Most of
+   what that command would check already fails loudly (Postgres, pending
+   migrations, Redis), is set once per environment rather than per
+   deploy, or can't be seen from inside the app (TLS, Caddy's `/ws`
+   route: the curl checks in `docs/guides/deploy-hetzner.md` stay the
+   way to test those). What's left:
+   - **Values that are present but wrong, refused at boot in
+     production.** A placeholder `AUTH_SECRET`, `PUBLIC_URL` on
+     `http://`, `LIVE_WS_URL` not on `wss://`, `WS_ALLOWED_ORIGINS`
+     missing `PUBLIC_URL`. This extends the checks `Monk::Settings`
+     already makes for `MONK_ENV` and `LOG_LEVEL`: no new command, and
+     it runs on every boot, before any traffic.
+   - **Checking SMTP login without sending.** Login is by magic link,
+     so broken SMTP means nobody can log in, and nothing shows it until
+     someone tries. A small `Monk::Mail.check` to run from
+     `bin/console`, and a step in the deploy guide.
+   - **A read-only check of the bucket's CORS rule** for `PUBLIC_URL`,
+     run once when the bucket is set up (`bin/storage_check` today
+     applies and removes rules, so it needs a test bucket).
+   - **A review of the code and the test suite.** Two goals: fewer lines
+     (duplication, code no longer needed, simpler ways to do the same
+     thing) and best practice (Ruby idioms, error handling, Ractor
+     safety). For the tests, the same two goals, plus a coverage check:
+     measure it, and fill the gaps that matter, not chase a percentage.
+   - **A review of all the docs for clarity.** README, guides, ADRs,
+     SETUP.md and the scaffold's templates: easy to follow for someone
+     new to Monk, consistent with each other and with the code as it is
+     now, and without outdated references.
+   - Other enhancements found along the way.
 
-   It isn't a load balancer's health check: it's heavier and runs once per
-   deploy. A test email is opt-in (`--send-test-mail=addr`). It builds on the
-   check command each `monk add` generator declares for its service
-   (`docs/history/plan-scaffold.md` decision 29). Storage shipped first
-   (0.23), so this release adds its check too: bucket access, and CORS
-   allowing `PUBLIC_URL` (the checks `bin/storage_check` runs by hand
-   today).
+   Left out until a real need shows up: a local "doctor" (the `bin/`
+   scripts and Bundler already say what's wrong), `--json` output for
+   agents, redacted bug-report output, and a `LISTEN` check through
+   PgBouncer (Monk's deploy stack has none).
 
 ## To evaluate
 
@@ -144,7 +146,7 @@ before they become features.
   app but doesn't upgrade one written by an earlier version, so moving an app
   to 0.21's layout means bringing each part over by hand. Options range from
   upgrade notes per release in the `CHANGELOG` to a `monk upgrade` command.
-  `monk check`'s "after upgrading Monk" signal covers part of it.
+  `bin/migrate status` already shows a module's new migrations.
 
 ## Other work
 
