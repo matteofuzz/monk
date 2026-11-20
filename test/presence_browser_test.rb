@@ -95,7 +95,7 @@ class PresenceBrowserTest < Minitest::Test
   end
 
   # iOS can close an app from the switcher, or freeze its page, with no
-  # visibilitychange first (docs/plan-forms.md C1): the page still visible,
+  # visibilitychange first (docs/history/plan-forms.md C1): the page still visible,
   # then pagehide or freeze. Chrome can't freeze a page on command, so the
   # events are dispatched as the browser would.
   def test_a_page_closed_without_being_hidden_says_so_on_pagehide

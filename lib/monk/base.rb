@@ -348,7 +348,7 @@ module Monk
 
       # Files never come through here: they go straight to the bucket
       # (Monk::Storage), so a multipart body is refused rather than
-      # silently read as no params (docs/plan-forms.md decision 1).
+      # silently read as no params (docs/history/plan-forms.md decision 1).
       def parse_body(env)
         type = env["CONTENT_TYPE"].to_s
         if form_body?(env)

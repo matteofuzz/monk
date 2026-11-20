@@ -1,7 +1,7 @@
 require_relative "../test_helper"
 require "yaml"
 
-# monk add deploy (docs/plan-forms.md C3): compose.yaml, the Caddyfile and
+# monk add deploy (docs/history/plan-forms.md C3): compose.yaml, the Caddyfile and
 # .env.production.example, built from the modules installed, before or
 # after it.
 class GeneratorsDeployTest < Minitest::Test

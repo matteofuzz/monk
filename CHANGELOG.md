@@ -4,6 +4,93 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## Unreleased (0.26.0)
+
+### Added
+
+- **Plain HTML forms.** A `<form method="post">` works with no
+  JavaScript:
+  - `application/x-www-form-urlencoded` bodies are parsed into `params`,
+    with a small nested syntax for the query string and the body alike:
+    `a[b]=1` gives `{a: {b: "1"}}`, `a[]=1&a[]=2` gives `{a: ["1", "2"]}`.
+  - There are no arrays of hashes, at most 1000 pairs and 8 levels
+    deep; past that, or with a key used as both a value and a hash,
+    the answer is a 400.
+  - `_method=patch|put|delete` in a POST form body routes as that verb
+    (never from the query string).
+  - The scaffolded login page is a plain form, and the forms guide shows
+    a login and a many-field new/edit form in plain ERB, with errors from
+    a plain model method. There are no form helpers on purpose: the guide
+    and the scaffolded `AGENTS.md` (`## Forms`) carry the patterns.
+  - [`forms.md`](docs/guides/forms.md).
+- **Cross-site requests refused, on every route, by default.**
+  - A browser's POST, PUT, PATCH or DELETE from another site gets a 403,
+    with or without auth. The check is modeled on Go 1.25's
+    `CrossOriginProtection`: `Sec-Fetch-Site`, else `Origin` against
+    `Host`.
+  - A request with neither header (curl, a server's webhook) passes.
+  - A route that must take other sites' browser requests says
+    `allow_cross_origin: true`.
+- **`csrf_field`** (with auth) writes the hidden `csrf_token` input, and
+  `require_csrf!` accepts that field as well as the `x-csrf-token` header.
+- **Flash messages.** `redirect(path, flash: "Saved.")`, and `flash` on
+  the next page: one message, in a short-lived cookie cleared by the page
+  that reads it. The scaffolded layout shows it.
+- **Security headers on every response**: `x-content-type-options:
+  nosniff`, `content-security-policy: frame-ancestors 'none'` and
+  `referrer-policy: strict-origin-when-cross-origin`. A route replaces
+  one by setting it.
+- **`monk add deploy`.** It writes the stack for one Linux host with
+  Docker, from the modules installed:
+  - `compose.yaml`: the app's image as `web`, `ws` and `jobs`, beside
+    Postgres, Redis and Caddy;
+  - a `Caddyfile` with the `/ws` route;
+  - `.env.production.example`;
+  - `bin/deploy_env`, which writes `.env.production` on the host with
+    fresh secrets and the push key pair.
+
+  A module added later appends its own services and settings. Generators
+  declare them with `compose_section` and `production_env_section`.
+  [`deploying.md`](docs/guides/deploying.md) section 4.
+- **[`deploy-hetzner.md`](docs/guides/deploy-hetzner.md)**: one app on a
+  Hetzner Cloud server with Brevo for mail, every step as tested, from
+  the accounts to backups and restores.
+- **`Monk::Auth.verified_session(raw)`** returns a session's subject and
+  expiry; `verify` is built on it.
+
+### Changed
+
+- **`redirect` goes only to this app**, a path or a URL on the request's
+  `Host`, unless `allow_other_host: true`. Anything else raises
+  `Monk::UnsafeRedirectError`. The storage download example passes
+  `allow_other_host: true`.
+- **JSON bodies are capped at 1 MB**, like form bodies: past that the
+  answer is a 413. Malformed JSON, or JSON that isn't an object, is a
+  400; it used to become empty `params`, or crash for an array.
+- **`multipart/form-data` gets a 415**, instead of silently empty
+  `params`: files go through `Monk::Storage`'s direct upload.
+- **Presence: a closed page reads away during the grace, not online.**
+  - An installed iPhone app swiped away from the app switcher closes its
+    socket without saying hidden first. The person read online for 20 s,
+    so a message then sent no push.
+  - A process stopping on a deploy still keeps everyone's status.
+- **The Live client says hidden on `pagehide` and `freeze` too**, not
+  only on `visibilitychange`, so a page closed or frozen without being
+  hidden first reads away at once where the browser lets it run.
+- **A `csrf_token` cookie that no longer matches its session is
+  reissued**, after an `AUTH_SECRET` change or a restore under another
+  secret, say. Before, every `require_csrf!` route answered 403, logout
+  included, until the browser's cookies were cleared.
+- **The scaffolded Dockerfile and `deploying.md`**: a lockfile made
+  before Ruby 4's Bundler may list only the developer's platform;
+  `bundle lock --add-platform x86_64-linux aarch64-linux` fixes it.
+
+### Fixed
+
+- **A route's `self.status = 422` is sent.** A route block's response
+  always went out as 200, and only `halt(422, ...)` set the status. Error
+  and 404 handlers send theirs too.
+
 ## 0.25.0 - 2026-11-18
 
 ### Added

@@ -1,7 +1,7 @@
 # 0.26: Richer HTML support, forms first — plan
 
-Status: in progress. Drafted 2026-11-20; steps 1-9 built 2026-11-20;
-Part C added 2026-11-20.
+Status: done (2026-11-20). Drafted, built and checked 2026-11-20, Part C
+included; released in 0.26.
 Roadmap item 5 (`docs/roadmap.md`).
 
 Make a plain `<form method="post">` work in a Monk app, safely, with no
@@ -522,5 +522,5 @@ works with Live).
 
 - C3: none for 0.26; `--provider` later.
 
-Left for release: the CHANGELOG and the upgrade guide (step 8,
-step 9's redirect guard, step 11's away-in-the-grace).
+Released with the CHANGELOG's 0.26 entry and the upgrade guide's 0.26
+section (`docs/guides/upgrading.md`).

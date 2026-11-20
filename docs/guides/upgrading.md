@@ -14,6 +14,75 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.26
+
+In the `Gemfile`, `gem "monkrb", "~> 0.26", require: "monk"`, then
+`bundle update monkrb`. Most of 0.26 needs nothing from an app, but four
+changes can turn a request that worked into an error. Check each against
+your routes first.
+
+### Check your routes
+
+- **Redirects to another host.** `redirect` now goes only to this app (a
+  path, or a URL on the request's `Host`) and raises
+  `Monk::UnsafeRedirectError` for anything else. Add
+  `allow_other_host: true` where the app builds the location itself and
+  means it: the storage download route an earlier `monk add storage`
+  wrote (`redirect Monk::Storage.url(...)`), a payment provider's
+  checkout, an OAuth authorize URL. Never add it to a location taken
+  from `params`.
+- **Browser requests from other sites.** A POST, PUT, PATCH or DELETE a
+  browser sends from another site now gets a 403. Requests without
+  `Sec-Fetch-Site` or `Origin` (curl, a server's webhook) still pass. A
+  route that must accept another site's browser requests (a form on a
+  partner's site, a cross-origin `fetch` you allow with CORS) needs
+  `allow_cross_origin: true`: `post("/hook", allow_cross_origin: true)`.
+- **Request bodies.** A JSON body over 1 MB is a 413. Malformed JSON, or
+  JSON that isn't an object, is a 400, where it used to arrive as empty
+  `params`. A `multipart/form-data` body is a 415.
+- **Response headers.** Every response carries `x-content-type-options:
+  nosniff`, `content-security-policy: frame-ancestors 'none'` and
+  `referrer-policy: strict-origin-when-cross-origin`. For a page another
+  site may show in a frame, set `content-security-policy` on that route.
+  If the app sets its own `content-security-policy`, it replaces Monk's,
+  so include `frame-ancestors` in it.
+
+Also: a route that sets `self.status` and returns a body now sends that
+status, where it used to send 200.
+
+### Forms (optional)
+
+Plain HTML forms work now ([`forms.md`](forms.md)). To use what a new
+app has, carrying over anything you changed in yours:
+
+- `app/views/layouts/app.erb` shows the flash message
+  (`monk help base --file app/views/layouts/app.erb`).
+- With auth: the login page is a plain form, with no script
+  (`monk help auth --file app/views/auth/login.erb` and
+  `--file app/routes/auth.rb`). The old page keeps working.
+- `AGENTS.md`: the base section's new `## Forms` part, and the cross-site
+  and redirect rules, tell an app's agents how to write forms. They're in
+  the gem at `lib/monk/templates/base/agents.md`
+  (`gem contents monkrb | grep templates/base/agents.md`).
+
+### Deploying with Docker Compose (optional)
+
+`monk add deploy` is new ([`deploying.md`](deploying.md), section 4;
+[`deploy-hetzner.md`](deploy-hetzner.md)). It counts as installed when
+`compose.yaml` exists, so an app with a hand-written one should move it
+aside first, run `monk add deploy`, then carry over what it needs.
+Keep `services:` the last key of the new file, since modules append
+there. A `.env.production` you already have keeps working: compare it
+with the new `.env.production.example`, which uses Compose's service
+names (`DB_HOST=postgres`).
+
+### Presence
+
+No change to make. A page whose socket closes now reads away during the
+grace, then offline, instead of keeping its last status. So an
+`on_change` hook sees online, away, offline where it used to see online,
+offline. A process stopping on a deploy still keeps everyone's status.
+
 ## 0.25
 
 In the `Gemfile`, `gem "monkrb", "~> 0.25", require: "monk"` (what a new

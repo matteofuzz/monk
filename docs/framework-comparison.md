@@ -193,12 +193,20 @@ Ractor-shareability guarantees (`.freeze!`, `UnshareableRouteError`,
 Rails users never have to think about — but it's the framework's actual
 reason to exist, not incidental bloat.
 
-Note: `rack-protection` (Sinatra's default clickjacking/XSS-header
-middleware suite) has no full equivalent in Monk today. Monk's `auth` module
-covers sessions/tokens/cookies/rate-limiting and a stateless double-submit
-CSRF token (`require_csrf!`, cookie-authenticated requests only), but generic
-security-header middleware is currently a gap — fillable by requiring
-`rack-protection` directly, since Monk apps are plain Rack underneath.
+Note on `rack-protection` (Sinatra's default protection middleware suite).
+Since 0.26, Monk covers its most useful parts in core, on by default:
+- other sites' browser POST/PUT/PATCH/DELETE requests are refused on
+  every route, with or without auth (modeled on Go's
+  `CrossOriginProtection`);
+- `nosniff`, `frame-ancestors 'none'` and a referrer policy on every
+  response;
+- `redirect` only to the app.
+
+The `auth` module adds a stateless double-submit CSRF token
+(`require_csrf!`, the header or `csrf_field`) for cookie sessions. The
+rest of `rack-protection` (path traversal, session hijacking heuristics,
+IP spoofing) can still be added by requiring it, since Monk apps are
+plain Rack underneath.
 
 **Bottom line**: closer to Sinatra than Rails in weight and boot cost
 (small dependency graph, no autoloading, no framework-managed process

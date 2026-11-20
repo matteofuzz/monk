@@ -16,6 +16,8 @@ open.
 
 **Pitfalls:**
 - Only signed-in sockets count; a visitor is never online.
+- `online?` is false once every page is hidden or closed (a closed page
+  reads away for the grace, then offline): send a push when it's false.
 - `on_change` runs in its own Ractor in `bin/server`: build its block in a
   module body; it sees no request, params or session.
 - `on_change` gets a batch: push one Live message per batch (or per 50),

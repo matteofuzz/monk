@@ -291,7 +291,7 @@ That's the whole surface. No tag builders, no `link_to`, no form helpers —
 the templates are HTML.
 
 Since 0.26 plain forms work without helpers (`docs/guides/forms.md`,
-`docs/plan-forms.md`): Monk reads form bodies, and auth adds the one
+`docs/history/plan-forms.md`): Monk reads form bodies, and auth adds the one
 helper this doc foresaw, `csrf_field`. Any further form helper has to
 earn its place against writing the HTML.
 

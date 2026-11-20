@@ -518,7 +518,7 @@ Flow:
    cookie doesn't match (`AUTH_SECRET` changed since login) gets a new
    one on that 403, and on any request that reads `current_subject`, so
    the browser isn't stuck until its cookies are cleared
-   (`docs/plan-forms.md`, C2).
+   (`docs/history/plan-forms.md`, C2).
 4. `GET`/`HEAD` routes never mutate state — a rule the app must hold, since
    `SameSite=Lax` only withholds the cookie from cross-site requests using
    unsafe methods, not from a cross-site top-level `GET` navigation. This
@@ -534,7 +534,7 @@ making the request.
 Since 0.26 a third layer sits in front of both, in `Monk::Base` and
 without auth: a state-changing request whose `Sec-Fetch-Site` (or, from
 older browsers, `Origin`) says it came from another site is refused with
-`403` before any route runs (`docs/plan-forms.md` decision 2). The
+`403` before any route runs (`docs/history/plan-forms.md` decision 2). The
 double-submit check stays, as defence in depth.
 
 ## The WebSocket case: identity across a second process
