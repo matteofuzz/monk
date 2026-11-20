@@ -78,7 +78,17 @@ gets its own design doc and plan when work on it starts.
      auth sessions, sending from a job per device, and deleting
      subscriptions the push service reports as gone (404/410).
 
-5. **0.26: `monk check`: verifying an environment's wiring.** `bin/check`
+5. **0.26: Richer HTML support, forms first.** Views offer only `render`, `h`,
+   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
+   deliberately left them out). Templates write every form by hand, including
+   its CSRF field and the values to fill back in after a failed submit. Before
+   helpers, plain forms need two things Monk lacks: `params` from an
+   `application/x-www-form-urlencoded` body (only the query string and JSON
+   bodies are parsed today), and `require_csrf!` accepting a form field, not
+   only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
+   the auth module's login page does.
+
+6. **0.27: `monk check`: verifying an environment's wiring.** `bin/check`
    (written by the base app) loads `config/load` and runs a read-only check
    for each loaded module. The checks belong to the framework modules
    (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
@@ -111,16 +121,6 @@ gets its own design doc and plan when work on it starts.
    (0.23), so this release adds its check too: bucket access, and CORS
    allowing `PUBLIC_URL` (the checks `bin/storage_check` runs by hand
    today).
-
-6. **0.27: Richer HTML support, forms first.** Views offer only `render`, `h`,
-   `raw` and `asset_path`, with no form helpers (`docs/design/views.md`
-   deliberately left them out). Templates write every form by hand, including
-   its CSRF field and the values to fill back in after a failed submit. Before
-   helpers, plain forms need two things Monk lacks: `params` from an
-   `application/x-www-form-urlencoded` body (only the query string and JSON
-   bodies are parsed today), and `require_csrf!` accepting a form field, not
-   only the `X-CSRF-Token` header. Until then a page posts with `fetch`, as
-   the auth module's login page does.
 
 ## To evaluate
 
