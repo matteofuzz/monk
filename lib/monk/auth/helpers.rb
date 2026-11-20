@@ -7,10 +7,20 @@ module Monk
     # memoizing current_subject on it is exempt from the app's
     # shareability constraints -- nothing here needs Ractor.make_shareable.
     module Helpers
+      # With a session cookie, also mends the csrf_token cookie when it
+      # doesn't match the session: after AUTH_SECRET changes (a restored
+      # backup, a rotated secret) the session still verifies, since it's
+      # stored as a plain hash, but the cookie was signed with the old
+      # secret, and every require_csrf! route, logout included, would be
+      # a 403 until the browser's cookies were cleared.
       def current_subject
         return @current_subject if defined?(@current_subject)
+        return @current_subject = Monk::Auth.verify(bearer_token) if bearer_token
 
-        @current_subject = Monk::Auth.verify(bearer_token || session_cookie_token)
+        token = session_cookie_token
+        session = Monk::Auth.verified_session(token)
+        reissue_csrf_cookie(token, session[:expires_at]) if session
+        @current_subject = session&.fetch(:subject)
       end
 
       def require_user!
@@ -32,6 +42,9 @@ module Monk
         return if cookie_token && provided.is_a?(String) &&
           OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
 
+        # A valid session gets a csrf_token cookie that matches before the
+        # 403, so a page that sent a stale one succeeds when it tries again.
+        current_subject
         halt(403)
       end
 
@@ -76,6 +89,15 @@ module Monk
 
         token = auth_header.delete_prefix("Bearer ")
         token.empty? ? nil : token
+      end
+
+      def reissue_csrf_cookie(session_token, expires_at)
+        expected = Monk::Auth.csrf_token_for(session_token)
+        sent = request_cookies["csrf_token"]
+        return if sent && OpenSSL.secure_compare(expected, sent)
+
+        max_age = [(expires_at - Time.now).to_i, 0].max
+        add_response_cookie("csrf_token", expected, http_only: false, max_age: max_age)
       end
 
       def add_response_cookie(name, value, http_only:, max_age:)

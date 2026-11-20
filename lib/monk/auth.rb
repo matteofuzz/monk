@@ -251,6 +251,13 @@ module Monk
       end
 
       def verify(raw)
+        verified_session(raw)&.fetch(:subject)
+      end
+
+      # As #verify, with when the session expires: {subject:, expires_at:},
+      # or nil. The helpers use it to reissue a CSRF cookie that lives as
+      # long as its session.
+      def verified_session(raw)
         ensure_configured!
         return nil if raw.nil? || raw.empty?
 
@@ -259,7 +266,7 @@ module Monk
         return nil if row[:revoked_at]
         return nil if row[:expires_at] <= Time.now
 
-        row[:subject]
+        { subject: row[:subject], expires_at: row[:expires_at] }
       end
 
       def revoke(raw)

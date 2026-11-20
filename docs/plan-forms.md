@@ -150,6 +150,14 @@ Settled while building steps 1-6:
     guide's two examples (run against Postgres) and a `## Forms` section
     in the scaffolded `AGENTS.md`, which an app's agents read without
     Monk's docs.
+17. **A stale `csrf_token` cookie is reissued** (C2). `current_subject`,
+    on the cookie path with a valid session, sets `csrf_token` again when
+    the request's doesn't match the session (or is missing), with the
+    session's remaining lifetime; `require_csrf!` calls it before its 403,
+    so the retry passes. One HMAC per signed-in request; nothing sent when
+    it matches. `Monk::Auth.verified_session` gives the expiry (`verify`
+    is built on it). Logout keeps `require_csrf!`: once reissued, it
+    passes like any route.
 
 ## Part A: the basics (committed)
 
@@ -280,6 +288,8 @@ secret. A `fetch` that sends the cookie's value is.
   there, but it only unsticks logout.
 
 **Leaning:** reissue; logout then needs no special case.
+
+**Built (decision 17).**
 
 ### C3. Deploying an app with websocket, jobs and auth
 
@@ -420,14 +430,14 @@ works with Live).
    - Done. Flash (decision 15).
    - Done. Form helpers and validation errors: patterns, not code
      (decision 16).
-10. C2: CSRF cookie reissued (or logout let through).
+10. Done. C2: a stale CSRF cookie is reissued (decision 17).
 11. C1: presence on a closed iPhone app, measured on the device.
 12. C3: `monk add deploy`, then `docs/guides/deploy-hetzner.md` and the
     deploy module's `AGENTS.md` section.
 
 ## Open
 
-- C1, C2: the options above.
+- C1: the options above.
 - C3: none for 0.26; `--provider` later.
 
 Left for release: the CHANGELOG and the upgrade guide (step 8,

@@ -514,7 +514,11 @@ Flow:
    `HMAC-SHA256(secret, session_cookie_value)`. Compare with
    `OpenSSL.secure_compare`, per the existing token-comparison rule below.
    Mismatch or missing header → `403`, distinct from the `401` an invalid
-   session produces.
+   session produces. Since 0.26, a valid session whose `csrf_token`
+   cookie doesn't match (`AUTH_SECRET` changed since login) gets a new
+   one on that 403, and on any request that reads `current_subject`, so
+   the browser isn't stuck until its cookies are cleared
+   (`docs/plan-forms.md`, C2).
 4. `GET`/`HEAD` routes never mutate state — a rule the app must hold, since
    `SameSite=Lax` only withholds the cookie from cross-site requests using
    unsafe methods, not from a cross-site top-level `GET` navigation. This

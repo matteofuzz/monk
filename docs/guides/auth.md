@@ -44,8 +44,18 @@ browsers, `set_session_cookie(session)` sets that cookie (plus a readable
 `csrf_token` one) instead of returning the token as JSON, and
 `require_csrf!` guards state-changing routes — a no-op for Bearer
 requests, since a forged cross-origin request has no way to set that
-header. `log_out!` ends the current session (revokes it, Bearer or cookie,
+header. A form sends the token with `<%= csrf_field %>`, `fetch` with the
+`x-csrf-token` header (the cookie's value; see [`forms.md`](forms.md)).
+`log_out!` ends the current session (revokes it, Bearer or cookie,
 and clears the cookies; call `require_csrf!` first on a cookie route).
+
+The `csrf_token` cookie is signed with `AUTH_SECRET`, sessions aren't:
+after the secret changes (a new one, or a backup restored on a server with
+another) sessions still work, and Monk replaces a `csrf_token` cookie that
+no longer matches on the next signed-in request, a 403 from
+`require_csrf!` included. A `fetch` that got that 403 succeeds when it
+tries again. Keep `AUTH_SECRET` with your backups anyway: sessions survive
+without it, but nothing else signed with it does.
 `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows ([Cleaning up](#cleaning-up-expired-rows)). Full design and phase-by-phase
 build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/plan-auth.md`.
