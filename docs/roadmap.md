@@ -130,12 +130,20 @@ gets its own design doc and plan when work on it starts.
      SETUP.md and the scaffold's templates: easy to follow for someone
      new to Monk, consistent with each other and with the code as it is
      now, and without outdated references.
+   - **Ruby 4.1 fixes, ahead of its release.** `Monk::Base.freeze!` and
+     the pool work on 4.1.0-preview1, and the pool no longer hangs when
+     stopped while a worker is still connecting, a hang 4.0 has too.
    - Other enhancements found along the way.
 
    Left out until a real need shows up: a local "doctor" (the `bin/`
    scripts and Bundler already say what's wrong), `--json` output for
    agents, redacted bug-report output, and a `LISTEN` check through
    PgBouncer (Monk's deploy stack has none).
+
+7. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+   recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
+   4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
+   and the upgrade guide.
 
 ## To evaluate
 
