@@ -35,6 +35,31 @@ A Monk app (Ruby, Ractor-based). Read this before changing code.
 - A browser request from another site to any route but a GET gets a 403.
   A route that must take one (a webhook) declares
   `allow_cross_origin: true`.
+- `redirect` goes only to this app (a path, or a URL on this host) and
+  raises otherwise; `allow_other_host: true` only for a URL the app built.
+
+## Forms
+
+Plain HTML forms, no form helpers: write the `<input>`s.
+
+- `params` reads form bodies and query strings: `a[b]=1` is
+  `{a: {b: "1"}}`, `a[]=1&a[]=2` is `{a: ["1", "2"]}`, keys are symbols,
+  values strings. No arrays of hashes (`a[][b]`). Path params win.
+- Failed submit: set the errors, then `halt(422, render("x/new"))`; the
+  form fills back from `params`. Success: `redirect "/x/1", flash: "Saved."`
+  (the layout shows `flash`).
+- Never pass `params` to `Model.create`/`update`: build the row field by
+  field in the model (`from_form`), converting `""` to `nil`, `"1"` to
+  `true`. Errors are a Hash field => message from a plain method.
+- One partial for new and edit, reading `@event` (the record, or
+  `params[:event]` after a failed submit). Edit posts with a hidden
+  `<input name="_method" value="patch">`.
+- Select/radio: `<%= "selected" if e[:category] == value %>` (`checked`).
+  Multiple select: `name="event[tags][]"`. Checkbox: a hidden `0` with
+  the same name before it; a record holds `true`, a form `"1"`, so test
+  `[true, "1"].include?(e[:online])`.
+- No `multipart/form-data` (415): files go through `Monk::Storage`'s
+  direct upload, and the form posts the key.
 
 ## Examples
 

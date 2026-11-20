@@ -139,6 +139,16 @@ Settled while building steps 1-6:
     setting cookies moved from `Monk::Auth::Helpers` into `Context` as
     private methods both use; no public cookie API. The scaffolded layout
     shows it, and auth's logout example uses it.
+16. **No form helpers, and no validation API.** Writing a login and a
+    many-field form (text, date, number, select, multiple select, radios,
+    a checkbox, new and edit through one partial) in plain ERB showed
+    fields filling back in one short expression each. The only noise is
+    `<%= "selected" if ... %>` per option, readable and known to every
+    agent. Errors are a Hash from a plain model method, shown by a
+    two-line partial. Both are documented patterns instead: the forms
+    guide's two examples (run against Postgres) and a `## Forms` section
+    in the scaffolded `AGENTS.md`, which an app's agents read without
+    Monk's docs.
 
 ## Part A: the basics (committed)
 
@@ -200,11 +210,8 @@ Candidates, none committed. Each is tried against real forms after A and
 kept only if it clearly pays for itself.
 
 - **Flash**: kept, built (decision 15).
-- **Form helpers**: fields filling their value back after a failed submit,
-  `select` options. Plain ERB (`value="<%= params[:email] %>"`) may be
-  enough, in which case the guide shows the pattern and Monk adds nothing.
-- **Validation errors**: a convention for an errors hash and showing a
-  message next to its field. Possibly only a documented pattern.
+- **Form helpers**: not built (decision 16).
+- **Validation errors**: a documented pattern, no code (decision 16).
 - **Redirect guard**: kept, built (decision 14).
 
 ## Out of scope
@@ -241,7 +248,10 @@ works with Live).
    - Done. Redirect guard (decision 14). At release, the upgrade guide:
      a redirect to another host needs `allow_other_host: true`.
    - Done. Flash (decision 15).
+   - Done. Form helpers and validation errors: patterns, not code
+     (decision 16).
 
 ## Open
 
-- Part B, item by item.
+Nothing. Left for release: the CHANGELOG and the upgrade guide (step 8,
+step 9's redirect guard).
