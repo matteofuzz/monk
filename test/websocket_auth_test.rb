@@ -137,8 +137,8 @@ class WebSocketAuthTest < Minitest::Test
       assert_includes error.message, origin.inspect
     end
 
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1",
-                                         allowed_origins: ["https://app.monkrb.org", "http://localhost:9292"])
+    origins = ["https://app.monkrb.org", "http://localhost:9292"]
+    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", allowed_origins: origins)
     server.instance_variable_get(:@tcp_server).close
   end
 

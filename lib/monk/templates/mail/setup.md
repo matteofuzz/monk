@@ -12,6 +12,12 @@ a domain you've verified with that provider (SPF, DKIM). An unset `MAIL_URL`
 fails the boot outside development. Provider examples:
 `docs/guides/mail.md` in the monk repo.
 
+Check the login, without sending anything:
+
+```bash
+bundle exec ruby -e 'require "./config/settings"; require "./config/mail"; puts Monk::Mail.check'
+```
+
 ### Check it works
 
 1. `bundle exec rake test` runs `test/mail_test.rb`, which delivers a

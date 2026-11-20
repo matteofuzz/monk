@@ -147,8 +147,8 @@ module Monk
 
       def validate_public_url!(value, deployed)
         unless value.to_s.match?(ORIGIN)
-          raise InvalidSettingError, "PUBLIC_URL must be an origin, scheme and host only (https://app.your-domain.com, " \
-                                     "no path or trailing slash), got #{value.inspect}"
+          raise InvalidSettingError, "PUBLIC_URL must be an origin, scheme and host only " \
+                                     "(https://app.your-domain.com, no path or trailing slash), got #{value.inspect}"
         end
         return unless deployed
 

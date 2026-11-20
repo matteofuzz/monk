@@ -17,6 +17,8 @@ in `.env.test`); assert on that file's lines.
 - Render the HTML before `deliver_later`: the job only sends.
 - `MAIL_URL` is required outside development; `MAIL_FROM` must be on a
   verified domain, or mail lands in spam.
+- `Monk::Mail.check` tests `MAIL_URL`'s connection and login without
+  sending (SETUP.md, mail).
 
 **Examples:** `mail-welcome` in `app/mailers/app_mailer.rb` and
 `app/routes/mail.rb`.

@@ -57,8 +57,8 @@ class GeneratorsWebSocketTest < Minitest::Test
 
     with_new_app(:websocket, options: { transport: "redis" }) do |dest|
       uncomment_examples(dest) # a handler to serve: the chat example
-      out, status = run_generated_script(dest, "bin/websocket_server", "REDIS_URL" => redis_test_url,
-                                                                        "WS_ALLOWED_ORIGINS" => "https://other.monkrb.org/")
+      env = { "REDIS_URL" => redis_test_url, "WS_ALLOWED_ORIGINS" => "https://other.monkrb.org/" }
+      out, status = run_generated_script(dest, "bin/websocket_server", env)
 
       refute status.success?, out
       assert_includes out, "allowed_origins must be origins"

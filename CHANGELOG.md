@@ -6,6 +6,13 @@ in `lib/monk/version.rb`.
 
 ## Unreleased (0.27.0)
 
+### Added
+
+- **`Monk::Mail.check`**: connects, starts TLS and logs in with
+  `MAIL_URL`, then quits without sending, so a wrong password or a
+  blocked port shows up on deploy, not when nobody gets their login link
+  ([`mail.md`](docs/guides/mail.md#checking-mail_url)).
+
 ### Changed
 
 - **Settings that are present but wrong are refused at boot**, in every

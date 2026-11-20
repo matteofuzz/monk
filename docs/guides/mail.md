@@ -89,6 +89,27 @@ Postmark, Mailgun; Resend uses 2587), useful when a network blocks 587:
 change only the port. Verify your sending domain with the provider
 (SPF, DKIM) before going live.
 
+### Checking `MAIL_URL`
+
+`Monk::Mail.check` does what a send does up to the message: it connects,
+starts TLS and logs in, then quits. Nothing is sent. It returns what it
+did, or raises `Monk::Mail::DeliveryError` saying what failed: the server
+unreachable, no STARTTLS, the login refused. The password is never in the
+message.
+
+```bash
+bundle exec ruby -e 'require "./config/settings"; require "./config/mail"; puts Monk::Mail.check'
+# smtp://8f1a2b001@smtp-brevo.com:***@smtp-relay.brevo.com:587: connected (STARTTLS),
+#   logged in as 8f1a2b001@smtp-brevo.com. Nothing was sent.
+```
+
+It loads only the mail config, so it needs no database. Run it after
+setting `MAIL_URL` on a deploy, before anyone waits for a login link: in
+the Compose stack, `docker compose exec -T web bundle exec ruby -e '...'`.
+It doesn't check `MAIL_FROM`: a sender on an unverified domain is
+accepted at login and lands in spam later. To see a message arrive, send
+one with `Monk::Mail.deliver`.
+
 ## `Monk::Mail.deliver`
 
 ```ruby

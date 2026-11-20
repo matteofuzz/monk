@@ -191,6 +191,60 @@ class MailSMTPTransportTest < Minitest::Test
     Monk::Mail.reset!
   end
 
+  # check: everything a send does up to the message, then QUIT.
+
+  def test_check_connects_starts_tls_and_logs_in_without_sending
+    start_server(starttls: true)
+
+    checked = transport(host: "localhost", user: "me@app.test", password: "s3cret", starttls: :always)
+    result = trusting_fake_cert { Ractor.new(checked) { |t| t.check(helo: "app.test") }.value }
+
+    session = @server.last_session
+    assert session.tls
+    assert_equal ["me@app.test", "s3cret"], session.auth
+    assert_equal "app.test", session.helo
+    assert_nil session.mail_from, "nothing sent"
+    assert_includes result, "connected (STARTTLS), logged in as me@app.test. Nothing was sent."
+    refute_includes result, "s3cret"
+  end
+
+  def test_check_without_credentials_says_there_was_no_login
+    start_server
+
+    result = transport(starttls: :auto).check
+
+    assert_includes result, "connected (STARTTLS if offered), no login."
+    assert_nil @server.last_session.mail_from
+  end
+
+  def test_check_refused_login_raises_without_leaking_the_password
+    start_server(reject: { auth: "535 5.7.8 Authentication failed" })
+
+    error = assert_raises(Monk::Mail::DeliveryError) do
+      transport(user: "u", password: "hunter2", starttls: :auto).check
+    end
+
+    assert_includes error.message, "SMTP check via 127.0.0.1:#{@server.port} failed"
+    assert_includes error.message, "535"
+    refute_includes error.message, "hunter2"
+  end
+
+  def test_check_refuses_a_server_without_starttls_when_it_is_required
+    start_server
+
+    error = assert_raises(Monk::Mail::DeliveryError) do
+      transport(user: "u", password: "p", starttls: :always).check
+    end
+    assert_match(/STARTTLS/i, error.message)
+  end
+
+  def test_check_of_an_unreachable_server_raises
+    closed_port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+
+    error = assert_raises(Monk::Mail::DeliveryError) { transport(port: closed_port).check }
+    assert_instance_of Errno::ECONNREFUSED, error.cause
+  end
+
   def test_returns_the_message
     start_server
     message = build_message

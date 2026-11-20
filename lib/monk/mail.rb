@@ -55,6 +55,20 @@ module Monk
         config[:transport].deliver(message)
       end
 
+      # MAIL_URL checked without sending anything: with smtp:// or
+      # smtps://, it connects, starts TLS and logs in as a send would, then
+      # quits. Returns what it did; a failure raises DeliveryError saying
+      # what went wrong. For a deploy, before anyone waits for a login
+      # link (docs/guides/mail.md, "Checking MAIL_URL").
+      def check
+        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.check" unless config
+
+        transport = config[:transport]
+        transport.class.require_library! if transport.class.respond_to?(:require_library!)
+        helo = config[:from] ? MIME.domain(Address.bare(config[:from])) : "localhost"
+        transport.check(helo: helo)
+      end
+
       # Renders a Monk::Views template to an HTML String for deliver's
       # html: -- e.g. views/mail/magic_link.erb:
       #

@@ -45,24 +45,41 @@ module Monk
         # Monk::Mail::DeliveryError (the original is its #cause), so a
         # caller rescues one class whatever went wrong.
         def deliver(message)
-          smtp = Net::SMTP.new(host, port, tls: tls, starttls: starttls == :never ? false : starttls)
-          smtp.open_timeout = open_timeout
-          smtp.read_timeout = read_timeout
-          smtp.start(helo: MIME.domain(message.envelope_from), user: user, secret: password) do |session|
-            session.send_message(message.to_mime, message.envelope_from, *message.envelope_to)
+          session(MIME.domain(message.envelope_from)) do |smtp|
+            smtp.send_message(message.to_mime, message.envelope_from, *message.envelope_to)
           end
           message
         rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
           raise DeliveryError, "SMTP delivery via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
         end
 
+        # What #deliver does up to the message: connect, TLS, log in. Then
+        # it quits, so nothing is sent. Returns what it did, for a person.
+        def check(helo: "localhost")
+          session(helo) { nil }
+          encryption = if tls then "TLS"
+                       else { always: "STARTTLS", auto: "STARTTLS if offered", never: "no TLS" }.fetch(starttls)
+                       end
+          "#{redacted_url}: connected (#{encryption}), #{user ? "logged in as #{user}" : "no login"}. Nothing was sent."
+        rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
+          raise DeliveryError, "SMTP check via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
+        end
+
         # Never print the password -- a transport ends up in logs and
         # exception messages more easily than anyone intends.
-        def inspect
-          "#<#{self.class.name} #{tls ? "smtps" : "smtp"}://#{"#{user}:***@" if user}#{host}:#{port} " \
-            "starttls=#{starttls}>"
-        end
+        def inspect = "#<#{self.class.name} #{redacted_url} starttls=#{starttls}>"
         alias_method :to_s, :inspect
+
+        private
+
+        def redacted_url = "#{tls ? "smtps" : "smtp"}://#{"#{user}:***@" if user}#{host}:#{port}"
+
+        def session(helo, &)
+          smtp = Net::SMTP.new(host, port, tls: tls, starttls: starttls == :never ? false : starttls)
+          smtp.open_timeout = open_timeout
+          smtp.read_timeout = read_timeout
+          smtp.start(helo: helo, user: user, secret: password, &)
+        end
       end
 
       # Writes each message to Monk::Log instead of sending it: the
@@ -74,6 +91,10 @@ module Monk
       # magic link gets clicked. Same stdout posture as Base#log_request
       # and Monk::Auth.log_dev_link.
       Log = Data.define do
+        def check(**)
+          "log://: each message is written to log/#{Monk.env}.log. Nothing is sent."
+        end
+
         def deliver(message)
           Monk::Log.info("[mail] #{summary(message)}")
           if Monk.env.development?

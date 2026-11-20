@@ -192,4 +192,26 @@ class MailConfigTest < Minitest::Test
 
     assert_equal ["smtp.example.test", "a@app.test"], result
   end
+
+  def test_check_with_log_transport_says_nothing_is_sent
+    Monk::Mail.configure(url: "log://")
+
+    assert_equal "log://: each message is written to log/test.log. Nothing is sent.", Monk::Mail.check
+  end
+
+  def test_check_before_configure_raises
+    assert_raises(Monk::Mail::NotConfiguredError) { Monk::Mail.check }
+  end
+
+  # The HELO name comes from MAIL_FROM, as a send's does from its sender.
+  def test_check_says_helo_with_the_default_senders_domain
+    require_relative "support/fake_smtp_server"
+    server = FakeSMTPServer.new
+    Monk::Mail.configure(url: "smtp://127.0.0.1:#{server.port}?starttls=never", from: "Shop <no-reply@shop.test>")
+
+    assert_includes Monk::Mail.check, "connected (no TLS), no login. Nothing was sent."
+    assert_equal "shop.test", server.last_session.helo
+  ensure
+    server&.stop
+  end
 end

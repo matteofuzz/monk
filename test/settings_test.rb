@@ -73,7 +73,7 @@ class SettingsTest < Minitest::Test
 
   def test_public_url_must_be_an_origin_in_every_environment
     %w[development test production].each do |env|
-      ["https://app.monkrb.org/", "https://app.monkrb.org/app", "app.monkrb.org", "https://app.monkrb.org?x=1"].each do |url|
+      %w[https://app.monkrb.org/ https://app.monkrb.org/app app.monkrb.org https://app.monkrb.org?x=1].each do |url|
         error = assert_raises(Monk::InvalidSettingError, "#{url} in #{env}") { boot(env, public_url: url) }
         assert_match(/PUBLIC_URL must be an origin/, error.message)
       end

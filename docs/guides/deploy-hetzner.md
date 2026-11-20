@@ -230,6 +230,15 @@ docker compose up -d --force-recreate web jobs
 Brevo's SMTP keys are letters, digits and dashes, so they need no
 encoding. Another provider's password might.
 
+Check that the login works, without sending anything:
+
+```bash
+docker compose exec -T web bundle exec ruby -e 'require "./config/settings"; require "./config/mail"; puts Monk::Mail.check'
+```
+
+It answers `connected (STARTTLS), logged in as ...`, or says what failed
+(see [`mail.md`](mail.md#checking-mail_url)).
+
 `jobs` is the process that sends mail. If nothing arrives, check
 `docker compose logs --tail 50 jobs` and the log file, then the
 recipient's spam folder.
