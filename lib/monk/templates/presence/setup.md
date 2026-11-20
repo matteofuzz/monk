@@ -24,9 +24,9 @@ each change to the pages showing those people, with live.
   and needs a direct one: not through PgBouncer in transaction mode.
   Each `bin/server` process opens one more, plus one for reading the
   statuses when it reacts.
-- A person stays as they were for `grace:` seconds (20) after their last
-  page closes, so a deploy restarting `bin/websocket_server` changes
-  nobody's status.
+- A person is away for `grace:` seconds (20) after their last page
+  closes, then offline; a deploy restarting `bin/websocket_server`
+  changes nobody's status.
 
 ### Check it works
 

@@ -14,9 +14,9 @@ require_relative "persistence"
 #
 # :online is a page open and visible, :away only hidden ones (a phone in a
 # pocket), :offline none; last_seen_at is when an offline person was last
-# there. grace: seconds after a person's last page closes before they
-# read as offline, so a phone changing network or a deploy reconnecting
-# every page changes nobody's status.
+# there. grace: seconds a person reads away after their last page closes
+# before offline, so a phone changing network never reads offline, and a
+# deploy reconnecting every page changes nobody's status.
 Monk::Presence.configure(db_name: :primary, grace: 20)
 
 # on_change runs in bin/server (config.ru starts it) each time some

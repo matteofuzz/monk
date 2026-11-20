@@ -47,13 +47,24 @@ class PresenceStoreTest < Minitest::Test
     assert_equal(%i[online away offline], statuses.values_at("u:1", "u:2", "u:3").map { |s| s[:status] })
   end
 
-  def test_a_gone_row_counts_for_the_grace_with_its_last_status
-    @store.flush(@process, online: [], away: ["u:1"])
+  def test_a_gone_row_counts_as_away_for_the_grace
+    @store.flush(@process, online: ["u:1"], away: [])
     @store.flush(@process, gone: ["u:1"])
 
     assert_equal :away, @store.status(["u:1"])["u:1"][:status]
     age_gone(DB_NAME, @process, "u:1", 21)
     assert_equal :offline, @store.status(["u:1"])["u:1"][:status]
+  end
+
+  # iOS closes a swiped-away app's socket without saying hidden first:
+  # online through the grace would hold back the push for a new message.
+  def test_a_close_is_an_away_transition_at_once
+    @store.flush(@process, online: ["u:1"], away: [])
+    @store.settle(["u:1"])
+
+    @store.flush(@process, gone: ["u:1"])
+
+    assert_equal [["u:1", :away, nil]], transitions(@store.settle(["u:1"]))
   end
 
   # Read in the tick between the rows expiring and their settling.
@@ -105,7 +116,7 @@ class PresenceStoreTest < Minitest::Test
     @store.rewrite(@process, online: ["u:3"], away: ["u:1"])
 
     rows = sql("SELECT subject, status, gone_at IS NOT NULL AS gone FROM monk_presence ORDER BY subject")
-    assert_equal([%w[u:1 away f], %w[u:2 online t], %w[u:3 online f]],
+    assert_equal([%w[u:1 away f], %w[u:2 away t], %w[u:3 online f]],
       rows.map { |r| [r["subject"], r["status"], r["gone"] ? "t" : "f"] },)
   end
 
@@ -140,7 +151,7 @@ class PresenceStoreTest < Minitest::Test
     @store.flush(@process, online: ["u:1"], away: [])
     @store.settle(["u:1"])
     @store.flush(@process, gone: ["u:1"])
-    assert_empty @store.settle(["u:1"]), "still inside the grace"
+    assert_equal [["u:1", :away, nil]], transitions(@store.settle(["u:1"])), "away inside the grace"
 
     gone_at = age_gone(DB_NAME, @process, "u:1", 21)
     settled = @store.settle([])
@@ -151,14 +162,15 @@ class PresenceStoreTest < Minitest::Test
     assert_equal({ status: :offline, last_seen_at: settled.first.last_seen_at }, @store.status(["u:1"])["u:1"])
   end
 
-  def test_a_reconnect_inside_the_grace_settles_nothing
+  def test_a_reconnect_inside_the_grace_never_goes_offline
     @store.flush(@process, online: ["u:1"], away: [])
     @store.settle(["u:1"])
     @store.flush(@process, gone: ["u:1"])
     @store.settle(["u:1"])
     @store.flush(@process, online: ["u:1"], away: [])
 
-    assert_empty @store.settle(["u:1"])
+    assert_equal [["u:1", :online, nil]], transitions(@store.settle(["u:1"]))
+    assert_nil sql("SELECT gone_at FROM monk_presence").getvalue(0, 0)
   end
 
   def test_a_dead_processs_subjects_go_offline_last_seen_at_its_last_heartbeat_and_it_is_pruned

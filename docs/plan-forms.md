@@ -276,35 +276,28 @@ to send it. Browser tests dispatch both events on a visible page, with
 a server silence window far longer than the test, and see Away at once
 (both time out without the change).
 
-**The device test decides the rest.** On the iPhone, with the app open
-and visible, swipe it away from the app switcher, and time Away on a
-second device:
+**Measured on the iPhone (2026-11-20),** with `monk_live.js` patched
+by hand into monk_talk staging's web container: the app open and
+visible, swiped away from the app switcher, the dot on a second device
+stayed **green for about 21 s, then turned to reachable**. So iOS
+closed the socket at once, without running `pagehide`, `freeze` or a
+late `visibilitychange` first: the minute's silence window (S1, S2
+below) never came into it. What held the person online was the grace:
+a closed socket's row kept its last status, online, for 20 s.
 
-- **Away within a second or two**: iOS fired `pagehide` (or a late
-  `visibilitychange`) before freezing. C1 is done; the push gap closes.
-- **Still about a minute**: nothing ran before the freeze, so only the
-  server can see it. Then one of:
-  - **S1. A shorter window, at no cost**: `visible_for = HEARTBEAT +
-    PONG_TIMEOUT` (35 s) instead of `2 × HEARTBEAT`, still checked on
-    the server's ping: Away 35-60 s after the last ping, not 50-75 s.
-    A visible page pings every 25 s, so 35 s of silence is already one
-    missed ping and a pong timeout. Changes ADR 0019's rule.
-  - **S2. Away on time**: the heartbeat thread already sleeps until the
-    earlier of its next ping and the idle deadline; it also wakes at the
-    visibility deadline. Away exactly 35 s after the last ping, at about
-    one extra wake per visible socket per interval: to measure with
-    `bin/benchmark_ws_connect --presence` against ADR 0019's numbers
-    before deciding.
-  - Either way the gap stays above half a minute: what a WebSocket can
-    tell from a phone that went silent. The rest is the app's choice
-    (send the push anyway when the page hasn't pinged for a while).
+**Fixed (2026-11-20), server side:** a socket that closes marks its
+row gone *and away* (`Store`'s `FLUSH_SQL` and `REWRITE_SQL`), so the
+person reads away at once, then offline after the grace, and a message
+in between gets its push. Rows a stopping process marks gone
+(`MARK_ALL_GONE_SQL`, a deploy) keep their status, so a deploy still
+changes nobody's. A page reconnecting after a network change shows the
+away ring until it's back; it never shows offline. ADR 0019 amended.
 
-**To run the device test,** monk_talk needs this branch's Monk on the
-staging server: its deploy builds from `git archive` there, so a
-`path: "../monk"` gem won't reach it. Either the branch pushed and
-monk_talk's Gemfile pointing at it (`git:`, `branch: "main_dev/v_0_26"`)
-for the test, or `monk_live.js` swapped by hand in the image for one
-deploy.
+Kept from the preparation: the client change stays, for a browser that
+does run `pagehide` or `freeze` before closing (a desktop tab, Chrome).
+S1 and S2 stay unbuilt: they matter only for a page frozen with its
+socket still open, which this test didn't show. To revisit if a locked
+or backgrounded iPhone is seen reading online for a minute.
 
 ### C2. A session whose CSRF cookie no longer verifies is stuck
 
@@ -473,15 +466,14 @@ works with Live).
    - Done. Form helpers and validation errors: patterns, not code
      (decision 16).
 10. Done. C2: a stale CSRF cookie is reissued (decision 17).
-11. C1: client side done (`pagehide`, `freeze`); the iPhone test, then
-    S1, S2 or nothing.
+11. Done. C1: the client says hidden on `pagehide` and `freeze`; a
+    closed socket is away for the grace, not online (iPhone measured).
 12. C3: `monk add deploy`, then `docs/guides/deploy-hetzner.md` and the
     deploy module's `AGENTS.md` section.
 
 ## Open
 
-- C1: the iPhone test's result, then S1, S2 or nothing.
 - C3: none for 0.26; `--provider` later.
 
 Left for release: the CHANGELOG and the upgrade guide (step 8,
-step 9's redirect guard).
+step 9's redirect guard, step 11's away-in-the-grace).

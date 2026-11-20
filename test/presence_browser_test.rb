@@ -117,7 +117,7 @@ class PresenceBrowserTest < Minitest::Test
     wait_for_status(:away)
   end
 
-  def test_a_closed_page_is_offline_after_the_grace_with_last_seen_at
+  def test_a_closed_page_is_away_then_offline_after_the_grace_with_last_seen_at
     open_page(PAGE)
     wait_for_status(:online)
 
@@ -128,7 +128,7 @@ class PresenceBrowserTest < Minitest::Test
     # Readers see offline as soon as the rows expire, up to a tick before
     # it's settled.
     tick
-    assert_equal [[@subject, :online], [@subject, :offline]], changes
+    assert_equal [[@subject, :online], [@subject, :away], [@subject, :offline]], changes
   end
 
   # A hidden tab's reconnect (a deploy, a network change) doesn't make

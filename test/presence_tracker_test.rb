@@ -47,7 +47,7 @@ class PresenceTrackerTest < Minitest::Test
     assert_equal [["u:1", :online, nil]], changes
   end
 
-  def test_a_reconnect_to_another_process_inside_the_grace_settles_nothing
+  def test_a_reconnect_to_another_process_inside_the_grace_never_goes_offline
     counts1, tracker1 = tracker_for("box-1")
     counts2, tracker2 = tracker_for("box-2")
     counts1.open(:s1, "u:1")
@@ -63,7 +63,7 @@ class PresenceTrackerTest < Minitest::Test
     tick(tracker1)
     tick(tracker2)
 
-    assert_empty changes
+    assert_equal [["u:1", :away, nil], ["u:1", :online, nil]], changes
     assert_equal :online, @store.status(["u:1"])["u:1"][:status]
   end
 

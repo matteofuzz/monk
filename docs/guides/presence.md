@@ -49,8 +49,9 @@ itself goes away depends on the platform:
 
 | | Hidden (tab, app, lock) | Offline | Back |
 |---|---|---|---|
-| Desktop | away within a second | 20 s (the grace) after the tab or browser closes | online within a second |
+| Desktop | away within a second | away when the tab or browser closes, offline 20 s (the grace) later | online within a second |
 | iPhone (Safari) | away within a second | about 24 s after locking: iOS drops a locked page's socket within a few seconds, then the grace | online 0.4 s after unlock (reconnect and resync) |
+| iPhone (installed app) | away within a second | swiped away from the app switcher: away at once, offline about 21 s later (measured 2026-11-20) | online when reopened |
 | Android (Chrome) | away within a second | when Chrome drops the socket: it can stay away for hours in a background tab; about 5 minutes on a locked phone, depending on its power settings | online within a second |
 
 Measured on 2026-11-13 against a scaffolded app. So:
@@ -65,10 +66,10 @@ Measured on 2026-11-13 against a scaffolded app. So:
   online. Idle detection is out of scope.
 - **Several tabs or devices are one person**, online if any page is
   visible, away if all are hidden.
-- **The grace** (`grace:`, 20 s) keeps a person as they were after their
-  last page closes: a phone switching networks, or a deploy restarting
-  `bin/websocket_server` and every page reconnecting, changes nobody's
-  status.
+- **The grace** (`grace:`, 20 s) keeps a person away, not offline, after
+  their last page closes: a phone switching networks reads away until it
+  reconnects, never offline. A deploy restarting `bin/websocket_server`
+  and every page reconnecting changes nobody's status.
 
 Only signed-in sockets count: a visitor is never online. With Live, a page
 counts as hidden until its first ping, sent the moment it connects while
