@@ -707,3 +707,16 @@ module PushTestHelpers
                   "auth" => Monk::Push::Base64Url.encode(SecureRandom.random_bytes(16)), }, }
   end
 end
+
+# The headless Chromes of the browser tests (test/live_browser_helpers.rb,
+# test/pwa_browser_test.rb). Notifications stay in Chrome's own message
+# center, which headless Chrome never draws, instead of going to macOS's
+# Notification Center: a test run shows nothing on screen. Ferrum passes
+# disable-features itself, and browser_options replaces its value, so its
+# list is kept.
+module ChromeOptions
+  def self.browser_options
+    ferrums = Ferrum::Browser::Options::Chrome::DEFAULT_OPTIONS.fetch("disable-features")
+    { "disable-features" => "#{ferrums},NativeNotifications,SystemNotifications" }
+  end
+end

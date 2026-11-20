@@ -83,7 +83,8 @@ module LiveBrowserHelpers
     @browser =
       begin
         require "ferrum"
-        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30).tap do |browser|
+        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30,
+          browser_options: ChromeOptions.browser_options,).tap do |browser|
           at_exit { browser.quit }
         end
       rescue LoadError, StandardError
