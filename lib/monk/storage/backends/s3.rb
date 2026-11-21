@@ -118,6 +118,20 @@ module Monk
             headers: { "Content-Type" => content_type, "Content-Length" => byte_size.to_s }.freeze,)
         end
 
+        # Read-only, nothing written: whether these keys reach the bucket
+        # and it expires tmp/ (a signed GET ?lifecycle), and whether a page
+        # on origin may PUT an upload to it (the CORS preflight a browser
+        # sends first). Returns what it checked; raises CheckError naming
+        # every rule that's missing, or RequestError for keys or a bucket
+        # that don't work.
+        def check(origin:)
+          problems = [cors_problem(origin), lifecycle_problem].compact
+          raise CheckError, "s3://#{bucket} on #{endpoint}: #{problems.join("; ")}" unless problems.empty?
+
+          "s3://#{bucket} on #{endpoint}: these keys reach it, a page on #{origin} may PUT uploads to it, " \
+            "and tmp/ expires. Nothing was written."
+        end
+
         # Never print the secret key -- a backend ends up in logs and
         # exception messages more easily than anyone intends.
         def inspect
@@ -147,23 +161,61 @@ module Monk
         end
 
         # One signed request, on a connection opened for it in the calling
-        # Ractor. Network and TLS failures become a RequestError, the
-        # original as its #cause.
-        def request(method, key, body: nil, headers: {})
+        # Ractor. query: is a bucket subresource ({"lifecycle" => ""}).
+        def request(method, key, body: nil, headers: {}, query: {})
           payload_hash = body ? Input.sha256(body) : SigV4::EMPTY_PAYLOAD
           signed = headers.merge("host" => host, "x-amz-content-sha256" => payload_hash)
           signed["content-length"] = body.size.to_s if body
           path = path_for(key)
           authorization = SigV4.sign_headers(method: method, path: path, headers: signed,
-            payload_hash: payload_hash, credentials: credentials, now: Time.now.to_i,)
+            payload_hash: payload_hash, credentials: credentials, now: Time.now.to_i, query: query,)
 
-          http_request = Net::HTTPGenericRequest.new(method, !body.nil?, method != "HEAD", SigV4.encode_path(path),
+          target = SigV4.encode_path(path) + (query.empty? ? "" : "?#{SigV4.canonical_query(query)}")
+          http_request = Net::HTTPGenericRequest.new(method, !body.nil?, method != "HEAD", target,
             signed.merge(authorization).merge("accept-encoding" => "identity"),)
           attach(http_request, body) if body
+          send_request(http_request, "#{method} #{key}")
+        end
+
+        # Network and TLS failures become a RequestError, the original as
+        # its #cause.
+        def send_request(http_request, what)
           connection.start { |http| http.request(http_request) }
         rescue IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError, Net::HTTPBadResponse,
                Net::ProtocolError => e
-          raise RequestError, "S3 #{method} #{key} via #{host} failed: #{e.class}: #{e.message}"
+          raise RequestError, "S3 #{what} via #{host} failed: #{e.class}: #{e.message}"
+        end
+
+        # The preflight a browser sends before PUTting an upload, which
+        # carries Content-Type: unsigned, as the browser's is.
+        def cors_problem(origin)
+          preflight = Net::HTTPGenericRequest.new("OPTIONS", false, true, SigV4.encode_path(path_for("tmp/monk-check")),
+            "origin" => origin, "access-control-request-method" => "PUT",
+            "access-control-request-headers" => "content-type",)
+          response = send_request(preflight, "CORS preflight")
+          allowed = response.is_a?(Net::HTTPSuccess) &&
+                    [origin, "*"].include?(response["access-control-allow-origin"]) &&
+                    response["access-control-allow-methods"].to_s.upcase.split(/[\s,]+/).include?("PUT")
+          return if allowed
+
+          "its CORS rule doesn't let a page on #{origin} PUT an upload with a Content-Type, so browsers' uploads fail"
+        end
+
+        # An enabled rule with an Expiration for the tmp/ prefix, written
+        # either way: <Filter><Prefix> or the older top-level <Prefix>.
+        def lifecycle_problem
+          response = request("GET", "", query: { "lifecycle" => "" })
+          none = response.body.to_s.include?("<Code>NoSuchLifecycleConfiguration</Code>")
+          fail!("GET", "?lifecycle", response) unless response.is_a?(Net::HTTPSuccess) || none
+
+          rules = none ? [] : response.body.to_s.scan(%r{<Rule>(.*?)</Rule>}m).flatten
+          expires_tmp = rules.any? do |rule|
+            rule.include?("<Status>Enabled</Status>") && rule.include?("<Prefix>tmp/</Prefix>") &&
+              rule.include?("<Expiration>")
+          end
+          return if expires_tmp
+
+          "no enabled lifecycle rule expires tmp/, so uploads never confirmed are never deleted"
         end
 
         def attach(http_request, body)

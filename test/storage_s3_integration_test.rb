@@ -106,4 +106,53 @@ class StorageS3IntegrationTest < Minitest::Test
   ensure
     Monk::Storage.reset!
   end
+
+  # check against a real server: read-only, so the rules it reads are set
+  # here, and removed again so no other test sees them.
+  CORS = <<~XML.freeze
+    <CORSConfiguration><CORSRule><AllowedOrigin>https://app.monkrb.org</AllowedOrigin>
+    <AllowedMethod>PUT</AllowedMethod><AllowedHeader>content-type</AllowedHeader></CORSRule></CORSConfiguration>
+  XML
+  LIFECYCLE = <<~XML.freeze
+    <LifecycleConfiguration><Rule><ID>expire-tmp</ID><Filter><Prefix>tmp/</Prefix></Filter>
+    <Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule></LifecycleConfiguration>
+  XML
+
+  def test_check_a_bucket_without_rules_names_both
+    remove_rules
+    error = assert_raises(Monk::Storage::CheckError) { backend.check(origin: "https://app.monkrb.org") }
+
+    assert_includes error.message, "CORS rule doesn't let a page on https://app.monkrb.org PUT"
+    assert_includes error.message, "no enabled lifecycle rule expires tmp/"
+  end
+
+  def test_check_a_bucket_with_both_rules
+    bucket_rule(backend, "cors", CORS)
+    bucket_rule(backend, "lifecycle", LIFECYCLE)
+
+    assert_includes backend.check(origin: "https://app.monkrb.org"), "may PUT uploads to it, and tmp/ expires"
+    error = assert_raises(Monk::Storage::CheckError) { backend.check(origin: "https://other.monkrb.org") }
+    assert_includes error.message, "https://other.monkrb.org"
+    assert_equal [], backend_keys, "nothing was written"
+  ensure
+    remove_rules
+  end
+
+  def test_check_with_a_wrong_secret_is_a_request_error
+    error = assert_raises(Monk::Storage::RequestError) do
+      backend.with(secret_key: "wrong").check(origin: "https://app.monkrb.org")
+    end
+    assert_includes error.message, "403"
+  end
+
+  private
+
+  def remove_rules
+    bucket_request(backend, "DELETE", "/", query: { "cors" => "" })
+    bucket_request(backend, "DELETE", "/", query: { "lifecycle" => "" })
+  end
+
+  def backend_keys
+    bucket_request(backend, "GET", "/", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>}).flatten
+  end
 end

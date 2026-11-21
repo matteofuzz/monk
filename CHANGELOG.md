@@ -12,6 +12,11 @@ in `lib/monk/version.rb`.
   `MAIL_URL`, then quits without sending, so a wrong password or a
   blocked port shows up on deploy, not when nobody gets their login link
   ([`mail.md`](docs/guides/mail.md#checking-mail_url)).
+- **`Monk::Storage.check`**: whether a bucket is ready for browsers'
+  uploads, writing nothing. It reads the lifecycle rule with the app's
+  keys (which proves the keys and the bucket), sends the CORS preflight a
+  browser sends from `PUBLIC_URL`, and names each missing rule
+  ([`storage.md`](docs/guides/storage.md#checking-a-bucket)).
 
 ### Changed
 

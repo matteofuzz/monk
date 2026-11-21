@@ -6,6 +6,8 @@ require "stringio"
 require "tmpdir"
 require "fileutils"
 require "open3"
+require "base64"
+require "digest"
 require "monk"
 
 module EnvHelper
@@ -387,20 +389,30 @@ module StorageTestHelpers
     end
   end
 
+  # Sets a bucket subresource (cors, lifecycle) to xml. PutBucketCors and
+  # PutBucketLifecycle need Content-MD5.
+  def bucket_rule(backend, subresource, xml)
+    response = bucket_request(backend, "PUT", "/", query: { subresource => "" }, body: xml)
+    assert_equal "200", response.code, "PUT ?#{subresource}: #{response.body}"
+  end
+
   # A request on the bucket itself (create, list), which the backend's API
   # has no call for. Addressed as the backend is, signed with the Phase 4
   # signer, over TLS unless the endpoint is http:// (floci).
-  def bucket_request(backend, method, path, query: {})
+  def bucket_request(backend, method, path, query: {}, body: nil)
     host = backend.path_style ? backend.endpoint : "#{backend.bucket}.#{backend.endpoint}"
     full = backend.path_style ? "/#{backend.bucket}#{path.delete_suffix("/")}" : path
     credentials = { access_key: backend.access_key, secret_key: backend.secret_key, region: backend.region }
-    signed = { "host" => host, "x-amz-content-sha256" => Monk::Storage::SigV4::EMPTY_PAYLOAD }
+    signed = { "host" => host, "x-amz-content-sha256" => Digest::SHA256.hexdigest(body.to_s) }
+    signed["content-md5"] = Base64.strict_encode64(Digest::MD5.digest(body)) if body
     signed.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: full, query: query, headers: signed,
-      payload_hash: Monk::Storage::SigV4::EMPTY_PAYLOAD, credentials: credentials, now: Time.now.to_i,))
+      payload_hash: signed["x-amz-content-sha256"], credentials: credentials, now: Time.now.to_i,))
     target = query.empty? ? full : "#{full}?#{Monk::Storage::SigV4.canonical_query(query)}"
     port = host[/:(\d+)\z/, 1]&.to_i || (backend.tls ? 443 : 80)
     Net::HTTP.start(host.sub(/:\d+\z/, ""), port, use_ssl: backend.tls, open_timeout: 5, read_timeout: 10) do |http|
-      http.request(Net::HTTPGenericRequest.new(method, false, true, target, signed))
+      request = Net::HTTPGenericRequest.new(method, !body.nil?, true, target, signed)
+      request.body = body if body
+      http.request(request)
     end
   end
 end

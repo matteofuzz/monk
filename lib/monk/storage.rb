@@ -117,6 +117,15 @@ module Monk
         end
       end
 
+      # Whether the bucket is ready for browsers' uploads, without writing
+      # anything: the keys reach it, a page on origin (PUBLIC_URL) may PUT
+      # to it, and tmp/ expires. Returns what it checked; raises CheckError
+      # for a missing rule, RequestError for keys or a bucket that don't
+      # work. For a deploy (docs/guides/storage.md, "Checking a bucket").
+      def check(origin: Monk::Settings[:public_url])
+        backend.check(origin: origin)
+      end
+
       # Called from Base#dispatch, after Monk::Assets.response: the file
       # backend's /_monk/storage routes, or nil for any other request
       # (and always nil with an S3 backend, or before configure).

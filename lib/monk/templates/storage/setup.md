@@ -17,6 +17,12 @@ unconfirmed uploads don't pile up: both are in docs/guides/storage.md in
 the monk repo. A `file://` URL works only on one server with a persistent
 volume, and then needs `STORAGE_SECRET` set to a random value of its own.
 
+Check the bucket, its keys and both rules, without writing anything:
+
+```bash
+bundle exec ruby -e 'require "./config/settings"; require "./config/storage"; puts Monk::Storage.check'
+```
+
 ### Check it works
 
 1. `bundle exec rake test` runs `test/storage_test.rb`: a file stored by

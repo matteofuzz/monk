@@ -372,11 +372,35 @@ s3cmd --host=fsn1.your-objectstorage.com --host-bucket='%(bucket)s.fsn1.your-obj
 (s3cmd asks for the access key and secret on first use, with
 `s3cmd --configure`, or takes `--access_key` and `--secret_key`.)
 
-To check a bucket the way Monk checked Hetzner's, run
-`bin/storage_check` from a checkout of the monk repository, with
-`STORAGE_CHECK_URL` set to the bucket's `s3://` URL. It applies both
-rules, tests them, and removes them again, so point it at a bucket meant
-for testing.
+### Checking a bucket
+
+`Monk::Storage.check` tells whether a bucket is ready, writing nothing:
+
+- **The keys and the bucket.** A signed read of the lifecycle rule:
+  wrong keys or a missing bucket raise `Monk::Storage::RequestError`.
+- **CORS.** The preflight a browser sends before an upload, from
+  `PUBLIC_URL` (or `check(origin:)`), must allow `PUT` with a
+  `Content-Type`.
+- **Lifecycle.** An enabled rule must expire `tmp/`, written either way.
+
+A missing rule raises `Monk::Storage::CheckError`, naming each one. With
+`file://` there's nothing to check: uploads go to the app itself.
+
+```bash
+bundle exec ruby -e 'require "./config/settings"; require "./config/storage"; puts Monk::Storage.check'
+# s3://my-bucket on fsn1.your-objectstorage.com: these keys reach it, a page on
+#   https://app.your-domain.com may PUT uploads to it, and tmp/ expires. Nothing was written.
+```
+
+It loads only the storage config, so it needs no database: run it once
+the bucket is set up, and after changing its rules. In the Compose stack,
+`docker compose exec -T web bundle exec ruby -e 'require "./config/settings"; require "./config/storage"; puts Monk::Storage.check'`.
+
+To test which rules a provider accepts at all, the way Monk checked
+Hetzner's, run `bin/storage_check` from a checkout of the monk
+repository, with `STORAGE_CHECK_URL` set to the bucket's `s3://` URL. It
+applies both rules, tests them, and removes them again, so point it at a
+bucket meant for testing.
 
 ## Providers
 

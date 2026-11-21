@@ -137,6 +137,13 @@ module Monk
           raise RequestError, "file storage upload #{key} failed: #{e.class}: #{e.message}"
         end
 
+        # Uploads go to the app itself: no CORS rule, and no lifecycle rule
+        # either, so tmp/ keeps what's never confirmed.
+        def check(origin:)
+          "file://#{root}: files on this server's disk, uploaded through the app on #{origin}, so there's no " \
+            "CORS rule to check. Nothing expires tmp/ on disk."
+        end
+
         # Never print the secret -- a backend ends up in logs and exception
         # messages more easily than anyone intends (same as Mail's SMTP).
         def inspect

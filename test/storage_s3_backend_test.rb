@@ -225,4 +225,66 @@ class StorageS3BackendTest < Minitest::Test
   def test_backend_never_shows_its_secret
     refute_includes backend.inspect, "hunter2"
   end
+
+  # check: a preflight as a browser sends it, then a signed GET ?lifecycle.
+
+  ALLOWED = [200, { "access-control-allow-origin" => "https://app.monkrb.org",
+                    "access-control-allow-methods" => "PUT", }, "",].freeze
+
+  def lifecycle(rule) = [200, {}, "<LifecycleConfiguration><Rule>#{rule}</Rule></LifecycleConfiguration>"]
+
+  def test_check_sends_a_browsers_preflight_then_a_signed_lifecycle_read
+    serve(ALLOWED, lifecycle("<Filter><Prefix>tmp/</Prefix></Filter><Status>Enabled</Status>" \
+                             "<Expiration><Days>1</Days></Expiration>"),)
+
+    assert_includes backend.check(origin: "https://app.monkrb.org"), "Nothing was written."
+
+    preflight = @server.next_request
+    assert_equal ["OPTIONS", "/media/tmp/monk-check"], [preflight.verb, preflight.target]
+    assert_equal "https://app.monkrb.org", preflight.headers["origin"]
+    assert_equal "PUT", preflight.headers["access-control-request-method"]
+    assert_equal "content-type", preflight.headers["access-control-request-headers"]
+    assert_nil preflight.headers["authorization"], "a browser's preflight is unsigned"
+
+    read = @server.next_request
+    assert_equal ["GET", "/media/?lifecycle="], [read.verb, read.target]
+    assert_signed(read)
+  end
+
+  def test_check_accepts_the_older_top_level_prefix
+    serve(ALLOWED, lifecycle("<Prefix>tmp/</Prefix><Status>Enabled</Status><Expiration><Days>1</Days></Expiration>"))
+
+    backend.check(origin: "https://app.monkrb.org")
+  end
+
+  def test_check_names_a_disabled_rule_or_another_prefix
+    ["<Prefix>tmp/</Prefix><Status>Disabled</Status><Expiration><Days>1</Days></Expiration>",
+     "<Prefix>media/</Prefix><Status>Enabled</Status><Expiration><Days>1</Days></Expiration>",].each do |rule|
+      serve(ALLOWED, lifecycle(rule))
+
+      error = assert_raises(Monk::Storage::CheckError) { backend.check(origin: "https://app.monkrb.org") }
+      assert_includes error.message, "no enabled lifecycle rule expires tmp/"
+      refute_includes error.message, "CORS"
+      @server.stop
+    end
+  end
+
+  def test_check_names_a_preflight_that_doesnt_allow_put
+    serve([200, { "access-control-allow-origin" => "https://app.monkrb.org",
+                  "access-control-allow-methods" => "GET", }, "",],
+      [404, {}, "<Error><Code>NoSuchLifecycleConfiguration</Code></Error>"],)
+
+    error = assert_raises(Monk::Storage::CheckError) { backend.check(origin: "https://app.monkrb.org") }
+    assert_includes error.message, "doesn't let a page on https://app.monkrb.org PUT an upload"
+    assert_includes error.message, "no enabled lifecycle rule expires tmp/"
+  end
+
+  def test_check_of_a_missing_bucket_is_a_request_error
+    serve([403, {}, ""], [404, {}, "<Error><Code>NoSuchBucket</Code></Error>"])
+
+    error = assert_raises(Monk::Storage::RequestError) { backend.check(origin: "https://app.monkrb.org") }
+    assert_includes error.message, "S3 GET ?lifecycle via"
+    assert_includes error.message, "NoSuchBucket"
+    refute_includes error.message, "hunter2"
+  end
 end
