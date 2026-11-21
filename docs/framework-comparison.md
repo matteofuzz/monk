@@ -85,7 +85,8 @@ WebSocket is the largest module, after 0.22.1's work on connect bursts
 and 0.24's heartbeat; Scaffolding comes next, but it is tooling, not runtime: no app loads it. Its tests generate real apps and run their own
 suites, uncomment every example and exercise it (a real socket for the
 chat example), check that every pair of modules gives the same app in
-either order, and (with `SLOW=1`) run every combination of the 11 modules.
+either order, and run the modules that look for each other together, and
+all 11 at once.
 Persistence and WebSocket come next: 0.20 added connection pools (a dispatcher Ractor and worker Ractors that
 own the connections, since a connection can't move between Ractors) and
 recovery from a dropped connection. WebSocket grew with it: both fanouts'

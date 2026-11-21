@@ -116,7 +116,7 @@ module Monk
         # Declared by the app (config/settings.rb, config/live.rb), but read
         # by Monk itself: Auth's magic links, Live's socket, WebSocket's
         # allowed origins. So Monk checks them, when they're declared.
-        deployed = !%w[development test].include?(values[:monk_env])
+        deployed = !(Monk.env.development? || Monk.env.test?)
         validate_public_url!(values[:public_url], deployed) if values.key?(:public_url)
         validate_live_ws_url!(values[:live_ws_url]) if deployed && values.key?(:live_ws_url)
 
