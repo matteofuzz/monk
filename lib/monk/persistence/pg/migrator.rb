@@ -97,7 +97,7 @@ module Monk
 
         def recently_applied(conn, steps)
           conn.exec_params(
-            "SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT $1", [steps]
+            "SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT $1", [steps],
           ).map { |row| row["version"] }
         end
 
@@ -111,7 +111,7 @@ module Monk
           return if @schema_migrations_ready
 
           exists = conn.exec(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = 'schema_migrations'"
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'schema_migrations'",
           ).ntuples.positive?
 
           conn.exec(<<~SQL) unless exists
@@ -131,10 +131,12 @@ module Monk
         def load_migrations
           by_version = {}
 
-          Dir.glob(File.join(@dir, "*.sql")).sort.each do |path|
+          Dir.glob(File.join(@dir, "*.sql")).each do |path|
             match = FILENAME.match(File.basename(path))
-            raise Monk::MalformedMigrationError,
-              "#{path.inspect} doesn't match the <version>_<name>.(up|down).sql convention" unless match
+            unless match
+              raise Monk::MalformedMigrationError,
+                "#{path.inspect} doesn't match the <version>_<name>.(up|down).sql convention"
+            end
 
             version, name, direction = match.captures
             migration = (by_version[version] ||= Migration.new(version, name))

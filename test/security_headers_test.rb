@@ -20,7 +20,7 @@ class SecurityHeadersTest < Minitest::Test
 
   def test_every_response_carries_them
     [env_for("GET", "/x"), env_for("GET", "/missing"),
-     env_for("POST", "/x").merge("HTTP_SEC_FETCH_SITE" => "cross-site")].each do |env|
+     env_for("POST", "/x").merge("HTTP_SEC_FETCH_SITE" => "cross-site"),].each do |env|
       _status, headers, _body = app.call(env)
 
       assert_equal EXPECTED, headers.slice(*EXPECTED.keys), env["PATH_INFO"]

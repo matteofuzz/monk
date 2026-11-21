@@ -18,7 +18,7 @@ class PersistenceRactorIntegrationTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       drop_table_if_exists(conn, "widgets")
       conn.exec(
-        "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0)"
+        "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0)",
       )
     end
 
@@ -32,9 +32,7 @@ class PersistenceRactorIntegrationTest < Minitest::Test
   end
 
   def teardown
-    if postgres_available?
-      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_table_if_exists(conn, "widgets") }
-    end
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_table_if_exists(conn, "widgets") } if postgres_available?
     Monk::Persistence::Pg.reset!
   end
 
@@ -44,7 +42,7 @@ class PersistenceRactorIntegrationTest < Minitest::Test
     ractors = seeded.map { |row| Ractor.new(Widget, row[:id]) { |model, id| model.find(id) } }
     results = ractors.map(&:value)
 
-    assert_equal seeded.sort_by { |r| r[:id] }, results.sort_by { |r| r[:id] }
+    assert_equal(seeded.sort_by { |r| r[:id] }, results.sort_by { |r| r[:id] })
   end
 
   def test_concurrent_real_ractors_creating_never_lose_or_corrupt_a_write

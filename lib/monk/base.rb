@@ -124,19 +124,15 @@ module Monk
 
       def freeze!
         routes.each do |route|
-          begin
-            Ractor.make_shareable(route[:block])
-          rescue ArgumentError, Ractor::IsolationError => e
-            raise UnshareableRouteError, "#{route[:verb]} #{route[:path]} is not Ractor-shareable: #{e.message}"
-          end
+          Ractor.make_shareable(route[:block])
+        rescue ArgumentError, Ractor::IsolationError => e
+          raise UnshareableRouteError, "#{route[:verb]} #{route[:path]} is not Ractor-shareable: #{e.message}"
         end
 
         error_handlers.each do |matcher, block|
-          begin
-            Ractor.make_shareable(block)
-          rescue ArgumentError, Ractor::IsolationError => e
-            raise UnshareableRouteError, "error handler for #{matcher.inspect} is not Ractor-shareable: #{e.message}"
-          end
+          Ractor.make_shareable(block)
+        rescue ArgumentError, Ractor::IsolationError => e
+          raise UnshareableRouteError, "error handler for #{matcher.inspect} is not Ractor-shareable: #{e.message}"
         end
 
         define_block_methods!
@@ -209,19 +205,17 @@ module Monk
 
         context = Context.new(query.merge(body).merge(path_params), env)
         catch(:monk_halt) do
-          begin
-            body = run_block(context, route[:block])
+          body = run_block(context, route[:block])
+          [context.status, context.headers, [body]]
+        rescue StandardError => e
+          handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
+          log_exception(env, e, handled: !handler.nil?)
+          if handler
+            context.status = 500
+            body = run_block(context, handler.last)
             [context.status, context.headers, [body]]
-          rescue StandardError => e
-            handler = error_handlers.find { |matcher, _| matcher.is_a?(Class) && e.is_a?(matcher) }
-            log_exception(env, e, handled: !handler.nil?)
-            if handler
-              context.status = 500
-              body = run_block(context, handler.last)
-              [context.status, context.headers, [body]]
-            else
-              [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
-            end
+          else
+            [500, { "content-type" => "application/json" }, ['{"error":"Internal Server Error"}']]
           end
         end
       end
@@ -367,7 +361,9 @@ module Monk
       # a worker never parses megabytes of a=1&a=1...
       def read_body(env)
         body = env["rack.input"]&.read(MAX_PARSED_BODY + 1).to_s
-        raise Monk::Params::Error.new("body over #{MAX_PARSED_BODY} bytes", status: 413) if body.bytesize > MAX_PARSED_BODY
+        if body.bytesize > MAX_PARSED_BODY
+          raise Monk::Params::Error.new("body over #{MAX_PARSED_BODY} bytes", status: 413)
+        end
 
         body
       end

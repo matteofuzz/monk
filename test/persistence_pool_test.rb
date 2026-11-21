@@ -287,7 +287,7 @@ class PersistencePoolTest < Minitest::Test
 
     error = assert_raises(PoolTestCalls::TaggedError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :raise_tagged) }
 
-    assert_equal ["tagged", "kept"], [error.message, error.tag]
+    assert_equal %w[tagged kept], [error.message, error.tag]
     assert_equal [ArgumentError, "the cause"], [error.cause.class, error.cause.message]
   end
 

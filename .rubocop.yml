@@ -1,4 +1,3 @@
-inherit_from: .rubocop_todo.yml
 
 # Tuned to the style the codebase already has (double quotes, trailing commas
 # in multiline literals, no frozen-string-literal magic comment, prose-heavy
@@ -44,3 +43,25 @@ Layout/FirstArrayElementIndentation:
   EnforcedStyle: consistent
 Layout/FirstHashElementIndentation:
   EnforcedStyle: consistent
+
+# Short names that read better than long ones where they're used: an
+# operation (op), a byte count (n), a QR code (qr), and the generator
+# DSL's if: keyword.
+Naming/MethodParameterName:
+  AllowedNames: [at, by, db, id, if, in, io, ip, of, on, os, pp, to, op, n, qr]
+# revoke returns whether a session was revoked; it's public API.
+Naming/PredicateMethod:
+  AllowedMethods: [revoke]
+# Test names carry HTTP status codes and RFC numbers (..._304, ..._401).
+Naming/VariableNumber:
+  Exclude:
+    - "test/**/*"
+# Route blocks in tests read as routes: get("/me") { |ctx| ctx.require_user! }.
+Style/SymbolProc:
+  AllowedMethods: [get, post, put, patch, delete, new]
+# A bin/ script is one file on purpose, its helper classes included.
+Style/OneClassPerFile:
+  inherit_mode:
+    merge: [Exclude]
+  Exclude:
+    - "bin/**/*"

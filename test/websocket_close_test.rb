@@ -40,6 +40,7 @@ class WebSocketCloseTest < Minitest::Test
 
     frame = read_raw_frame(socket)
     assert_equal 0x8, frame[:opcode]
+    # rubocop:disable-next Style/StringConcatenation -- binary bytes, kept binary
     assert_equal [4000].pack("n") + "bye", frame[:payload]
     assert_nil socket.read(1), "expected the socket to be closed after Connection#close"
   ensure

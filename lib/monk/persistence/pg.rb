@@ -130,8 +130,8 @@ module Monk
           nil
         end
 
-        def connect(**opts)
-          conn = PG.connect(connect_timeout: DEFAULT_CONNECT_TIMEOUT, **opts)
+        def connect(**)
+          conn = PG.connect(connect_timeout: DEFAULT_CONNECT_TIMEOUT, **)
           conn.type_map_for_results = PG::BasicTypeMapForResults.new(conn, registry: RESULT_TYPES)
           conn
         end

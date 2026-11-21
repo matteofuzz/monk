@@ -61,7 +61,7 @@ class RactorIntegrationTest < Minitest::Test
   def test_env_is_readable_and_consistent_from_a_real_worker_ractor
     ENV["MONK_RACTOR_ENV_PROBE"] = "main-ractor-value"
 
-    result = Ractor.new { ENV["MONK_RACTOR_ENV_PROBE"] }.value
+    result = Ractor.new { ENV.fetch("MONK_RACTOR_ENV_PROBE", nil) }.value
 
     assert_equal "main-ractor-value", result
   ensure
@@ -255,7 +255,7 @@ class RactorIntegrationTest < Minitest::Test
           end
         end.map(&:value)
 
-        assert results.all? { |body| body == "hello" }
+        assert(results.all? { |body| body == "hello" })
       end
     end
   end
@@ -278,7 +278,7 @@ class RactorIntegrationTest < Minitest::Test
           end
         end.map(&:value)
 
-        assert results.all? { |body| body == '{"staging":true,"production":false}' }
+        assert(results.all? { |body| body == '{"staging":true,"production":false}' })
       end
     end
   end

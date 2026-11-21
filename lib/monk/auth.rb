@@ -84,8 +84,10 @@ module Monk
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
-          raise Monk::MissingAuthConfigError,
-            "Monk::Auth.configure is missing required key #{key.inspect}" if config[key].nil?
+          if config[key].nil?
+            raise Monk::MissingAuthConfigError,
+              "Monk::Auth.configure is missing required key #{key.inspect}"
+          end
         end
 
         LoginToken.db_name = db_name
@@ -94,9 +96,7 @@ module Monk
         @config = config
       end
 
-      def config
-        @config
-      end
+      attr_reader :config
 
       # Test-only: drops the current config. Not part of the app-facing API.
       def reset!
@@ -336,9 +336,11 @@ module Monk
       # the spec's 4 but reliable for phone cameras against a white
       # background.
       def compact_qr(qr, quiet_zone: 2)
-        width = qr.modules.size + quiet_zone * 2
+        width = qr.modules.size + (quiet_zone * 2)
         blank = Array.new(quiet_zone) { Array.new(width, false) }
-        grid = blank + qr.modules.map { |row| Array.new(quiet_zone, false) + row + Array.new(quiet_zone, false) } + blank
+        grid = blank + qr.modules.map do |row|
+          Array.new(quiet_zone, false) + row + Array.new(quiet_zone, false)
+        end + blank
         grid << Array.new(width, false) if grid.size.odd?
 
         grid.each_slice(2).map do |top, bottom|
@@ -355,8 +357,10 @@ module Monk
       end
 
       def ensure_configured!
+        return if @config
+
         raise Monk::AuthNotConfiguredError,
-          "Monk::Auth is not configured -- call Monk::Auth.configure first" unless @config
+          "Monk::Auth is not configured -- call Monk::Auth.configure first"
       end
 
       # An absolute path, kept without a trailing slash so login_link
@@ -397,8 +401,8 @@ module Monk
 
       def checked_login_request_interval(seconds)
         unless seconds.is_a?(Integer) && seconds.positive?
-          raise Monk::InvalidAuthConfigError,
-            "Monk::Auth.configure(login_request_interval:) must be a positive Integer of seconds, got #{seconds.inspect}"
+          raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(login_request_interval:) must be a positive " \
+                                              "Integer of seconds, got #{seconds.inspect}"
         end
 
         seconds
@@ -433,6 +437,7 @@ module Monk
 
       def freeze_constants!(mod, seen = {}.compare_by_identity)
         return if seen[mod]
+
         seen[mod] = true
 
         mod.constants(false).each do |name|

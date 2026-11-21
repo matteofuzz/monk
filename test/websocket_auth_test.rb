@@ -34,6 +34,7 @@ class WebSocketAuthTest < Minitest::Test
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
       rescue Monk::UnknownPersistenceError
+        # never registered: nothing to drop
       end
     end
     Monk::Persistence::Pg.reset!
@@ -178,7 +179,6 @@ class WebSocketAuthTest < Minitest::Test
 
     assert status.success?
     assert_equal "Monk::AuthNotConfiguredError", stdout.strip
-
   end
 
   def test_reverify_interval_requires_authenticate_true

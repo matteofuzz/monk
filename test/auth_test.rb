@@ -18,6 +18,7 @@ class AuthTest < Minitest::Test
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
       rescue Monk::UnknownPersistenceError
+        # never registered: nothing to drop
       end
     end
     Monk::Persistence::Pg.reset!
@@ -83,7 +84,7 @@ class AuthTest < Minitest::Test
     refute_equal first, second
     rows = fetch_login_tokens(email: "a@b.com")
     assert_equal 2, rows.size
-    assert_equal [nil, nil], rows.map { |r| r["used_at"] }
+    assert_equal([nil, nil], rows.map { |r| r["used_at"] })
   end
 
   def test_redeem_on_a_fresh_token_returns_a_session_and_marks_the_login_token_used

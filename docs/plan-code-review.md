@@ -253,6 +253,15 @@ noted only.
   `Lint/SuppressedException` worth a look one by one.
 - Change: regenerate it, then work it down, or remove it once the
   offenses are fixed.
+- **Done 2026-11-21, with R2 and B3:** the todo file is gone and RuboCop
+  reports no offenses on 282 files. Safe autocorrections, each `lib/`
+  change read; one was wrong and is reverted (`views.rb`'s
+  `module_eval` kept the template's own path, or template errors would
+  point at `views.rb`), and one mangled a line of
+  `bin/benchmark_ws_connect`, rewritten by hand. The rest by hand or by
+  config (`.rubocop.yml`): short parameter names (`op`, `n`, `qr`,
+  `if`), status codes in test names, route blocks in tests, one-file
+  `bin/` scripts.
 
 **R2. The 50 visible offenses.**
 - 24 are in `bin/benchmark_ws_connect`, a dev tool still referenced by

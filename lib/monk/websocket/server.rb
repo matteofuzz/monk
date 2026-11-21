@@ -252,14 +252,14 @@ module Monk
           socket = @tcp_server.accept
           ractor = Ractor.new(
             shareable_block, @authenticate, @allowed_origins, @ping_interval, @reverify_interval, @max_payload_size,
-            @db_pool, handshake_done, @handshake_timeout, @presence
+            @db_pool, handshake_done, @handshake_timeout, @presence,
           ) do |blk, authenticate, origins, ping_interval, reverify_interval, max_payload_size, db_pool, done, timeout,
                 presence|
             Monk::WebSocket::Server.serve(
               Ractor.receive, blk,
               authenticate: authenticate, allowed_origins: origins, ping_interval: ping_interval,
               reverify_interval: reverify_interval, max_payload_size: max_payload_size, db_pool: db_pool,
-              handshake_done: done, handshake_timeout: timeout, presence: presence
+              handshake_done: done, handshake_timeout: timeout, presence: presence,
             )
           end
           ractor.send(socket, move: true)
@@ -306,12 +306,11 @@ module Monk
           return unless request
           return socket.write("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n") if request == :too_large
 
-          headers =
-            begin
-              Handshake.parse_request(request)
-            rescue Monk::WebSocket::HandshakeError
-              return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
-            end
+          begin
+            headers = Handshake.parse_request(request)
+          rescue Monk::WebSocket::HandshakeError
+            return socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+          end
 
           subject = nil
           credential = Handshake.credential_from(headers) if authenticate

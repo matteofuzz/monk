@@ -44,8 +44,8 @@ module Monk
       # eagerly below, never `@x ||= ...`: a lazy reader *writes* on first
       # access, and writing a module ivar from a non-main Ractor is an
       # isolation error. The request path only ever reads.
-      attr_reader :root, :layout, :registry
-      attr_writer :root, :layout
+      attr_accessor :root, :layout
+      attr_reader :registry
 
       # Escapes unless the value is already Raw, and returns Raw either
       # way -- so an explicit `<%= h(x) %>` isn't escaped twice by the
@@ -83,6 +83,9 @@ module Monk
         # explicitly removed first -- so remove it ourselves to keep that
         # warning from firing on a redefinition this module intends.
         Compiled.remove_method(method_name) if Compiled.method_defined?(method_name)
+        # def __monk_view_<name>(locals = {}); <the template as Ruby>; end, at the
+        # template's own path and line 0, so errors point at the .erb.
+        # rubocop:disable-next Style/EvalWithLocation, Style/DocumentDynamicEvalDefinition
         Compiled.module_eval("def #{method_name}(locals = {}); #{compiled_source(source)}; end", path, 0)
         registry[name] = method_name
         name
@@ -94,7 +97,11 @@ module Monk
         outer = !context.rendering
         context.rendering = true
         inner = invoke(context, name, locals)
-        wrapper = layout == :default ? (outer ? self.layout : nil) : layout
+        wrapper = if layout == :default
+                    outer ? self.layout : nil
+                  else
+                    layout
+                  end
         wrapper ? invoke(context, wrapper, locals) { inner } : inner
       ensure
         context.rendering = false if outer
@@ -144,14 +151,14 @@ module Monk
         end
       end
 
-      def invoke(context, name, locals, &block)
+      def invoke(context, name, locals, &)
         method_name = registry.fetch(name) do
           raise Monk::TemplateNotFoundError,
             "no template #{name.inspect} (looked under #{root.inspect}; " \
             "known: #{registry.keys.sort.inspect})"
         end
 
-        context.send(method_name, locals, &block)
+        context.send(method_name, locals, &)
       end
 
       # `<%= %>` escapes by default -- a deliberate break from stock ERB,

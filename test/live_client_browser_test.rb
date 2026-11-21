@@ -86,7 +86,7 @@ class LiveClientBrowserTest < Minitest::Test
       end
 
       wait_for("batch") { evaluate("document.querySelector('#contact-0') !== null") }
-      assert_equal ["first", "morphed", "morphed"],
+      assert_equal %w[first morphed morphed],
         evaluate("[...document.querySelectorAll('#list li')].map(li => li.textContent)")
       assert_equal 4, events("patched").size
     end
@@ -180,7 +180,7 @@ class LiveClientBrowserTest < Minitest::Test
     @proxy.sever!
 
     wait_for("resync") { events("resynced").size == 1 }
-    assert_equal ["after", "new"],
+    assert_equal %w[after new],
       evaluate("[document.querySelector('#status').textContent, document.querySelector('#note').textContent]")
     assert_equal [true, "half-typed", 2, 6],
       run_js(<<~JS)

@@ -32,7 +32,7 @@ module Monk
               columns = data.keys.map { |c| conn.quote_ident(c.to_s) }
               placeholders = (1..data.size).map { |i| "$#{i}" }
               sql = "INSERT INTO #{conn.quote_ident(table_name)} (#{columns.join(", ")}) " \
-                "VALUES (#{placeholders.join(", ")}) RETURNING *"
+                    "VALUES (#{placeholders.join(", ")}) RETURNING *"
               to_row(conn.exec_params(sql, data.values))
             end
           end
@@ -68,7 +68,7 @@ module Monk
               end
 
               sql = "INSERT INTO #{conn.quote_ident(table_name)} (#{quoted_columns.join(", ")}) " \
-                "VALUES #{row_placeholders.join(", ")} RETURNING *"
+                    "VALUES #{row_placeholders.join(", ")} RETURNING *"
               to_rows(conn.exec_params(sql, values))
             end
           end
@@ -90,7 +90,7 @@ module Monk
             return [] if ids.empty?
 
             rows = where(id: ids)
-            by_id = rows.each_with_object({}) { |row, h| h[row[:id]] = row }
+            by_id = rows.to_h { |row| [row[:id], row] }
             ids.map { |id| by_id[id] }
           end
 
@@ -119,7 +119,7 @@ module Monk
             Monk::Persistence::Pg.checkout(db_name) do |conn|
               clause, values = where_clause(conn, conditions)
 
-              sql = +"SELECT * FROM #{conn.quote_ident(table_name)}"
+              sql = "SELECT * FROM #{conn.quote_ident(table_name)}"
               sql << " WHERE #{clause}" if clause
               sql << order_clause(conn, options[:order]) if options[:order]
               if (limit = options[:limit])
@@ -136,7 +136,7 @@ module Monk
           def update(id, data)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
               sets = data.keys.each_with_index
-                .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 2}" }.join(", ")
+                         .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 2}" }.join(", ")
               sql = "UPDATE #{conn.quote_ident(table_name)} SET #{sets} WHERE id = $1 RETURNING *"
               to_row(conn.exec_params(sql, [id, *data.values]))
             end
@@ -152,14 +152,16 @@ module Monk
           def claim(conditions, data)
             Monk::Persistence::Pg.checkout(db_name) do |conn|
               sets = data.keys.each_with_index
-                .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 1}" }.join(", ")
+                         .map { |c, i| "#{conn.quote_ident(c.to_s)} = $#{i + 1}" }.join(", ")
 
               bound, nil_conditions = conditions.partition { |_, v| !v.nil? }
-              where_parts = bound.each_with_index.map { |(c, _), i| "#{conn.quote_ident(c.to_s)} = $#{data.size + i + 1}" }
+              where_parts = bound.each_with_index.map do |(c, _), i|
+                "#{conn.quote_ident(c.to_s)} = $#{data.size + i + 1}"
+              end
               where_parts += nil_conditions.map { |c, _| "#{conn.quote_ident(c.to_s)} IS NULL" }
 
               sql = "UPDATE #{conn.quote_ident(table_name)} SET #{sets} " \
-                "WHERE #{where_parts.join(" AND ")} RETURNING *"
+                    "WHERE #{where_parts.join(" AND ")} RETURNING *"
               to_row(conn.exec_params(sql, data.values + bound.map(&:last)))
             end
           end

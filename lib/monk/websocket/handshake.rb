@@ -47,7 +47,7 @@ module Monk
         unless headers["upgrade"]&.downcase == "websocket"
           raise Monk::WebSocket::HandshakeError, "missing or invalid Upgrade header"
         end
-        unless headers["connection"]&.downcase&.split(/\s*,\s*/)&.include?("upgrade")
+        unless headers["connection"].to_s.downcase.split(/\s*,\s*/).include?("upgrade")
           raise Monk::WebSocket::HandshakeError, "missing or invalid Connection header"
         end
         raise Monk::WebSocket::HandshakeError, "missing Sec-WebSocket-Key header" unless headers["sec-websocket-key"]
@@ -94,10 +94,10 @@ module Monk
       # The 101 for headers parse_request already returned.
       def self.response(headers)
         "HTTP/1.1 101 Switching Protocols\r\n" \
-        "Upgrade: websocket\r\n" \
-        "Connection: Upgrade\r\n" \
-        "Sec-WebSocket-Accept: #{accept_key(headers["sec-websocket-key"])}\r\n" \
-        "\r\n"
+          "Upgrade: websocket\r\n" \
+          "Connection: Upgrade\r\n" \
+          "Sec-WebSocket-Accept: #{accept_key(headers["sec-websocket-key"])}\r\n" \
+          "\r\n"
       end
     end
   end

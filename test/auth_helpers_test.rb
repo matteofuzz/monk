@@ -24,6 +24,7 @@ class AuthHelpersTest < Minitest::Test
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
       rescue Monk::UnknownPersistenceError
+        # never registered: nothing to drop
       end
     end
     Monk::Persistence::Pg.reset!

@@ -110,7 +110,10 @@ class ViewsTest < Minitest::Test
 
     with_views(templates) do
       app = boot_app(layout: "layouts/app") do
-        get("/") { @title = "Home"; render "index" }
+        get("/") do
+          @title = "Home"
+          render "index"
+        end
       end
 
       _status, _headers, body = app.call(env_for("GET", "/"))
@@ -286,7 +289,7 @@ class ViewsTest < Minitest::Test
         Monk::Views.render(Monk::Context.new({}), "boom", {})
       end
 
-      assert_match(%r{boom\.erb:3}, error.backtrace.first)
+      assert_match(/boom\.erb:3/, error.backtrace.first)
     end
   end
 
@@ -320,7 +323,12 @@ class ViewsTest < Minitest::Test
 
   def test_a_route_that_renders_then_returns_json_keeps_the_json_content_type
     with_views("index.erb" => "<p>x</p>") do
-      app = boot_app { get("/") { render "index"; json(ok: true) } }
+      app = boot_app do
+        get("/") do
+          render "index"
+          json(ok: true)
+        end
+      end
 
       _status, headers, body = app.call(env_for("GET", "/"))
 
@@ -331,7 +339,12 @@ class ViewsTest < Minitest::Test
 
   def test_halt_after_a_render_returns_exactly_the_halt_response
     with_views("index.erb" => "<p>x</p>") do
-      app = boot_app { get("/") { render "index"; halt 401, "nope" } }
+      app = boot_app do
+        get("/") do
+          render "index"
+          halt 401, "nope"
+        end
+      end
 
       status, _headers, body = app.call(env_for("GET", "/"))
 
@@ -342,9 +355,9 @@ class ViewsTest < Minitest::Test
 
   private
 
-  def boot_app(layout: nil, &block)
+  def boot_app(layout: nil, &)
     root = Monk::Views.root
-    app = Class.new(Monk::Base, &block)
+    app = Class.new(Monk::Base, &)
     app.views(root)
     app.layout(layout) if layout
     boot_quietly(app)

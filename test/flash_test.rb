@@ -11,7 +11,7 @@ class FlashTest < Minitest::Test
 
   def test_a_redirect_leaves_a_message_the_next_page_reads_once
     cookie = flash_cookie_after_post("Saved.")
-    assert_match(/\Aflash=Saved\.; Path=\/; SameSite=Lax; Max-Age=60; Secure; HttpOnly\z/, cookie)
+    assert_match(%r{\Aflash=Saved\.; Path=/; SameSite=Lax; Max-Age=60; Secure; HttpOnly\z}, cookie)
 
     _status, headers, body = app.call(with_cookie(env_for("GET", "/notes"), cookie))
 
@@ -58,8 +58,8 @@ class FlashTest < Minitest::Test
     boot_quietly(flashing)
 
     result = Ractor.new(flashing) do |a|
-      form = { "REQUEST_METHOD" => "POST", "PATH_INFO" => "/notes", "CONTENT_TYPE" => "application/x-www-form-urlencoded",
-               "rack.input" => StringIO.new("message=Saved.") }
+      form = { "REQUEST_METHOD" => "POST", "PATH_INFO" => "/notes",
+               "CONTENT_TYPE" => "application/x-www-form-urlencoded", "rack.input" => StringIO.new("message=Saved."), }
       cookie = a.call(form)[1]["set-cookie"].first.split(";").first
       a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/notes", "HTTP_COOKIE" => cookie)[2].join
     end.value
@@ -71,7 +71,7 @@ class FlashTest < Minitest::Test
 
   def flash_cookie_after_post(message)
     env = env_for("POST", "/notes").merge("CONTENT_TYPE" => "application/x-www-form-urlencoded",
-      "rack.input" => StringIO.new(URI.encode_www_form(message: message)))
+      "rack.input" => StringIO.new(URI.encode_www_form(message: message)),)
     status, headers, _body = app.call(env)
     assert_equal 302, status
     headers["set-cookie"].first

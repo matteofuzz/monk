@@ -70,8 +70,8 @@ module Monk
       # hazard (Monk.env resolves this the same way, through Settings'
       # own frozen-at-Boot snapshot). `assets false` sets root to false
       # and disables serving.
-      attr_reader :root, :manifest, :mounts
-      attr_writer :root
+      attr_accessor :root
+      attr_reader :manifest, :mounts
 
       # Serves a module's own static files from inside the gem, under a
       # /_monk/ prefix, next to the app's public/: Monk::Live mounts its
@@ -109,7 +109,7 @@ module Monk
         return nil unless enabled?
 
         verb = env["REQUEST_METHOD"]
-        return nil unless verb == "GET" || verb == "HEAD"
+        return nil unless %w[GET HEAD].include?(verb)
 
         entry = lookup(env["PATH_INFO"].to_s)
         return nil unless entry

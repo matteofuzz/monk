@@ -67,10 +67,10 @@ module Monk
     end
 
     class << self
-      def configure(&block)
+      def configure(&)
         raise SettingsFrozenError, "Settings can't be configured after Boot" if booted?
 
-        DSL.new(declarations).instance_eval(&block)
+        DSL.new(declarations).instance_eval(&)
       end
 
       # A key's value. Before Boot, reads ENV live (its uppercased name)
@@ -179,9 +179,7 @@ module Monk
       # be a write to a module ivar from whichever Ractor first reads it
       # after Boot -- exactly the isolation error this method exists to
       # avoid.
-      def frozen_values
-        @frozen_values
-      end
+      attr_reader :frozen_values
 
       def env_var_name(key)
         key.to_s.upcase

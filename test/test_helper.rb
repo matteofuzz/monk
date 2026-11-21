@@ -105,14 +105,14 @@ module ViewTestHelpers
 
   # Monk reads MONK_ENV once, at boot, never per request -- so a test
   # that wants development behavior has to set it before .freeze!.
-  def with_monk_env(value)
-    with_env("MONK_ENV", value) { yield }
+  def with_monk_env(value, &)
+    with_env("MONK_ENV", value, &)
   end
 
   # Sets (or, given nil, clears) an arbitrary ENV var for the duration of
   # the block, restoring whatever was there before either way.
   def with_env(name, value)
-    previous = ENV[name]
+    previous = ENV.fetch(name, nil)
     ENV[name] = value
     yield
   ensure
@@ -197,9 +197,9 @@ module GeneratorTestHelpers
   end
 
   # Runs a generated app's bin/ script, the way a developer runs it.
-  def run_generated_script(dest, script, env = {}, *args)
+  def run_generated_script(dest, script, env = {}, *)
     env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
-    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *args, chdir: dest)
+    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *, chdir: dest)
   end
 
   def generated(dest, path) = File.read(File.join(dest, path))
@@ -272,8 +272,10 @@ module PersistenceTestHelpers
   end
 
   def skip_unless_postgres_available
+    return if postgres_available?
+
     skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
-      "(set MONK_TEST_PG_* env vars, or start one -- see docs/development.md)" unless postgres_available?
+         "(set MONK_TEST_PG_* env vars, or start one -- see docs/development.md)"
   end
 
   # Same information_schema check Migrator#ensure_schema_migrations_table
@@ -283,7 +285,7 @@ module PersistenceTestHelpers
   # cast defined for type regclass" warning on every call.
   def table_exists?(conn, table)
     conn.exec_params(
-      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table]
+      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table],
     ).ntuples.positive?
   end
 
@@ -341,8 +343,10 @@ module RedisTestHelpers
   end
 
   def skip_unless_redis_available
+    return if redis_available?
+
     skip "no local Redis reachable at #{redis_test_url} " \
-      "(set MONK_TEST_REDIS_URL, or start one -- see docs/development.md)" unless redis_available?
+         "(set MONK_TEST_REDIS_URL, or start one -- see docs/development.md)"
   end
 end
 
@@ -350,11 +354,11 @@ end
 # (storage_s3_integration_test.rb): a local floci, never skipped. Not
 # included globally -- `include StorageTestHelpers` where needed.
 module StorageTestHelpers
-  FLOCI = "docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0"
+  FLOCI = "docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0".freeze
 
   def storage_test_url
     ENV.fetch("MONK_TEST_STORAGE_URL",
-      "s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1")
+      "s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1",)
   end
 
   # The backend under test, on an empty bucket that exists, on a server
@@ -425,7 +429,7 @@ end
 # Monk::WebSocket::Connection where a test needs to see something
 # Connection#read hides (close/ping/pong control frames).
 module WebSocketTestHelpers
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ==".freeze
 
   def teardown
     @server_thread&.kill
@@ -446,9 +450,9 @@ module WebSocketTestHelpers
     Monk::WebSocket::Server.const_set(:MIN_PING_INTERVAL, seconds)
   end
 
-  def start_server(**kwargs, &block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **kwargs)
-    @server_thread = Thread.new { server.run(&block) }
+  def start_server(**, &)
+    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **)
+    @server_thread = Thread.new { server.run(&) }
     server
   end
 
@@ -458,8 +462,8 @@ module WebSocketTestHelpers
   end
 
   def handshake_request(extra_headers: {})
-    request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
+    request = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+              "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
     extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
     request << "\r\n"
   end

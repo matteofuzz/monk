@@ -31,7 +31,7 @@ class BootTest < Minitest::Test
 
     error = assert_raises(Monk::UnshareableRouteError) { app.freeze! }
 
-    assert_match(/GET \/hits/, error.message)
+    assert_match(%r{GET /hits}, error.message)
   end
 
   def test_call_auto_boots_for_classic_style

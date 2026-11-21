@@ -32,8 +32,7 @@ module Monk
     LEVELS = Settings::LOG_LEVEL_VALUES
 
     class << self
-      attr_reader :root
-      attr_writer :root
+      attr_accessor :root
 
       # Called from Base#freeze! via Monk.freeze_hooks, the same seam
       # Assets/Settings use. Creates log/ once, in the main Ractor, and

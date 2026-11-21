@@ -22,9 +22,7 @@ class AuthRactorIntegrationTest < Minitest::Test
   end
 
   def teardown
-    if postgres_available?
-      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-    end
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) } if postgres_available?
     Monk::Persistence::Pg.reset!
     Monk::Auth.reset!
   end

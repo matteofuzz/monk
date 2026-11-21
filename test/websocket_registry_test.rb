@@ -144,7 +144,7 @@ class WebSocketRegistryTest < Minitest::Test
     # the freeze at the end of it) to install an already-dead Ractor in
     # its place instead.
     registry = Monk::WebSocket::Registry.allocate
-    dead_ractor = Ractor.new {}
+    dead_ractor = Ractor.new { nil }
     dead_ractor.value # wait for it to finish and close its own incoming port
     registry.instance_variable_set(:@ractor, dead_ractor)
     port = Ractor::Port.new

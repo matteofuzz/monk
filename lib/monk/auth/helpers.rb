@@ -40,7 +40,7 @@ module Monk
         cookie_token = session_cookie_token
         provided = header("x-csrf-token") || params[:csrf_token]
         return if cookie_token && provided.is_a?(String) &&
-          OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
+                  OpenSSL.secure_compare(Monk::Auth.csrf_token_for(cookie_token), provided)
 
         # A valid session gets a csrf_token cookie that matches before the
         # 403, so a page that sent a stale one succeeds when it tries again.
@@ -59,10 +59,12 @@ module Monk
         raw(%(<input type="hidden" name="csrf_token" value="#{h(Monk::Auth.csrf_token_for(token))}">))
       end
 
+      # rubocop:disable-next Naming/AccessorMethodName -- public API, used by every app's callback route
       def set_session_cookie(session)
         max_age = [(session[:expires_at] - Time.now).to_i, 0].max
         add_response_cookie("session_token", session[:token], http_only: true, max_age: max_age)
-        add_response_cookie("csrf_token", Monk::Auth.csrf_token_for(session[:token]), http_only: false, max_age: max_age)
+        add_response_cookie("csrf_token", Monk::Auth.csrf_token_for(session[:token]), http_only: false,
+          max_age: max_age,)
       end
 
       def clear_session_cookie

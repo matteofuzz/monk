@@ -11,7 +11,7 @@ class RedirectTest < Minitest::Test
 
   def test_paths_and_urls_on_this_host_redirect
     ["/notes", "/notes?page=2#top", "notes/1", "?page=2", "https://app.example/notes",
-     "http://app.example/x"].each do |to|
+     "http://app.example/x",].each do |to|
       status, headers, _body = go(to)
 
       assert_equal [302, to], [status, headers["location"]], to
@@ -64,7 +64,7 @@ class RedirectTest < Minitest::Test
     statuses = Ractor.new(redirecting) do |a|
       %w[/notes https://app.example/x https://evil.example/].map do |to|
         a.call("REQUEST_METHOD" => "GET", "PATH_INFO" => "/go", "QUERY_STRING" => "to=#{to}",
-          "HTTP_HOST" => "app.example").first
+          "HTTP_HOST" => "app.example",).first
       end
     end.value
 

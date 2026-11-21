@@ -24,7 +24,7 @@ class AuthDevLinkTest < Minitest::Test
 
       assert_includes out, "[dev] magic link: http://x/auth/callback/abc"
       log = File.read(File.join(dir, "development.log"))
-      assert_match(/INFO \[dev\] magic link: http:\/\/x\/auth\/callback\/abc/, log)
+      assert_match(%r{INFO \[dev\] magic link: http://x/auth/callback/abc}, log)
     end
   end
 
