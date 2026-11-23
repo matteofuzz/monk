@@ -100,6 +100,15 @@ class ExeMonkTest < Minitest::Test
     assert_includes err, "Unknown module: nope."
   end
 
+  def test_add_unknown_modules
+    monk("new", "shop")
+
+    code, _out, err = monk("add", "nope", "nah", cwd: "shop")
+
+    assert_equal 1, code
+    assert_includes err, "Unknown modules: nope, nah."
+  end
+
   def test_the_text_of_adding_jobs
     monk("new", "shop", "--with", "postgres")
 
@@ -298,6 +307,10 @@ class ExeMonkTest < Minitest::Test
     assert_equal 1, code
     assert_includes err, "monk help websocket --file config/websocket.rb --transport=postgres"
     assert_includes monk("help", "websocket", "--file", "config/websocket.rb", "--transport=redis")[1], "RedisFanout"
+
+    code, _out, err = monk("help", "jobs", "--file", "config/nope.rb")
+    assert_equal 1, code
+    assert_includes err, "jobs doesn't write config/nope.rb."
   end
 
   def test_help_file_fills_in_the_app_name_only_inside_an_app_and_only_where_asked

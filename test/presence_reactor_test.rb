@@ -52,6 +52,24 @@ class PresenceReactorTest < Minitest::Test
       changes,)
   end
 
+  # The module's reads, on the same configured store.
+  def test_online_is_true_only_for_a_visible_page
+    Monk::Presence.configure(db_name: DB_NAME)
+    @store.flush(@process, online: ["u:1"], away: ["u:2"])
+    @store.settle(%w[u:1 u:2])
+
+    assert Monk::Presence.online?("u:1")
+    refute Monk::Presence.online?("u:2")
+    refute Monk::Presence.online?("u:never-seen")
+  end
+
+  def test_configure_refuses_a_grace_that_isnt_seconds
+    [-1, "20", nil].each do |grace|
+      assert_raises(ArgumentError, grace.inspect) { Monk::Presence.configure(db_name: DB_NAME, grace: grace) }
+    end
+    refute Monk::Presence.configured?
+  end
+
   def test_only_the_lock_holder_reacts_and_another_takes_over_when_it_stops
     Monk::Presence.configure(db_name: DB_NAME)
     first = start_reactor(RECORD)

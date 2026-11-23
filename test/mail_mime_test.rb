@@ -200,6 +200,13 @@ class MailMimeTest < Minitest::Test
     assert_raises(Monk::Mail::InvalidMessageError) { message.to_mime }
   end
 
+  def test_rejects_text_that_cant_become_utf8
+    message = build(text: (+"\xA1").force_encoding(Encoding::EUC_JP))
+
+    error = assert_raises(Monk::Mail::InvalidMessageError) { message.to_mime }
+    assert_match(/can't be converted to UTF-8/, error.message)
+  end
+
   def test_to_mime_works_inside_a_non_main_ractor
     raw = Ractor.new do
       Monk::Mail::Message.new(

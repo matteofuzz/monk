@@ -34,6 +34,18 @@ class BootTest < Minitest::Test
     assert_match(%r{GET /hits}, error.message)
   end
 
+  def test_freeze_raises_precise_error_naming_the_offending_error_handler
+    count = 0
+    app = Class.new(Monk::Base) do
+      get("/x") { "x" }
+      error(KeyError) { count += 1 }
+    end
+
+    error = assert_raises(Monk::UnshareableRouteError) { app.freeze! }
+
+    assert_match(/error handler for KeyError/, error.message)
+  end
+
   def test_call_auto_boots_for_classic_style
     app_class = Class.new(Monk::Base) do
       get("/x") { "hi" }

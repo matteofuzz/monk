@@ -97,11 +97,21 @@ class StorageFileBackendTest < Minitest::Test
 
   def test_disk_errors_become_request_errors_with_the_cause
     FileUtils.mkdir_p(File.join(@root, "objects"))
-    File.write(File.join(@root, "objects", "media"), "a file where a directory goes")
+    FileUtils.mkdir_p(File.join(@root, "meta"))
+    %w[objects meta].each { |area| File.write(File.join(@root, area, "media"), "a file where a directory goes") }
 
-    error = assert_raises(Monk::Storage::RequestError) { backend.put("media/a", "x") }
+    {
+      put: -> { backend.put("media/a", "x") },
+      get: -> { backend.get("media/a") },
+      head: -> { backend.head("media/a") },
+      copy: -> { backend.copy("media/a", "media/b") },
+      receive: -> { backend.receive("media/a", StringIO.new("x"), content_type: "text/plain", byte_size: 1) },
+    }.each do |name, call|
+      error = assert_raises(Monk::Storage::RequestError, name.to_s, &call)
 
-    assert_kind_of SystemCallError, error.cause
+      assert_kind_of SystemCallError, error.cause, name.to_s
+      assert_match(/\Afile storage \w+ media/, error.message, name.to_s)
+    end
   end
 
   # Worker Ractors call the backend straight from the frozen config.

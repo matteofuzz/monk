@@ -77,6 +77,17 @@ class StorageApiTest < Minitest::Test
     end
     assert_raises(Monk::Storage::NotConfiguredError) { Monk::Storage.put("tmp/a", "x") }
     assert_raises(Monk::Storage::NotConfiguredError) { Monk::Storage.copy("tmp/a", "tmp/b") }
+    assert_raises(Monk::Storage::NotConfiguredError) { Monk::Storage.check(origin: "https://app.monkrb.org") }
+  end
+
+  # The file backend has no rule to check: it says so, and writes nothing.
+  def test_check_on_a_file_backend_says_theres_nothing_to_check
+    Monk::Storage.configure(url: "file://#{@dir}/root")
+
+    assert_equal "file://#{@dir}/root: files on this server's disk, uploaded through the app on " \
+                 "https://app.monkrb.org, so there's no CORS rule to check. Nothing expires tmp/ on disk.",
+      Monk::Storage.check(origin: "https://app.monkrb.org")
+    assert_empty Dir.children(@dir)
   end
 
   # The way a route uses it: Monk::Storage from a worker Ractor, after boot.

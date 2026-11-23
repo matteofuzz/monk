@@ -142,6 +142,8 @@ class PushSubscriptionsTest < Minitest::Test
       "nope",
       good.except("endpoint"),
       good.merge("endpoint" => "http://push.example/send/1"),
+      good.merge("endpoint" => "javascript:alert(1)"),
+      good.merge("endpoint" => "https://push example/send/1"),
       good.merge("endpoint" => "https://push.example/#{"x" * 2100}"),
       good.merge("keys" => { "p256dh" => good["keys"]["p256dh"] }),
       good.merge("keys" => { "p256dh" => "AAAA", "auth" => good["keys"]["auth"] }),

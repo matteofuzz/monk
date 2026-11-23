@@ -141,6 +141,26 @@ class StorageRoutesTest < Minitest::Test
     assert_equal "nosniff", headers["x-content-type-options"]
   end
 
+  # Gone between head and get (a delete racing the download): still a 404.
+  def test_an_object_gone_before_its_bytes_are_read_is_not_found
+    Monk::Storage.put("media/racing", "x")
+    File.delete("#{@dir}/root/objects/media/racing~")
+
+    assert_equal [404, "no such object\n"], request("GET", Monk::Storage.url("media/racing")).values_at(0, 2)
+  end
+
+  # Signed with the real secret, yet nothing the backend ever signs: another
+  # method, or a key that isn't one. Refused like a forged token.
+  def test_a_signed_token_for_another_method_or_a_bad_key_is_forbidden
+    later = Time.now.to_i + 60
+    { "DELETE" => "media/a", "GET" => "../outside" }.each do |method, key|
+      token = Monk::Storage::Token.sign({ m: method, k: key, e: later }, backend.secret)
+
+      assert_equal [403, "signature doesn't match\n"], request(method, "/_monk/storage/#{token}").values_at(0, 2),
+        method
+    end
+  end
+
   def test_range_requests_get_partial_content
     Monk::Storage.put("media/v", "0123456789", content_type: "video/mp4")
     url = Monk::Storage.url("media/v")

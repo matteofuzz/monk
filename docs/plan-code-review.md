@@ -138,6 +138,9 @@ the same assignments in `reset!`.
   those ivars would break it silently.
 - Change: a test that fails if a `PG::Error` still holds a connection
   after `make_portable` (maybe there already is one: to check).
+- **Checked 2026-11-23, nothing to add:**
+  `test_a_pg_error_keeps_its_class_message_and_diagnostic_fields` asserts
+  the connection is gone and the result is an `ErrorResult`.
 
 **B3. Small RuboCop offenses in `lib/`:** `auth/helpers.rb:43`,
 `base.rb:370` (line too long), `context.rb:67`. Autocorrectable or
@@ -179,6 +182,9 @@ one-line fixes.
   lower value.
 - Change: about 15 small tests. Worth it for the security ones and the
   two `check`s; the rest are a nice-to-have.
+- **Done 2026-11-23:** 11 tests, everything above but the Jobs
+  supervisor logging. Found on the way: `Backends::File#delete`'s rescue
+  can't run (`FileUtils.rm_f` swallows errors), so it could go.
 
 **T3. One test is a quarter of the suite.**
 `GeneratorsCombinationsTest#test_every_combination_works` takes 54 s of
