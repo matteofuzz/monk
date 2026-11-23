@@ -2,11 +2,10 @@ require_relative "errors"
 
 module Monk
   module Jobs
-    # A recurring task's schedule (docs/history/plan-scheduled-jobs.md decision 3):
-    # five fields -- minute, hour, day of month, month, day of week -- each
-    # `*`, numbers, lists (`,`), ranges (`-`) and steps (`/`), plus the
-    # shortcuts in SHORTCUTS. No seconds, no names, no time zones: every
-    # time is UTC.
+    # A recurring task's schedule: five fields -- minute, hour, day of month,
+    # month, day of week -- each `*`, numbers, lists (`,`), ranges (`-`) and
+    # steps (`/`), plus the shortcuts in SHORTCUTS. No seconds, no names, no
+    # time zones: every time is UTC.
     #
     # When both day fields are restricted, a day matching either counts; a
     # field starting with `*` (`*/2` too) doesn't restrict, as in Vixie

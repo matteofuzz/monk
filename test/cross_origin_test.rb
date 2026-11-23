@@ -23,7 +23,7 @@ class CrossOriginTest < Minitest::Test
 
   def test_sec_fetch_site_wins_over_origin
     assert_equal 403, call("POST", "/x", "HTTP_SEC_FETCH_SITE" => "cross-site",
-      "HTTP_ORIGIN" => "https://app.example", "HTTP_HOST" => "app.example")
+      "HTTP_ORIGIN" => "https://app.example", "HTTP_HOST" => "app.example",)
   end
 
   def test_without_sec_fetch_site_origin_must_match_host
@@ -47,7 +47,7 @@ class CrossOriginTest < Minitest::Test
 
   def test_an_overridden_verb_is_checked_too
     env = env_for("POST", "/x").merge("HTTP_SEC_FETCH_SITE" => "cross-site",
-      "CONTENT_TYPE" => "application/x-www-form-urlencoded", "rack.input" => StringIO.new("_method=delete"))
+      "CONTENT_TYPE" => "application/x-www-form-urlencoded", "rack.input" => StringIO.new("_method=delete"),)
 
     assert_equal 403, app.call(env).first
   end

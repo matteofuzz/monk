@@ -15,10 +15,10 @@ there:
 - a snapshot restored onto a new server, and a database dump loaded into
   a fresh one.
 
-The stack itself is `monk add deploy`'s (`docs/guides/scaffolding.md`),
-and runs on any Linux host with Docker. This guide adds what's
-Hetzner's and Brevo's. The commands use `shop` for the app and
-`shop.example.com` for its address: use your own.
+The stack itself is `monk add deploy`'s ([`deploying.md`, section
+4](deploying.md#4-a-single-vps-docker-compose--caddy)), and runs on any Linux
+host with Docker. This guide adds what's Hetzner's and Brevo's. The commands
+use `shop` for the app and `shop.example.com` for its address: use your own.
 
 ## 1. Accounts, once
 
@@ -51,7 +51,7 @@ Caddy gets a real certificate for it. Its URL changes with the IP,
 though, so a restore onto a new server moves the app, and push
 subscriptions made at the old address stop working.
 
-**Brevo**, for mail (`docs/guides/mail.md`, "Provider examples"):
+**Brevo**, for mail ([`mail.md`](mail.md#provider-examples)):
 
 1. Sign up, then authenticate your domain (Senders, Domains & Dedicated
    IPs). Brevo shows DNS records to add: the DKIM key, its own code, and
@@ -201,7 +201,7 @@ docker image prune -f
 `up -d` replaces only the containers whose image or settings changed.
 `web` and `jobs` get 35 s to finish what they're doing on `TERM`. While
 `ws` restarts, open pages reconnect, and presence carries them over the
-gap (`docs/guides/presence.md`).
+gap ([`presence.md`](presence.md)).
 
 ## 6. Mail
 
@@ -230,14 +230,25 @@ docker compose up -d --force-recreate web jobs
 Brevo's SMTP keys are letters, digits and dashes, so they need no
 encoding. Another provider's password might.
 
+Check that the login works, without sending anything:
+
+```bash
+docker compose exec -T web bundle exec ruby -e 'require "./config/settings"; require "./config/mail"; puts Monk::Mail.check'
+```
+
+It answers `connected (STARTTLS), logged in as ...`, or says what failed
+(see [`mail.md`](mail.md#checking-mail_url)).
+
 `jobs` is the process that sends mail. If nothing arrives, check
 `docker compose logs --tail 50 jobs` and the log file, then the
 recipient's spam folder.
 
 ## 7. Checking it
 
-Until `monk check` does this (planned for 0.27), check from your
-machine:
+Boot refuses a `PUBLIC_URL`, `LIVE_WS_URL` or `AUTH_SECRET` that's
+present but wrong ([`settings.md`](settings.md#values-refused-at-boot)),
+so a service that keeps restarting says why in
+`docker compose logs`. The rest, check from your machine:
 
 ```bash
 url=https://shop.example.com
@@ -336,7 +347,7 @@ WebSocket per open page:
 - **Probably fine:** up to about 5,000 registered (about 1,000 online),
   as long as Brevo's daily cap covers the logins.
 - **Beyond that:** a dedicated-CPU server and `WS_PROCESSES=2`
-  (`docs/guides/websocket.md`, "Several processes").
+  ([`websocket.md`](websocket.md#several-processes)).
 
 ## 10. Day to day
 

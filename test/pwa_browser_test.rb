@@ -22,7 +22,8 @@ class PwaBrowserTest < Minitest::Test
     @browser =
       begin
         require "ferrum"
-        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30, incognito: false).tap do |browser|
+        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30, incognito: false,
+          browser_options: ChromeOptions.browser_options,).tap do |browser|
           at_exit { browser.quit }
         end
       rescue LoadError, StandardError
@@ -198,12 +199,21 @@ class PwaBrowserTest < Minitest::Test
         navigator.serviceWorker.ready.then((r) => r.getNotifications())
           .then((list) => arguments[0](list.map((n) => [n.title, n.body, n.tag, n.data.url])))
       JS
-      return shown unless shown.empty?
+      return shown.tap { close_notifications } unless shown.empty?
 
       flunk "no notification shown" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
 
       sleep 0.1
     end
+  end
+
+  # What a test showed is closed again, in case Chrome still handed it to
+  # the system despite browser_options above.
+  def close_notifications
+    @page.evaluate_async(<<~JS, 10)
+      navigator.serviceWorker.ready.then((r) => r.getNotifications())
+        .then((list) => list.forEach((n) => n.close())).then(() => arguments[0](true))
+    JS
   end
 
   def default_profile_page(browser)

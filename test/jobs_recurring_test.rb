@@ -130,7 +130,7 @@ class JobsRecurringDeclarationTest < Minitest::Test
     tasks = Monk::Jobs.recurring_tasks
     assert Ractor.shareable?(tasks)
     keys = Ractor.new { Monk::Jobs.recurring_tasks.map { |task| [task.key, task.job_class.queue] } }.value
-    assert_equal [["weekly_digest", "mailers"]], keys
+    assert_equal [%w[weekly_digest mailers]], keys
   end
 
   def test_declaring_after_the_registry_is_frozen_is_an_error

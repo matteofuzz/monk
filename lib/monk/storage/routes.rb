@@ -2,11 +2,10 @@ module Monk
   module Storage
     ROUTE_PREFIX = "/_monk/storage/".freeze
 
-    # PUT and GET /_monk/storage/<token>: the file backend standing in for
-    # a bucket's signed URLs, refusing what a bucket would refuse, the way
-    # it would (docs/history/plan-storage.md decisions 7 and 8). Served whenever
-    # the backend is file://, in any environment, since its links only
-    # work if the routes exist.
+    # PUT and GET /_monk/storage/<token>: the file backend standing in for a
+    # bucket's signed URLs, refusing what a bucket would refuse, the way it
+    # would. Served whenever the backend is file://, in any environment, since
+    # its links only work if the routes exist.
     module Routes
       # Shareable, not only frozen: worker Ractors serve these routes.
       NOSNIFF = Ractor.make_shareable({ "x-content-type-options" => "nosniff" })

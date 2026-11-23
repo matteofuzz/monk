@@ -18,15 +18,15 @@ class ParamsTest < Minitest::Test
 
   def test_nested_hashes
     assert_equal({ user: { name: "Ann", address: { city: "Rome" } } },
-      parse("user[name]=Ann&user[address][city]=Rome"))
+      parse("user[name]=Ann&user[address][city]=Rome"),)
   end
 
   def test_arrays
-    assert_equal({ tags: ["a", "b"] }, parse("tags[]=a&tags[]=b"))
+    assert_equal({ tags: %w[a b] }, parse("tags[]=a&tags[]=b"))
   end
 
   def test_an_array_inside_a_hash
-    assert_equal({ post: { tags: ["a", "b"] } }, parse("post[tags][]=a&post[tags][]=b"))
+    assert_equal({ post: { tags: %w[a b] } }, parse("post[tags][]=a&post[tags][]=b"))
   end
 
   def test_percent_encoded_brackets_are_nested_too

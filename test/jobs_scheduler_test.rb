@@ -20,7 +20,7 @@ end
 
 class JobsSchedulerTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_scheduler_test_db
   T0 = Time.utc(2026, 1, 5, 9)
@@ -39,21 +39,6 @@ class JobsSchedulerTest < Minitest::Test
       @calls += 1
       @adapter.fire_recurring(**)
     end
-  end
-
-  def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
   end
 
   def test_a_new_task_is_initialized_then_fires_at_its_next_occurrence

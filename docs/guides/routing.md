@@ -14,7 +14,7 @@ class App < Monk::Base
 end
 ```
 
-Routes are matched by verb and path only — the query string is never part of matching, just parsed into `params` (`a=1`, `a[b]=1` for a hash, `a[]=1` for an array) and merged with a form or JSON body's params and path params, in that order, with path params always winning on conflict. A form posted with a `_method` field of `patch`, `put` or `delete` reaches that verb's route. A browser request from another site to any route but a GET gets a `403`, unless the route is declared with `allow_cross_origin: true`. An unmatched request gets a plain `404`.
+Routes are matched by verb and path only: the query string is never part of matching, just parsed into `params`, and path params win over it. An unmatched request gets a plain `404`. How `params` reads a form or JSON body, `_method` for `patch`/`put`/`delete` from a form, and the `403` for another site's browser request are in [`forms.md`](forms.md): "Params", "Verbs other than POST" and "Requests from another site".
 
 ## REST resources — `resources` (experimental)
 
@@ -26,7 +26,7 @@ For a controller-style resource, `resources` registers the conventional seven ro
 class OrdersController
   def initialize(context) = @context = context
   def index = @context.json(Order.where({}))
-  def create = @context.json(Order.create(@context.params))
+  def create = @context.json(Order.create(Order.from_form(@context.params[:order]))) # never params as they are: forms.md, "From form to row"
   # ...
 end
 
@@ -46,16 +46,16 @@ resources("/orders", OrdersController, :index, :create) # only these two
 
 `resources` is built entirely on top of `get`/`post`/`put`/`patch`/`delete` — it doesn't change routing or dispatch, so it's a purely additive way to register several routes at once. Naming an action `resources` doesn't recognize raises `ArgumentError` immediately, rather than silently registering nothing.
 
-# Context
+## Context
 
-Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `redirect(location)`, `json(data)`, `status`/`status=`, `headers`, `settings` (see [`settings.md`](settings.md)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views.md`](views.md)). There are two ways to write a route block:
+Inside a route block, `self` is a `Context` exposing `params`, `halt(status, body)`, `redirect(location)`, `json(data)`, `status`/`status=`, `headers`, `header(name)` (a request header), `flash` (see [`forms.md`](forms.md#flash)), `settings` (see [`settings.md`](settings.md)), `csrf_field` with auth (see [`forms.md`](forms.md#csrf-tokens-with-auth)) and — for HTML — `render`, `h`, `raw` and `asset_path` (see [`views.md`](views.md)). There are two ways to write a route block:
 
-- **Zero-arg** (`get("/x") { params }`) — the common case; helpers are called bare via `instance_exec`.
-- **One-arg** (`get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }`) — explicit, useful when you want to pass a customized `Context` subclass around instead of relying on implicit `self`.
+- **Zero-arg** (`get("/x") { params }`) — the common case: `self` is the request's `Context`, so its methods are called bare.
+- **One-arg** (`get("/greet/:name") { |ctx| json(greeting: "hi #{ctx.params[:name]}") }`) — the same `Context`, also passed as the argument, for code that prefers it explicit.
 
 `halt` short-circuits the handler and returns exactly the response given. `json` serializes the body and sets the JSON content-type header, using the current status (`200` by default, or whatever an `error` handler pre-sets it to). A route's return value is the body, sent with `status` (`self.status = 422` before returning). `redirect` goes only to this app — a path, or a URL on the request's `Host` — and raises `Monk::UnsafeRedirectError` for anything else, unless the app built the location itself and says so: `redirect(Monk::Storage.url(key), allow_other_host: true)` (see [`forms.md`](forms.md), "Redirects"). Ivars set on the `Context` (`@title = "Home"`) are visible to any template the route renders, and to its layout.
 
-# Error handling
+## Error handling
 
 `error(SomeExceptionClass) { ... }` registers a handler for that exception class; unhandled exceptions get a default `500` JSON response. `error(404) { ... }` overrides the default not-found response. Handler blocks run with the same `Context` as routes:
 

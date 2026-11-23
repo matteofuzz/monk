@@ -8,13 +8,11 @@ module Monk
   # String it wraps, read from Settings' already-frozen values, does).
   #
   # Predicates are four plain, hand-written methods, not one
-  # define_method(&block) per MONK_ENV_VALUES entry: a method backed by a
-  # Proc closure raises "defined with an un-shareable Proc in a different
-  # Ractor" the first time a *different* Ractor than the one that defined
-  # it calls it -- discovered by this class's own real-Ractor test.
-  # Ordinary `def` methods compile to plain bytecode with no Proc
-  # involved, so they carry no such restriction (the same reason View's
-  # compiled templates -- ADR 0004 -- are real methods, not blocks).
+  # define_method(&block) per MONK_ENV_VALUES entry: a method backed by a Proc
+  # closure raises "defined with an un-shareable Proc in a different Ractor"
+  # the first time a *different* Ractor than the one that defined it calls it.
+  # Ordinary `def` methods compile to plain bytecode with no Proc involved, so
+  # they carry no such restriction (as View's compiled templates, ADR 0004).
   class Environment
     attr_reader :value
 

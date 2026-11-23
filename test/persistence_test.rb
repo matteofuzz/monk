@@ -23,6 +23,22 @@ class PersistenceTest < Minitest::Test
     assert_match(/nope/, error.message)
   end
 
+  def test_connection_options_of_an_unregistered_name_raise
+    error = assert_raises(Monk::UnknownPersistenceError) { Monk::Persistence::Pg.connection_options(:nope) }
+
+    assert_match(/nope/, error.message)
+  end
+
+  def test_start_pools_refuses_to_run_outside_the_main_ractor
+    message = Ractor.new do
+      Monk::Persistence::Pg.start_pools!
+    rescue ArgumentError => e
+      e.message
+    end.value
+
+    assert_match(/runs in the main Ractor/, message)
+  end
+
   def test_register_then_lookup_returns_a_connection
     skip_unless_postgres_available
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)

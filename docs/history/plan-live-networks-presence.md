@@ -52,7 +52,7 @@ would show a phone that left an hour ago as online.
 
 **Presence**: nothing in Monk. `docs/guides/live.md` ("Cost and limits")
 lists it as not built. `Registry#count(key)` counts only its own
-process's sockets (`docs/design/ws-horizontal-scaling-considerations.md`),
+process's sockets (`docs/history/ws-horizontal-scaling-considerations.md`),
 and with `WS_PROCESSES` > 1 or replicas that's a slice.
 
 **What the first app needs** (monk_talk, `doc/candidate_plan.md` V0.3):

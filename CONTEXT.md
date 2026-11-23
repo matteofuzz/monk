@@ -9,11 +9,11 @@ A user-instantiated, general-purpose primitive (`Monk::StateRactor.new(initial_v
 _Avoid_: Shared state, actor, state actor, global state
 
 **Context**:
-The per-request object created fresh inside a worker Ractor for each incoming request, exposing helpers like `params`, `halt`, and `json`. A route block accesses it either implicitly — `instance_exec`'d with `self` bound to the Context, for the common case (`get("/x") { params }`) — or explicitly as a block argument, for cases that need to override or customize the Context class (`get("/x") { |ctx| ctx.params }`). Which style applies is decided by the route block's arity. A Context is never shared across Ractors and is therefore exempt from the app's shareability constraints.
+The per-request object created fresh inside a worker Ractor for each incoming request, exposing helpers like `params`, `halt`, and `json`. At `Boot` each route block becomes a private method of `Context`, so inside the block `self` is the request's Context (`get("/x") { params }`); a block that takes a parameter also gets the Context as that argument (`get("/x") { |ctx| ctx.params }`). A Context is never shared across Ractors and is therefore exempt from the app's shareability constraints.
 _Avoid_: Request object, env, scope
 
 **Boot**:
-The lifecycle step, triggered by calling `.freeze!`, that seals an app's route table, Context class, and helpers into a `Ractor.shareable?` structure. It is the one explicit primitive for this transition — callable directly (e.g. in a test asserting the app boots successfully) or triggered automatically by Monk's own Rack entrypoint helper, so ordinary usage never calls it by hand. It works uniformly whether the app is served in classic style (`run App`, routes live on the class) or modular style (`run App.new`, routes live on an instance).
+The lifecycle step, triggered by calling `.freeze!`, that seals an app's route table, Context class, and helpers into a `Ractor.shareable?` structure. It is the one explicit primitive for this transition — callable directly (e.g. in a test asserting the app boots successfully) or triggered by `Monk.boot(App)` in `config.ru`, so ordinary usage never calls it by hand. It works uniformly whether the app is served in classic style (`run App`, routes live on the class) or modular style (`run App.new`, routes live on an instance).
 _Avoid_: Freeze, initialize, setup
 
 **View**:
@@ -25,11 +25,11 @@ A View rendered around another View's output, receiving it through Ruby's own `y
 _Avoid_: Wrapper, master page, shell
 
 **Asset manifest**:
-The frozen map from URL path to body, content-type and ETag, built by walking the assets root once at `Boot` and sealed with the route table. Every static response in production is served from it, which makes path traversal structurally impossible rather than defended against — a path that wasn't enumerated at boot simply isn't a key. Development bypasses it and reads the file per request instead, so an edited stylesheet needs a refresh rather than a restart.
+The frozen map from URL path to body, content-type and ETag, built by walking the assets root once at `Boot` and sealed with the route table. Every static response outside development is served from it, which makes path traversal structurally impossible rather than defended against — a path that wasn't enumerated at boot simply isn't a key. Development bypasses it and reads the file per request instead, so an edited stylesheet needs a refresh rather than a restart.
 _Avoid_: Asset pipeline, static middleware, cache
 
 **Settings**:
-A boot-frozen facility for app-defined configuration values. An app declares its keys once via `Monk::Settings.configure { required :key; optional :key, default: ... }`; required keys missing at `Boot` raise, the same fail-fast posture `Boot` already takes elsewhere. Values are read back either as `Monk::Settings[:key]` or, per-request, as `Context#settings` — and reading a key nobody declared raises rather than returning `nil`. Keys are flat (no namespacing) and values are always Strings — no type coercion. Deliberately separate from `Persistence.register` and `Auth.configure`, which keep their own bespoke per-feature config; `Settings` is for `MONK_ENV` and everything else an app needs to configure.
+A boot-frozen facility for app-defined configuration values. An app declares its keys once via `Monk::Settings.configure { required :key; optional :key, default: ... }`; required keys missing at `Boot` raise, and so do some values that are present but wrong (`PUBLIC_URL`, `LIVE_WS_URL`, `AUTH_SECRET`; `docs/guides/settings.md`), the same fail-fast posture `Boot` already takes elsewhere. Values are read back either as `Monk::Settings[:key]` or, per-request, as `Context#settings` — and reading a key nobody declared raises rather than returning `nil`. Keys are flat (no namespacing) and values are always Strings — no type coercion. Deliberately separate from `Persistence.register` and `Auth.configure`, which keep their own bespoke per-feature config; `Settings` is for `MONK_ENV` and everything else an app needs to configure.
 _Avoid_: Config, configuration, options
 
 **MONK_ENV**:
@@ -100,7 +100,6 @@ _Avoid_: Last run (nothing may have run), cursor
 The job process supervisor's once-a-tick step that handles each recurring task's most recent occurrence. Every job process runs it; the checkpoint makes sure one of them enqueues each occurrence. Separate from the stager, which it sits next to.
 _Avoid_: Cron, dispatcher, stager (that moves due scheduled jobs)
 
-
 **Monk module**:
 A part of Monk an app adds with `monk add`: `postgres`, `redis`, `mail`, `auth`, `jobs`, `websocket`, `live`, `presence`, `storage`, `pwa`, `push`, `deploy`. In an app it is a config file, `config/<module>.rb` (`config/persistence.rb` for postgres; `compose.yaml` for deploy), which `config/load.rb` requires when it exists, plus the files and lines its Generator wrote. Not a Ruby `Module`: when the two could be confused, say "Monk module".
 _Avoid_: Feature, plugin, flag (`monk new` had flags before ADR 0017)
@@ -116,7 +115,6 @@ _Avoid_: Sample, snippet, demo
 **Transport**:
 What carries a broadcast between `bin/server`, `bin/jobs` and `bin/websocket_server`, which are always separate processes: Postgres `LISTEN`/`NOTIFY` (`PgFanout`) or Redis (`RedisFanout`), chosen once per app in `config/websocket.rb`. Live has none of its own: it uses websocket's.
 _Avoid_: Fanout (the object that uses a transport), backend, adapter
-
 
 **Storage**:
 `Monk::Storage`: an opt-in module (`require "monk/storage"`) that stores the files users send as bytes under a key, in an S3-compatible bucket or, in development and test, on the local disk (the file backend). One `STORAGE_URL` picks the backend. It keeps no record of a file: filename, owner and size live in the app's own table.

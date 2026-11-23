@@ -19,15 +19,13 @@ class PersistenceModelTest < Minitest::Test
       drop_table_if_exists(conn, "widgets")
       conn.exec(
         "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0, " \
-        "claimed_by TEXT)"
+        "claimed_by TEXT)",
       )
     end
   end
 
   def teardown
-    if postgres_available?
-      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_table_if_exists(conn, "widgets") }
-    end
+    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_table_if_exists(conn, "widgets") } if postgres_available?
     Monk::Persistence::Pg.reset!
   end
 
@@ -80,9 +78,9 @@ class PersistenceModelTest < Minitest::Test
       { name: "nut", quantity: 5 },
     ])
 
-    assert_equal ["bolt", "nut"], rows.map { |r| r[:name] }
-    assert_equal [1, 5], rows.map { |r| r[:quantity] }
-    assert rows.all? { |r| r[:id].is_a?(Integer) }
+    assert_equal(%w[bolt nut], rows.map { |r| r[:name] })
+    assert_equal([1, 5], rows.map { |r| r[:quantity] })
+    assert(rows.all? { |r| r[:id].is_a?(Integer) })
     assert_equal rows.map { |r| r[:id] }.uniq.size, rows.size
   end
 
@@ -104,12 +102,12 @@ class PersistenceModelTest < Minitest::Test
       { quantity: 5, name: "nut" },
     ])
 
-    assert_equal ["bolt", "nut"], rows.map { |r| r[:name] }
-    assert_equal [1, 5], rows.map { |r| r[:quantity] }
+    assert_equal(%w[bolt nut], rows.map { |r| r[:name] })
+    assert_equal([1, 5], rows.map { |r| r[:quantity] })
   end
 
   def test_create_all_rejects_a_malicious_column_name_rather_than_interpolating_it
-    error = assert_raises(PG::Error) { Widget.create_all([{ %{name; DROP TABLE widgets;--} => "x" }]) }
+    error = assert_raises(PG::Error) { Widget.create_all([{ %(name; DROP TABLE widgets;--) => "x" }]) }
 
     refute_nil error
     row = Widget.create(name: "still here", quantity: 1)
@@ -117,7 +115,7 @@ class PersistenceModelTest < Minitest::Test
   end
 
   def test_create_rejects_a_malicious_column_name_rather_than_interpolating_it
-    error = assert_raises(PG::Error) { Widget.create(%{name; DROP TABLE widgets;--} => "x") }
+    error = assert_raises(PG::Error) { Widget.create(%(name; DROP TABLE widgets;--) => "x") }
 
     refute_nil error
     row = Widget.create(name: "still here", quantity: 1)
@@ -156,7 +154,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where({})
 
-    assert_equal [a, b].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+    assert_equal([a, b].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] })
   end
 
   def test_where_with_a_comparison_operator_matches_rows_past_the_bound
@@ -166,7 +164,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where(quantity: { gt: 1 })
 
-    assert_equal [b, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+    assert_equal([b, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] })
   end
 
   def test_where_with_multiple_operators_on_one_column_ands_them_together
@@ -192,7 +190,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where(quantity: [1, 10])
 
-    assert_equal [a, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+    assert_equal([a, c].sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] })
   end
 
   # The list goes to Postgres as one array literal: values with the
@@ -205,7 +203,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where(name: names + [nil])
 
-    assert_equal created.sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] }
+    assert_equal(created.sort_by { |r| r[:id] }, rows.sort_by { |r| r[:id] })
   end
 
   def test_where_with_an_empty_array_condition_matches_no_rows
@@ -236,7 +234,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where({}, order: :quantity, limit: 2)
 
-    assert_equal [1, 5], rows.map { |r| r[:quantity] }
+    assert_equal([1, 5], rows.map { |r| r[:quantity] })
   end
 
   def test_where_with_a_non_integer_limit_raises
@@ -253,7 +251,7 @@ class PersistenceModelTest < Minitest::Test
 
     rows = Widget.where({ id: { gt: b[:id] - 1 } }, order: :id, limit: 2)
 
-    assert_equal [b[:id], c[:id]], rows.map { |r| r[:id] }
+    assert_equal([b[:id], c[:id]], rows.map { |r| r[:id] })
   end
 
   def test_update_returns_the_updated_row

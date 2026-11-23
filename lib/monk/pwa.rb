@@ -3,10 +3,10 @@ require_relative "pwa/errors"
 require_relative "pwa/manifest"
 require_relative "pwa/helpers"
 
-# Opt-in: require "monk/pwa" explicitly; `require "monk"` alone doesn't
-# load it. Makes the app installable (docs/history/plan-pwa-push.md, part A): the
-# app's own public/manifest.webmanifest, icons and public/sw.js, checked
-# at boot and linked from every page by <%= monk_head %>.
+# Opt-in: require "monk/pwa" explicitly; `require "monk"` alone doesn't load
+# it. Makes the app installable: the app's own public/manifest.webmanifest,
+# icons and public/sw.js, checked at boot and linked from every page by <%=
+# monk_head %>.
 module Monk
   Context.include(Pwa::Helpers)
 
@@ -21,11 +21,6 @@ module Monk
     # register.js, served from the gem like Live's client.
     CLIENT_PATH = "/_monk/pwa".freeze
     Monk::Assets.mount(CLIENT_PATH, CLIENT_DIR)
-
-    # Eager, never `@x ||=` (a lazy write from a worker Ractor is an
-    # isolation error).
-    @manifest = nil
-    @apple_touch_icon = nil
 
     class << self
       # The parsed manifest, frozen; nil until configured.
@@ -50,5 +45,9 @@ module Monk
         @apple_touch_icon = nil
       end
     end
+
+    # Eager, never `@x ||=` (a lazy write from a worker Ractor is an
+    # isolation error).
+    reset!
   end
 end

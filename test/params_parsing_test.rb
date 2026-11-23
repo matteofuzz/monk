@@ -59,7 +59,7 @@ class ParamsParsingTest < Minitest::Test
     end
 
     _status, _headers, body = app.call(post_env("application/x-www-form-urlencoded; charset=UTF-8",
-      "email=a%40b.com&user[name]=Ann&tags[]=a&tags[]=b"))
+      "email=a%40b.com&user[name]=Ann&tags[]=a&tags[]=b",))
 
     assert_equal "a@b.com Ann a,b", body.join
   end

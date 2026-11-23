@@ -3,11 +3,10 @@ require "openssl"
 module Monk
   module Push
     # P-256 keys from and to the raw bytes web push uses: a 65-byte
-    # uncompressed point for a public key, a 32-byte scalar for a private
-    # one. OpenSSL 3 keys are immutable and only built from DER, so the raw
-    # bytes are wrapped in DER here. PKey objects can't be made shareable,
-    # so configuration keeps raw Strings and each send rebuilds the key it
-    # needs (docs/history/plan-pwa-push.md, B2).
+    # uncompressed point for a public key, a 32-byte scalar for a private one.
+    # OpenSSL 3 keys are immutable and only built from DER, so the raw bytes
+    # are wrapped in DER here. PKey objects can't be made shareable, so
+    # configuration keeps raw Strings and each send rebuilds the key it needs.
     module Keys
       CURVE = "prime256v1".freeze
       PUBLIC_SIZE = 65

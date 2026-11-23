@@ -67,3 +67,5 @@ Commented examples are tagged `# monk:example <name>` ... `# monk:end`.
 `grep -rn "monk:example" app config` lists them; uncomment one and adapt it.
 
 ## Modules
+
+Each module added with `monk add` appends its own section below.

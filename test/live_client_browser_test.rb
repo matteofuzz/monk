@@ -86,7 +86,7 @@ class LiveClientBrowserTest < Minitest::Test
       end
 
       wait_for("batch") { evaluate("document.querySelector('#contact-0') !== null") }
-      assert_equal ["first", "morphed", "morphed"],
+      assert_equal %w[first morphed morphed],
         evaluate("[...document.querySelectorAll('#list li')].map(li => li.textContent)")
       assert_equal 4, events("patched").size
     end
@@ -151,6 +151,7 @@ class LiveClientBrowserTest < Minitest::Test
   end
 
   def test_a_resync_answered_with_a_redirect_stops_the_runtime_and_leaves_the_page_alone
+    fast_backoff!
     open_page(%(<ul data-live-topic="t:1"><li id="contact-1">mine</li></ul>))
     @pages.serve_page("", status: 302, headers: { "location" => "/login" })
 
@@ -160,7 +161,7 @@ class LiveClientBrowserTest < Minitest::Test
     assert_equal [{ "reason" => "redirected" }], events("stopped")
     assert_equal "mine", evaluate("document.querySelector('#contact-1').textContent")
     connections = @proxy.connections
-    sleep 1.5
+    sleep 0.3 # past two backoff steps
     assert_equal connections, @proxy.connections, "the runtime kept reconnecting after it stopped"
   end
 
@@ -180,7 +181,7 @@ class LiveClientBrowserTest < Minitest::Test
     @proxy.sever!
 
     wait_for("resync") { events("resynced").size == 1 }
-    assert_equal ["after", "new"],
+    assert_equal %w[after new],
       evaluate("[document.querySelector('#status').textContent, document.querySelector('#note').textContent]")
     assert_equal [true, "half-typed", 2, 6],
       run_js(<<~JS)
@@ -278,6 +279,7 @@ class LiveClientBrowserTest < Minitest::Test
   # block serves, cuts the connection, and expects the runtime to stop with
   # `reason` and leave the page exactly as it was.
   def assert_stops_with(reason)
+    fast_backoff!
     @page.close
     @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">mine</li></ul>)))
     @page = LiveBrowserHelpers.browser.create_page
@@ -291,7 +293,7 @@ class LiveClientBrowserTest < Minitest::Test
     assert_equal [{ "reason" => reason }], events("stopped")
     assert_equal "mine", evaluate("document.querySelector('#contact-1').textContent")
     connections = @proxy.connections
-    sleep 1.2
+    sleep 0.3 # past two backoff steps
     assert_equal connections, @proxy.connections, "the runtime kept reconnecting after it stopped"
   end
 end

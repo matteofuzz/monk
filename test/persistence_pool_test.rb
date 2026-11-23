@@ -287,7 +287,7 @@ class PersistencePoolTest < Minitest::Test
 
     error = assert_raises(PoolTestCalls::TaggedError) { Monk::Persistence::Pg.pool(:p).call(PoolTestCalls, :raise_tagged) }
 
-    assert_equal ["tagged", "kept"], [error.message, error.tag]
+    assert_equal %w[tagged kept], [error.message, error.tag]
     assert_equal [ArgumentError, "the cause"], [error.cause.class, error.cause.message]
   end
 
@@ -541,6 +541,29 @@ class PersistencePoolTest < Minitest::Test
       proxy.start
 
       assert_equal ["back", 1, {}], pool.call(PoolTestCalls, :echo, "back", keyword: 1)
+    end
+  ensure
+    proxy&.stop
+  end
+
+  # A stop that lands while a worker is still connecting (a replacement,
+  # here) can't tell it to stop yet: the pool waits for it to connect and
+  # tells it then, instead of waiting forever on a worker never told.
+  def test_stopping_a_pool_while_a_worker_is_connecting_returns
+    skip_unless_postgres_available
+    proxy = TcpProxy.new(pg_test_opts[:host], pg_test_opts[:port]).start
+    start_pool_through(proxy, size: 1)
+    pool = Monk::Persistence::Pg.pool(:p)
+
+    with_log do
+      proxy.hold
+      assert_raises(Monk::PoolWorkerDiedError) { pool.call(PoolTestCalls, :die) }
+      wait_for { proxy.held_count == 1 } # the replacement is connecting
+      stopping = Thread.new { Monk::Persistence::Pg.reset! }
+      sleep 0.2 # the dispatcher has the :stop before the replacement connects
+      proxy.release
+
+      assert stopping.join(3), "reset! waited forever on the replacement"
     end
   ensure
     proxy&.stop

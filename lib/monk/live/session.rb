@@ -23,12 +23,12 @@ module Monk
     # #tracks_presence? (Server.new(presence:)) is also told, through
     # #visible=, whether its page is visible: while its client has pinged
     # within visible_for, 2 x HEARTBEAT (ADR 0019). The client pings only
-    # while its page is visible, and at once on open, so this is Away. It
-    # also says when its page is hidden, so Away shows at once; the
-    # silence covers a page frozen before it could say so, checked on the
-    # connection's heartbeat (Connection#on_heartbeat), once per server
-    # ping: no thread of its own, which at 15K sockets cost more than
-    # everything else presence does (docs/plan-live-networks-presence.md).
+    # while its page is visible, and at once on open, so this is Away. It also
+    # says when its page is hidden, so Away shows at once; the silence covers
+    # a page frozen before it could say so, checked on the connection's
+    # heartbeat (Connection#on_heartbeat), once per server ping: no thread of
+    # its own, which at 15K sockets cost more than everything else presence
+    # does.
     class Session
       # No `*`, no whitespace or NUL, ASCII only: a client can't smuggle a
       # glob or a delimiter into a topic, and only a topic that passed this
@@ -86,7 +86,7 @@ module Monk
 
       # The new topics go to the registry in one ask, not one each: at a
       # reconnect wave's rate, one ask per topic is most of the registry
-      # Ractor's work (docs/plan-ws-connect-ceiling.md, item 5).
+      # Ractor's work.
       def subscribe(topics)
         added = {}
         allowed, denied = topics.partition { |topic| try_subscribe?(topic, added) }

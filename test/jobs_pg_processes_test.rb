@@ -12,24 +12,9 @@ end
 
 class JobsPgProcessesTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_pg_processes_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-  end
 
   def test_register_process_returns_a_new_id_with_its_host_and_pid
     id = adapter.register_process(hostname: "box-1", pid: 4242)

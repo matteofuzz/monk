@@ -19,7 +19,8 @@ class MethodOverrideTest < Minitest::Test
 
   def test_put_and_delete_too_and_the_env_shows_the_overridden_verb
     assert_equal "put", app.call(request("POST", "application/x-www-form-urlencoded", "_method=PUT"))[2].join
-    assert_equal "delete DELETE", app.call(request("POST", "application/x-www-form-urlencoded", "_method=delete"))[2].join
+    assert_equal "delete DELETE",
+      app.call(request("POST", "application/x-www-form-urlencoded", "_method=delete"))[2].join
   end
 
   def test_never_to_get_or_an_unknown_verb

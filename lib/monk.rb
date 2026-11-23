@@ -20,7 +20,7 @@ module Monk
     app.freeze!
 
     app_class = app.is_a?(Class) ? app : app.class
-    parts = ['', "Monk #{VERSION} plays!", " - env=#{env}", " - routes=#{app_class.routes.size}"]
+    parts = ["", "Monk #{VERSION} plays!", " - env=#{env}", " - routes=#{app_class.routes.size}"]
     parts << " - auth=on" if defined?(Auth) && Auth.config
     backends = persistence_backends
     parts << " - persistence=#{backends.join(",")}" unless backends.empty?

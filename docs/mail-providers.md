@@ -1,5 +1,7 @@
 # Transactional mail providers for `Monk::Mail` — preset analysis
 
+> **Status: research, 2026-09-26.** `Monk::Mail` shipped with SMTP only ([ADR 0012](adr/0012-minimal-built-in-mailer.md)); no HTTPS presets were built, since every provider below offers an SMTP relay. [`guides/mail.md`](guides/mail.md#provider-examples) uses this research's three picks (Brevo, Lettermint, Resend) over SMTP. The text below is the research as written.
+
 Research only: which HTTPS API "presets" the planned `Monk::Mail` module
 should ship next to its SMTP transport. Nothing here changes `monk`
 itself. The module is opt-in and zero-dependency. It will have one
@@ -16,7 +18,7 @@ legal pages, unless a claim is marked *secondary* or *unverified*.
 
 These are the constraints that decide whether a provider gets a preset
 or is left to the SMTP transport. They come from Monk's shape (see
-`docs/deployment-options.md` §4), not from any one provider.
+`docs/history/deployment-options.md` §4), not from any one provider.
 
 | # | Constraint | Why |
 |---|---|---|
@@ -96,9 +98,10 @@ effective rate at 10k is the plan price ÷ 10.
 
 Every provider accepts 587 or 2525. So the SMTP transport alone reaches
 all of them from a VPS. On PaaS hosts that block outbound SMTP (Railway
-below Pro, Render free, Fly by default; see `docs/deployment-options.md`
-§4), a preset is the *only* way that works without a plan upgrade. That
-is the real argument for presets at all.
+below Pro, Render free, Fly by default; see
+`docs/history/deployment-options.md` §4), a preset is the *only* way
+that works without a plan upgrade. That is the real argument for
+presets at all.
 
 ## 3. Provider notes
 
@@ -218,9 +221,9 @@ Cheapest at scale ($0.10/1k à-la-carte; newer bundled plans from
 $0.16/1k), with regional processing in six EU regions. The free-tier
 model has changed: new accounts now get **up to $200 of general AWS
 credits for 6 months**, not the old 3,000 messages/month.
-`docs/deployment-options.md` §4 still quotes the old figure. The HTTPS
-API needs **SigV4 request signing**, which rules out a zero-dependency
-15-line preset. SES SMTP (`email-smtp.eu-west-1.amazonaws.com:587`) is
+`docs/history/deployment-options.md` §4 still quotes the old figure.
+The HTTPS API needs **SigV4 request signing**, which rules out a
+zero-dependency 15-line preset. SES SMTP (`email-smtp.eu-west-1.amazonaws.com:587`) is
 the right path, through the SMTP transport. New accounts start in a
 sandbox (200 messages/24h, verified recipients only).
 

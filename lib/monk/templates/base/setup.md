@@ -14,8 +14,10 @@ Unset, it means `development`, and the app runs that way without an
 error: mail printed instead of sent, magic links logged, demo routes on.
 The `Dockerfile` already sets it; without the Dockerfile, set it in the
 platform's env. `bin/server` warns when it listens beyond this machine
-(`--bind 0.0.0.0`) with `MONK_ENV` unset. Platform examples:
-`docs/guides/deploying.md` in the monk repo.
+(`--bind 0.0.0.0`) with `MONK_ENV` unset.
+
+To deploy on one host with Docker Compose: `monk add deploy`. Other
+platforms: `docs/guides/deploying.md` in the monk repo.
 
 ## Check it works
 

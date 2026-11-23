@@ -84,7 +84,7 @@ end
 
 class JobsRuntimeTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = JobsRuntimeJobs::DB
   FAST = {
@@ -93,28 +93,21 @@ class JobsRuntimeTest < Minitest::Test
   }.freeze
 
   def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
+    super
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       drop_table_if_exists(conn, "jobs_runtime_results")
       conn.exec("CREATE TABLE jobs_runtime_results (value TEXT NOT NULL)")
     end
-    Monk::Jobs.configure(db_name: DB_NAME)
   end
 
   def teardown
     stop_runtime
     if postgres_available?
       Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-        drop_jobs_tables(conn)
         drop_table_if_exists(conn, "jobs_runtime_results")
       end
     end
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
+    super
   end
 
   def test_runs_enqueued_jobs_as_a_registered_process

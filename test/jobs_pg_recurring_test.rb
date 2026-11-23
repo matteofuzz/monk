@@ -16,7 +16,7 @@ end
 
 class JobsPgRecurringTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_pg_recurring_test_db
   PROCESS_ID = 1
@@ -26,21 +26,6 @@ class JobsPgRecurringTest < Minitest::Test
   T0 = Time.utc(2026, 1, 5, 9)
   T1 = T0 + 3600
   T2 = T1 + 3600
-
-  def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-  end
 
   # --- a new task: decision 6 ---
 

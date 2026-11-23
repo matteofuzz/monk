@@ -97,7 +97,8 @@ class WebSocketFrameTest < Minitest::Test
   end
 
   def test_decode_raises_protocol_error_when_payload_is_shorter_than_declared_length
-    bytes = [0x81, 0x05].pack("C2") + "ab" # declares a 5-byte payload, gives 2
+    # A 5-byte payload declared, 2 given. Concatenated: the bytes stay binary.
+    bytes = [0x81, 0x05].pack("C2") + "ab" # rubocop:disable Style/StringConcatenation
 
     assert_raises(Monk::WebSocket::ProtocolError) { Monk::WebSocket::Frame.decode(bytes) }
   end

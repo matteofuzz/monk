@@ -2,8 +2,8 @@
 # frozen_string_literal: true
 
 # Connect-rate benchmark for Monk::WebSocket::Server
-# (docs/plan-ws-connect-ceiling.md). Not run in CI or by `rake test`: a
-# manual tool, like bin/benchmark_router.
+# (docs/history/plan-ws-connect-ceiling.md). Not run in CI or by `rake test`:
+# a manual tool, like bin/benchmark_router.
 #
 # Opens sockets at fixed rates (an open model: each connect is due at its
 # time whether or not earlier ones finished, and its latency counts from
@@ -74,7 +74,7 @@ options = {
 }
 OptionParser.new do |o|
   o.on("--variant V", %w[bare auth live]) { |v| options[:variant] = v }
-  o.on("--rates LIST") { |v| options[:rates] = v.split(",").map { Integer(_1) } }
+  o.on("--rates LIST") { |v| options[:rates] = v.split(",").map { Integer(it) } }
   o.on("--duration N", Integer) { |v| options[:duration] = v }
   o.on("--held N", Integer) { |v| options[:held] = v }
   o.on("--held-rate N", Integer) { |v| options[:held_rate] = v }
@@ -89,8 +89,12 @@ OptionParser.new do |o|
   o.on("--installed-gem") { options[:installed_gem] = true }
   o.on("--serve") { options[:serve] = true }
 end.parse!
-abort "--presence needs --variant auth or live: only signed-in sockets count" if options[:presence] && options[:variant] == "bare"
-abort "--presence needs --ping-interval (longer than the run: see the options above)" if options[:presence] && !options[:ping_interval]
+if options[:presence] && options[:variant] == "bare"
+  abort "--presence needs --variant auth or live: only signed-in sockets count"
+end
+if options[:presence] && !options[:ping_interval]
+  abort "--presence needs --ping-interval (longer than the run: see the options above)"
+end
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__)) unless options[:installed_gem]
 
@@ -269,7 +273,7 @@ class BenchServer
 
   def initialize(options, log_path)
     args = [RbConfig.ruby, __FILE__, "--serve", "--variant", options[:variant], "--users", options[:users].to_s,
-            "--pool-size", options[:pool_size].to_s]
+            "--pool-size", options[:pool_size].to_s,]
     args << "--installed-gem" if options[:installed_gem]
     args << "--presence" if options[:presence]
     args.push("--ping-interval", options[:ping_interval].to_s) if options[:ping_interval]
@@ -330,12 +334,10 @@ class Client
     return fail(socket, :not_subscribed) unless reply.include?("\"subscribed\"")
 
     [:ok, socket]
-  rescue ReadTimeout
+  rescue ReadTimeout, Errno::ETIMEDOUT
     fail(socket, :timeout)
   rescue Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EPIPE, IOError => e
     fail(socket, e.class.name.split("::").last.downcase.to_sym)
-  rescue Errno::ETIMEDOUT
-    fail(socket, :timeout)
   end
 
   private
@@ -387,26 +389,26 @@ class Client
     until (payload = complete_frame(buffer))
       chunk = read_some(socket, deadline)
       return nil if chunk.nil?
-  
+
       buffer << chunk.b
     end
     payload
   end
-  
+
   def complete_frame(buffer)
     return nil if buffer.bytesize < 2
-  
+
     length = buffer.getbyte(1) & 0x7F
     header = 2
     if length == 126
       return nil if buffer.bytesize < 4
-  
+
       length = buffer.byteslice(2, 2).unpack1("n")
       header = 4
     end
     buffer.byteslice(header, length) if buffer.bytesize >= header + length
   end
-  
+
   # Masked, as a browser sends it.
   def text_frame(payload)
     payload = payload.b
@@ -417,10 +419,10 @@ class Client
   end
 end
 
-def percentile(sorted, p)
+def percentile(sorted, fraction)
   return nil if sorted.empty?
 
-  sorted[[(sorted.size * p).ceil - 1, 0].max]
+  sorted[[(sorted.size * fraction).ceil - 1, 0].max]
 end
 
 def ms(seconds) = seconds ? format("%.0f", seconds * 1000) : "-"
@@ -463,16 +465,23 @@ def report_step(label, rate, outcomes, before, after, wall)
     "gc %4d (%d major, %d global) %6d ms  ractors %6d  rss %5d MB  last ready %5.1fs  %s\n",
     label, rate, ok.size, outcomes.size, ms(percentile(latencies, 0.5)), ms(percentile(latencies, 0.99)),
     ms(latencies.last), ms(percentile(lags, 0.99)), cpu, after[:gc_count] - before[:gc_count],
-    after[:gc_major] - before[:gc_major], after[:gc_global] - before[:gc_global], after[:gc_ms] - before[:gc_ms], after[:ractors], after[:rss_mb],
+    after[:gc_major] - before[:gc_major], after[:gc_global] - before[:gc_global], after[:gc_ms] - before[:gc_ms],
+    after[:ractors], after[:rss_mb],
     last_ok || 0, errors,
   )
   reasons = after[:gc_by].to_h { |k, v| [k, v - before[:gc_by].fetch(k, 0)] }.select { |_, v| v.positive? }
-  puts "         gc by: #{reasons.map { |k, v| "#{k}=#{v}" }.join(" ")}; marking #{after[:mark_ms] - before[:mark_ms]} ms, sweeping #{after[:sweep_ms] - before[:sweep_ms]} ms" \
-    "#{"; #{(after[:allocated] - before[:allocated]) / [outcomes.size, 1].max} objects a connect" if after[:allocated]}"
+  gc_by = reasons.map { |k, v| "#{k}=#{v}" }.join(" ")
+  marking = after[:mark_ms] - before[:mark_ms]
+  sweeping = after[:sweep_ms] - before[:sweep_ms]
+  line = "         gc by: #{gc_by}; marking #{marking} ms, sweeping #{sweeping} ms"
+  if after[:allocated]
+    line += "; #{(after[:allocated] - before[:allocated]) / [outcomes.size, 1].max} objects a connect"
+  end
+  puts line
   unless after[:presence].empty?
     calls = after[:presence].to_h { |k, v| [k, v - before[:presence].fetch(k, 0)] }.select { |_, v| v.positive? }
     puts "         presence: #{calls.values.sum} store calls (#{format("%.1f", calls.values.sum / wall)}/s) for " \
-      "#{outcomes.size} connects: #{calls.map { |k, v| "#{k}=#{v}" }.join(" ")}"
+         "#{outcomes.size} connects: #{calls.map { |k, v| "#{k}=#{v}" }.join(" ")}"
   end
   heaps = after[:heaps].zip(before[:heaps]).map do |a, b|
     allocated = a[:total_allocated_objects] - b[:total_allocated_objects]
@@ -491,19 +500,20 @@ client = Client.new(
   timeout: options[:timeout],
 )
 
-puts "#{server.banner}"
+puts server.banner
 puts "variant #{options[:variant]}, server on cpus #{options[:server_cpus]}, #{options[:duration]} s a step, " \
-  "#{options[:held]} held, #{options[:topics]} topics, pool #{options[:pool_size]}, timeout #{options[:timeout]} s; " \
-  "server log #{log_path}"
+     "#{options[:held]} held, #{options[:topics]} topics, pool #{options[:pool_size]}, " \
+     "timeout #{options[:timeout]} s; " \
+     "server log #{log_path}"
 
 held_forever = []
 if options[:held].positive?
   before = server.stats
   t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   outcomes = run_step(client, options[:held_rate], options[:held] / options[:held_rate], options[:client_threads],
-    held_forever)
+    held_forever,)
   report_step("held", options[:held_rate], outcomes, before, server.stats,
-    Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0)
+    Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0,)
 end
 
 options[:rates].each do |rate|

@@ -19,11 +19,12 @@ module Monk
   # persistence backend the app may not use (docs/design/auth-sessions.md).
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
+    MIN_SECRET_LENGTH = 32
 
-    # The login-email rate limit (docs/history/plan-auth-housekeeping.md decision
-    # 5): records a request unless one was recorded for the address less
-    # than $2 seconds ago. One statement, so racing requests for one
-    # address let exactly one through; a refused request changes nothing.
+    # The login-email rate limit: records a request unless one was recorded
+    # for the address less than $2 seconds ago. One statement, so racing
+    # requests for one address let exactly one through; a refused request
+    # changes nothing.
     LOGIN_REQUEST_SQL = <<~SQL.freeze
       INSERT INTO login_requests (email) VALUES ($1)
       ON CONFLICT (email) DO UPDATE SET requested_at = now()
@@ -49,10 +50,10 @@ module Monk
     SQL
 
     class << self
-      # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
-      # the value, not the module -- Monk::Auth is always Ractor.shareable?
+      # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes the
+      # value, not the module -- Monk::Auth is always Ractor.shareable?
       # regardless of its ivars, so freezing the module itself would do
-      # nothing (docs/design/persistence-ractor-connections.md "Phase 4/5 finding").
+      # nothing.
       def freeze_registry!
         begin
           @config = Ractor.make_shareable(@config)
@@ -76,15 +77,17 @@ module Monk
         deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
       )
         config = {
-          db_name: db_name, secret: secret, login_ttl: login_ttl, session_ttl: session_ttl,
+          db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
-          raise Monk::MissingAuthConfigError,
-            "Monk::Auth.configure is missing required key #{key.inspect}" if config[key].nil?
+          if config[key].nil?
+            raise Monk::MissingAuthConfigError,
+              "Monk::Auth.configure is missing required key #{key.inspect}"
+          end
         end
 
         LoginToken.db_name = db_name
@@ -93,9 +96,7 @@ module Monk
         @config = config
       end
 
-      def config
-        @config
-      end
+      attr_reader :config
 
       # Test-only: drops the current config. Not part of the app-facing API.
       def reset!
@@ -195,16 +196,15 @@ module Monk
         end
       end
 
-      # Convenience for an app's own login-request handler: prints a
-      # magic link to the dev console (and log/development.log via
-      # Monk::Log.info), plus a scannable QR code beneath it if the
-      # optional `rqrcode` gem is in the app's own Gemfile -- makes
-      # testing the login flow from a second device (another browser, a
-      # phone) trivial without a mailer. A no-op outside development,
-      # same posture as every other dev-only escape hatch in this
-      # framework (docs/history/secure-cookie-dev-http.md). #deliver_link
-      # above is what an app should call day to day; this is its
-      # development-only fallback and is still fine to call directly.
+      # Convenience for an app's own login-request handler: prints a magic
+      # link to the dev console (and log/development.log via Monk::Log.info),
+      # plus a scannable QR code beneath it if the optional `rqrcode` gem is
+      # in the app's own Gemfile -- makes testing the login flow from a second
+      # device (another browser, a phone) trivial without a mailer. A no-op
+      # outside development, same posture as every other dev-only escape hatch
+      # in this framework. #deliver_link above is what an app should call day
+      # to day; this is its development-only fallback and is still fine to
+      # call directly.
       #
       # subject: is optional context for the printed line only (e.g. the
       # email being logged in) -- useful once more than one login is in
@@ -288,11 +288,11 @@ module Monk
 
       # Deletes expired login tokens and sessions, and login requests older
       # than login_request_interval; returns how many of each. At most
-      # batch_size rows per statement, so a large backlog (the first sweep
-      # of an app that never swept) holds no lock for long. Run nightly by
-      # Monk::Auth::Sweep (docs/history/plan-auth-housekeeping.md decision 3).
-      # Deliberately not grown onto Model: a `<` comparison is real
-      # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
+      # batch_size rows per statement, so a large backlog (the first sweep of
+      # an app that never swept) holds no lock for long. Run nightly by
+      # Monk::Auth::Sweep. Deliberately not grown onto Model: a `<` comparison
+      # is real query-DSL scope for a hygiene task
+      # (docs/design/auth-sessions.md).
       def sweep!(batch_size: SWEEP_BATCH_SIZE)
         ensure_configured!
         unless batch_size.is_a?(Integer) && batch_size.positive?
@@ -335,9 +335,11 @@ module Monk
       # the spec's 4 but reliable for phone cameras against a white
       # background.
       def compact_qr(qr, quiet_zone: 2)
-        width = qr.modules.size + quiet_zone * 2
+        width = qr.modules.size + (quiet_zone * 2)
         blank = Array.new(quiet_zone) { Array.new(width, false) }
-        grid = blank + qr.modules.map { |row| Array.new(quiet_zone, false) + row + Array.new(quiet_zone, false) } + blank
+        grid = blank + qr.modules.map do |row|
+          Array.new(quiet_zone, false) + row + Array.new(quiet_zone, false)
+        end + blank
         grid << Array.new(width, false) if grid.size.odd?
 
         grid.each_slice(2).map do |top, bottom|
@@ -354,12 +356,28 @@ module Monk
       end
 
       def ensure_configured!
+        return if @config
+
         raise Monk::AuthNotConfiguredError,
-          "Monk::Auth is not configured -- call Monk::Auth.configure first" unless @config
+          "Monk::Auth is not configured -- call Monk::Auth.configure first"
       end
 
       # An absolute path, kept without a trailing slash so login_link
       # adds exactly one before the token.
+      # Outside development and test, a secret anyone could guess is
+      # refused: every template's placeholder has "change-me" in it, and
+      # bin/deploy_env makes 64 characters (openssl rand -hex 32).
+      def checked_secret(secret)
+        return secret if secret.nil? || Monk.env.development? || Monk.env.test?
+
+        if secret.include?("change-me") || secret.length < MIN_SECRET_LENGTH
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(secret:) (AUTH_SECRET) is a placeholder or shorter than #{MIN_SECRET_LENGTH} " \
+            "characters (MONK_ENV=#{Monk.env}): set it to `openssl rand -hex 32`. Changing it signs everybody out."
+        end
+        secret
+      end
+
       def checked_callback_path(path)
         unless path.is_a?(String) && path.start_with?("/")
           raise Monk::InvalidAuthConfigError,
@@ -382,8 +400,8 @@ module Monk
 
       def checked_login_request_interval(seconds)
         unless seconds.is_a?(Integer) && seconds.positive?
-          raise Monk::InvalidAuthConfigError,
-            "Monk::Auth.configure(login_request_interval:) must be a positive Integer of seconds, got #{seconds.inspect}"
+          raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(login_request_interval:) must be a positive " \
+                                              "Integer of seconds, got #{seconds.inspect}"
         end
 
         seconds
@@ -418,6 +436,7 @@ module Monk
 
       def freeze_constants!(mod, seen = {}.compare_by_identity)
         return if seen[mod]
+
         seen[mod] = true
 
         mod.constants(false).each do |name|

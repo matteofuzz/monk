@@ -8,9 +8,8 @@ require "base64"
 module Monk
   module WebSocket
     module Handshake
-      # An unfrozen constant here is exactly the bug Phase 0's spike hit
-      # (docs/design/websocket.md) -- Ractor::IsolationError the first time this is
-      # read from a connection Ractor. .freeze is not optional.
+      # Unfrozen, it raises Ractor::IsolationError the first time it's read
+      # from a connection Ractor. .freeze is not optional.
       MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".freeze
 
       # The most a handshake request's head may be (Server.serve answers
@@ -23,7 +22,7 @@ module Monk
 
       # Two Strings a header line (its name and its value), plus the line:
       # this runs once a connect, and every object it makes is one more
-      # towards the next GC (docs/plan-ws-connect-ceiling.md, item 4).
+      # towards the next GC.
       def self.parse_request(raw_request)
         headers = {}
         request_line = true
@@ -47,7 +46,7 @@ module Monk
         unless headers["upgrade"]&.downcase == "websocket"
           raise Monk::WebSocket::HandshakeError, "missing or invalid Upgrade header"
         end
-        unless headers["connection"]&.downcase&.split(/\s*,\s*/)&.include?("upgrade")
+        unless headers["connection"].to_s.downcase.split(/\s*,\s*/).include?("upgrade")
           raise Monk::WebSocket::HandshakeError, "missing or invalid Connection header"
         end
         raise Monk::WebSocket::HandshakeError, "missing Sec-WebSocket-Key header" unless headers["sec-websocket-key"]
@@ -55,11 +54,10 @@ module Monk
         headers
       end
 
-      # docs/history/plan-websocket.md step 21: (a) Authorization: Bearer -- the
-      # non-browser/S2S path -- takes priority; (b) otherwise the
-      # session_token cookie, arriving automatically because cookies
-      # aren't port-scoped. Mirrors Monk::Auth::Helpers' identical
-      # bearer_token/session_cookie_token logic, reimplemented here since
+      # (a) Authorization: Bearer -- the non-browser/S2S path -- takes
+      # priority; (b) otherwise the session_token cookie, arriving
+      # automatically because cookies aren't port-scoped. Monk::Auth::Helpers'
+      # bearer_token and session_cookie_token logic, reimplemented here since
       # this runs from parsed handshake headers, not a Context.
       def self.credential_from(headers)
         if (token = bearer_token(headers))
@@ -94,10 +92,10 @@ module Monk
       # The 101 for headers parse_request already returned.
       def self.response(headers)
         "HTTP/1.1 101 Switching Protocols\r\n" \
-        "Upgrade: websocket\r\n" \
-        "Connection: Upgrade\r\n" \
-        "Sec-WebSocket-Accept: #{accept_key(headers["sec-websocket-key"])}\r\n" \
-        "\r\n"
+          "Upgrade: websocket\r\n" \
+          "Connection: Upgrade\r\n" \
+          "Sec-WebSocket-Accept: #{accept_key(headers["sec-websocket-key"])}\r\n" \
+          "\r\n"
       end
     end
   end

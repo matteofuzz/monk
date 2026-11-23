@@ -39,14 +39,8 @@ module Monk
       #
       #   Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt", text: receipt_text)
       def deliver_later(to:, subject:, text: nil, html: nil, reply_to: nil, from: nil, wait: nil, at: nil, conn: nil)
-        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.deliver_later" unless config
-
-        from ||= config[:from]
-        if from.nil?
-          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
-        end
-
-        message = Message.new(from: from, to: to, subject: subject, text: text, html: html, reply_to: reply_to)
+        message = message_for(:deliver_later, from: from, to: to, subject: subject, text: text,
+          html: html, reply_to: reply_to,)
         DeliveryJob.enqueue(message.to_h.transform_keys(&:to_s), wait: wait, at: at, conn: conn)
       end
     end

@@ -17,26 +17,15 @@ end
 
 class JobsRunSchedulerTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_run_scheduler_test_db
   MONDAY_9AM = Time.utc(2026, 10, 12, 9)
 
   def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
     JobsRunSchedulerJobs::SEEN.clear
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
+    super
     Monk::Jobs.recurring "weekly_digest", JobsRunSchedulerJobs::Digest, cron: "0 9 * * 1", args: ["weekly"]
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
   end
 
   # What an app's test does: the first pass sets the checkpoint, the

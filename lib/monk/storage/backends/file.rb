@@ -74,8 +74,6 @@ module Monk
           ::FileUtils.rm_f(meta)
           ::FileUtils.rm_f(object)
           nil
-        rescue SystemCallError, IOError => e
-          raise RequestError, "file storage delete #{key} failed: #{e.class}: #{e.message}"
         end
 
         # Returns to. A missing from raises NotFoundError.
@@ -96,8 +94,8 @@ module Monk
         end
 
         # A signed download link, the same for every call within one
-        # cache_window, so the browser's cache works: valid until the end
-        # of the window plus expires_in (docs/history/plan-storage.md decision 9).
+        # cache_window, so the browser's cache works: valid until the end of
+        # the window plus expires_in.
         def url(key, expires_in:, cache_window:, now: Time.now.to_i)
           Key.validate!(key)
           Input.link_times!(expires_in: expires_in, cache_window: cache_window)
@@ -135,6 +133,13 @@ module Monk
           md5
         rescue SystemCallError, IOError => e
           raise RequestError, "file storage upload #{key} failed: #{e.class}: #{e.message}"
+        end
+
+        # Uploads go to the app itself: no CORS rule, and no lifecycle rule
+        # either, so tmp/ keeps what's never confirmed.
+        def check(origin:)
+          "file://#{root}: files on this server's disk, uploaded through the app on #{origin}, so there's no " \
+            "CORS rule to check. Nothing expires tmp/ on disk."
         end
 
         # Never print the secret -- a backend ends up in logs and exception

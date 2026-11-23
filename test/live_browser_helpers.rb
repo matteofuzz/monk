@@ -83,7 +83,8 @@ module LiveBrowserHelpers
     @browser =
       begin
         require "ferrum"
-        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30).tap do |browser|
+        Ferrum::Browser.new(headless: :new, timeout: 20, process_timeout: 30,
+          browser_options: ChromeOptions.browser_options,).tap do |browser|
           at_exit { browser.quit }
         end
       rescue LoadError, StandardError
@@ -300,4 +301,12 @@ module LiveBrowserHelpers
   # What a test class may change about the WS server it runs.
   def ws_server_options = {}
   def ws_handler = Monk::Live::HANDLER
+
+  # Reconnect backoff from 50 ms instead of 500, for a test that checks no
+  # reconnect happens: three steps fit in 0.53 s, jitter included. Call it
+  # before the page loads.
+  def fast_backoff!
+    protocol = @pages.js_overrides.fetch("protocol.js", {}).merge("INITIAL_DELAY = 500" => "INITIAL_DELAY = 50")
+    @pages.js_overrides = @pages.js_overrides.merge("protocol.js" => protocol)
+  end
 end

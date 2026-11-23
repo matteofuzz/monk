@@ -4,9 +4,8 @@ Server-owned state changes, and every open browser tab showing it updates by
 itself: the server renders an HTML fragment with the same views it already
 has, pushes it over the WebSocket, and a small client morphs it into the page.
 No polling, no client-side copy of the data to keep in sync, no JavaScript of
-your own. Design rationale is in `docs/history/reactive-partials.md` and ADRs
-0007–0011; the phase-by-phase build is `docs/history/plan-live.md`. This page is how to use
-it.
+your own. The decisions behind it are ADRs 0007–0011; this page is how to
+use it.
 
 ```
 monk add live
@@ -25,7 +24,7 @@ carry sockets):
 ```
  HTTP app (bin/server)                      WebSocket process (bin/websocket_server)
  route changes state                        browsers' sockets end here
- Monk::Live.patch(...)  --- Redis --->      Monk::Live::HANDLER relays it, per connection
+ Monk::Live.patch(...)  -- transport -->    Monk::Live::HANDLER relays it, per connection
  renders the partial once                   checks each subscription against your rules
 ```
 
@@ -47,14 +46,14 @@ AppWebSocket::REGISTRY = Monk::WebSocket::RedisFanout.new(Monk::WebSocket::Regis
 Monk::Live.configure(registry: AppWebSocket::REGISTRY)
 
 # bin/websocket_server, once at boot, before server.run
-Monk::Live.listen!
+AppWebSocket::REGISTRY.listen!
 
 # in a route
 Monk::Live.patch "contacts:7", to: "#contact-42", partial: "contacts/_row", contact: contact
 ```
 
-Both processes build the fanout from the same `config/live.rb`, but only the
-WebSocket process calls `Monk::Live.listen!`. That opens the fanout's
+Both processes build the fanout from the same `config/websocket.rb`, but
+only the WebSocket process calls `listen!` on it. That opens the fanout's
 subscriber connection (a Redis subscription, or a Postgres `LISTEN`), which
 relays updates published anywhere to this process's sockets. It returns once
 the subscription is in effect, and raises `Monk::WebSocket::ListenError`
@@ -106,9 +105,7 @@ the client with `<%= monk_head %>` in its `<head>`, which, once
 
 The runtime lives in the gem (`Monk::Live.client_dir`), and Monk serves it at
 `/_monk/live/` like any other static file, stamped and cached the same way,
-so an app never copies it and never serves an older copy than its gem. Apps
-that copied it into `public/js/monk_live/` before can delete that directory
-and their own two tags. An app with `assets false` serves no static files
+so an app never copies it and never serves an older copy than its gem. An app with `assets false` serves no static files
 at all, this client included: serve `Monk::Live.client_dir` at `/_monk/live/`
 yourself. A page with no `data-live-topic` never opens a socket.
 
@@ -192,8 +189,6 @@ topic open to everyone.
   and the block isn't called for it. Without this,
   `topic == "contacts:#{subject}"` would let a nil subject subscribe to
   `"contacts:"`.
-- The block has to be Ractor-shareable: define it in a module or class body
-  (self there is shareable), not inline in a script's top level.
 - **A rule that queries the database** opens a connection in each socket's
   Ractor and keeps it while the page is open. `db_pool:` runs the block in
   a [pool](persistence.md#pools) instead, which the WebSocket process
@@ -217,24 +212,27 @@ with recipient topics.
 
 ## Running it
 
-- **Both processes must be up, plus Redis.** `bin/server` publishes,
-  `bin/websocket_server` (which runs `Monk::Live::HANDLER`) delivers.
-- `WS_ALLOWED_ORIGINS` must list the origin your pages are served from, or
-  the browser's socket is refused. `LIVE_WS_URL` is what the layout gives the
-  client (`wss://` in production). Both default from `PUBLIC_URL`
-  (`config/settings.rb`, every app has it) instead of a separate value to
-  keep in sync: `WS_ALLOWED_ORIGINS` defaults to `PUBLIC_URL` itself, and
-  `LIVE_WS_URL` defaults to `ws://localhost:9293` in development (a direct
-  port, no proxy locally) or a `wss://`/`/ws` path under `PUBLIC_URL`
-  outside it — the shape `docs/guides/deploying.md`'s reverse-proxy setup
-  expects. Set `WS_ALLOWED_ORIGINS`/`LIVE_WS_URL` directly for anything
-  that default doesn't fit, e.g. more than one allowed origin.
+- **Both processes must be up, plus the transport** (Postgres or Redis).
+  `bin/server` publishes, `bin/websocket_server` (which runs
+  `Monk::Live::HANDLER`) delivers.
+- The WebSocket server allows sockets from `PUBLIC_URL`
+  (`config/settings.rb`, every app has it), plus any other origins listed
+  in `WS_ALLOWED_ORIGINS`. `LIVE_WS_URL` is what the layout gives the
+  client: `ws://localhost:9293` in development (a direct port, no proxy
+  locally), a `wss://`/`/ws` path under `PUBLIC_URL` outside it — the
+  shape `docs/guides/deploying.md`'s reverse-proxy setup expects. Set it
+  directly for anything that default doesn't fit. Outside development and
+  test it must be `wss://`, or boot refuses it
+  ([`settings.md`](settings.md#values-refused-at-boot)).
 - The HTTP process must have booted (`Monk.boot`) before publishing, because
   views are frozen there; otherwise `Monk::Live::NotFrozenError` says so.
-- **If Redis is down, `Monk::Live.patch` raises** (`Redis::CannotConnectError`),
-  after delivering to subscribers in its own process. A route that publishes
-  after a successful write would fail with it; wrap the call in your own
-  `rescue` if a missed push should not fail the request.
+- **If the transport is down,** `Monk::Live.patch` still delivers to
+  subscribers in its own process, then: with Redis it raises
+  (`Redis::CannotConnectError`), so a route that publishes after a
+  successful write fails with it (wrap the call in your own `rescue` if a
+  missed push shouldn't fail the request); with Postgres, through the
+  scaffold's pool, it logs the failure and returns. Either way the pages
+  catch up at their next resync.
 - If delivering to a connection fails unexpectedly, the server closes that
   connection (code 1011), and the client reconnects and re-syncs. The
   WebSocket process does the same to every open connection after its
@@ -244,9 +242,8 @@ with recipient topics.
 
 websocket needs a transport because `bin/server` and `bin/websocket_server`
 are always two processes, and *something* has to carry a publish between
-them — not because of horizontal scaling (that's still a separate, unbuilt
-feature; see `docs/design/ws-horizontal-scaling-considerations.md` in the
-monk gem's own repo). When exactly one of Postgres and Redis is installed,
+them; it's also what reaches every WebSocket process when there are several
+([`websocket.md`](websocket.md#several-processes)). When exactly one of Postgres and Redis is installed,
 or added in the same command, `monk add` uses it; otherwise you pass
 `--transport`, since guessing which one your app has would be as likely to
 give it a config that can't connect as one that can.
@@ -287,9 +284,8 @@ own (8 for 8 web workers), and there is nothing to start.
 Through the pool, `Monk::Live.patch` doesn't wait for Postgres: a publish
 that fails is logged instead of raised, and the page catches up at its
 next resync. Size 1 because one worker keeps a sender's patches in the
-order they were published; a larger pool is refused. See `docs/design/live-pg-fanout.md`/
-`docs/history/plan-live-pg-fanout.md` in the monk gem's own repo for the full
-design.
+order they were published; a larger pool is refused. The design is in
+[`design/live-pg-fanout.md`](../design/live-pg-fanout.md).
 
 Two real tradeoffs, not just a syntax swap:
 

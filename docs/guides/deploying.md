@@ -1,22 +1,16 @@
 # Deploying a Monk app
 
-Example deployment cases for an app made with `monk new my_app --with postgres`
-(`Gemfile`, `config.ru`, `config/load.rb`, `config/persistence.rb`,
-`app/`, `bin/setup_db`, `bin/migrate`, `bin/console`, `db/migrate/`). Both cases below assume that
-app as the starting point.
+What an app needs in production, module by module, then four ways to
+run it: Render (section 1), Fly.io (section 2), adding the WebSocket
+process to either (section 3), and a single VPS with Docker Compose
+(section 4). The examples start from an app made with
+`monk new my_app --with postgres`.
 
-Neither case changes anything in this repo (`monk` itself) — they describe
-how a generated app deploys.
-
-Every scaffold also ships a `Dockerfile` and `.dockerignore` — `monk new`
-writes them unconditionally, the same for every app. The only system
-package is a compiler in the build stage, for the few gems that build a
-native extension (`irb`'s dependencies); kino and `pg` (1.6+, which brings
-its own `libpq`) are precompiled gems. Neither the Fly.io
-Dockerfile in section 2 nor the Compose setup in section 4 needs copying by
-hand any more; they're shown there because those sections still have to
-explain what the file does and how it's used, not because you write it
-yourself.
+`monk new` writes a `Dockerfile` and `.dockerignore` into every app.
+The only system package is a compiler in the build stage, for the few
+gems that build a native extension (`irb`'s dependencies); kino and
+`pg` (1.6+, which brings its own `libpq`) are precompiled gems.
+Section 2 shows the file.
 
 ## What each module needs
 
@@ -33,7 +27,7 @@ modules it adds.
 | `mail` | — | outbound SMTP to a relay (see [`mail.md`](mail.md)) | `MAIL_URL`, `MAIL_FROM` | `net-smtp` |
 | `auth` | — | — | `AUTH_SECRET`, `PUBLIC_URL` | — |
 | `jobs` | `bin/jobs` **required** (below) | Postgres | `JOBS_WORKERS`, `JOBS_QUEUES` | — |
-| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (default `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
+| `websocket` | `bin/websocket_server` **required** | its transport: Postgres (`LISTEN`/`NOTIFY`) or Redis | `WS_ALLOWED_ORIGINS` (origins besides `PUBLIC_URL`), `WS_PROCESSES` (1) | — |
 | `live` | (websocket's) | — | `PUBLIC_URL`, `LIVE_WS_URL` (default from it) | — |
 | `presence` | (websocket's and `bin/server`) | Postgres, **a direct connection** from `bin/server` (below) | — | — |
 | `storage` | — | an S3-compatible bucket, with a CORS rule for `PUBLIC_URL` and a `tmp/` lifecycle rule (see [`storage.md`](storage.md)) | `STORAGE_URL`; `STORAGE_SECRET` only with `file://` | — |
@@ -51,16 +45,19 @@ unset.
 
 `PUBLIC_URL` (`config/settings.rb`, every app declares it) is this app's
 own origin. Its default, `http://localhost:9292`, is only harmless without
-auth and live: auth's magic link builds itself from it, and websocket's
-`WS_ALLOWED_ORIGINS` and live's `LIVE_WS_URL` default from it too, so
-setting it once keeps all three in sync instead of drifting apart. See
-auth.md's "Sending the magic link" and live.md's "Running it".
+auth and live: auth's magic link builds itself from it, the WebSocket
+server always allows it as an origin, and live's `LIVE_WS_URL` defaults
+from it, so setting it once keeps all three in sync instead of drifting
+apart. See auth.md's "Sending the magic link" and live.md's "Running it".
+Outside development and test, boot refuses a `PUBLIC_URL` on `http://` or
+on a placeholder host like `example.com`, and the other values in
+[`settings.md`](settings.md#values-refused-at-boot).
 
 When the WebSocket process runs:
 
-- It is its own deploy unit: its own port and public URL, and
-  `WS_ALLOWED_ORIGINS` must match the app's origin — set `PUBLIC_URL` and
-  it does, by default (below).
+- It is its own deploy unit: its own port and public URL. It allows
+  sockets from `PUBLIC_URL`, plus any origins in `WS_ALLOWED_ORIGINS`
+  (below).
 - With auth, a socket carries its user's session: required for the app's
   own socket handler, optional with live (whose rules decide what visitors
   get).
@@ -89,16 +86,18 @@ with its own command (`bin/jobs`), but it serves no port and needs no
 proxy route. It loads the same `config/load.rb` as `bin/server`, so give
 it the same environment: `DB_*`, `MAIL_*` when the app sends mail (with
 auth it does, if login links are sent from a job), and `REDIS_URL` when
-Redis is websocket's transport (jobs can push Live updates through it). It also needs the jobs migration applied (by
-`bin/setup_db`, like any other).
-`JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes the jobs
-in hand, for up to 25 seconds, and puts back whatever is still running for
-the next process to pick up, so a normal rolling deploy loses nothing.
-Give the platform a longer stop window than that: Docker and Compose
-send `KILL` 10 seconds after `TERM` by default (`stop_grace_period`, below),
-and a job killed mid-run is only picked up again once another job process
-notices its process went silent, after 2 minutes. Scale it by running more
-instances, or with more workers per instance.
+Redis is websocket's transport (jobs can push Live updates through it).
+It also needs the jobs migration applied (by `bin/setup_db`, like any
+other). `JOBS_WORKERS` and `JOBS_QUEUES` size it. On `TERM` it finishes
+the jobs in hand, for up to 25 seconds, and puts back whatever is still
+running for the next process to pick up, so a normal rolling deploy
+loses nothing. Give the platform a longer stop window than that: Docker
+sends `KILL` 10 seconds after `TERM` by default, and the Compose file
+`monk add deploy` writes gives `web` and `jobs` 35 s
+(`stop_grace_period`). A job killed mid-run is only picked up again
+once another job process notices its process went silent, after 2
+minutes. Scale it by running more instances, or with more workers per
+instance.
 
 **With presence**, nothing new to run: `bin/websocket_server` counts the
 signed-in sockets, and `bin/server` reacts to changes
@@ -115,10 +114,6 @@ signed-in sockets, and `bin/server` reacts to changes
 If a host or pod vanishes without closing its connections, the reacting
 process's lock is freed in about 25 s (short TCP keepalives on that
 connection), and another process takes over within 5 s more.
-
-The rest of this page walks through deploying an app with Postgres on Render
-and Fly.io; adding the WebSocket process is covered in section 3, and a
-single-server alternative in section 4.
 
 ## 1. Render (native Ruby buildpack + managed Postgres)
 
@@ -154,20 +149,9 @@ against the same Postgres instance — manually per deploy, or wired to a
 Deploy Hook. `bin/setup_db` is idempotent (applied versions are tracked in
 `schema_migrations`), so re-running it is safe.
 
-**Caveat**: this repo's own `Dockerfile` (the one at the root of the `monk`
-gem's own source) is not what a scaffolded app uses — it bakes in *this*
-repo's gemspec/git-based install path (`monkrb.gemspec` shells out to
-`git ls-files`), not a generated app's plain `Gemfile`. That's not a gap
-you need to work around, though: `monk new` scaffolds its own `Dockerfile`
-into every app, built for exactly that plain-`Gemfile` case — see the
-Fly.io case below for what it contains.
-
 ## 2. Fly.io (Docker + managed Postgres)
 
-**Dockerfile**: already there — `monk new` writes this exact file, no
-`git` runtime dependency needed since a
-scaffolded app's `Gemfile` pulls in `monkrb` as a normal gem (published on
-rubygems.org, `require: "monk"`), not via the local gemspec:
+**Dockerfile**: `monk new` writes this one:
 
 ```dockerfile
 FROM ruby:4.0-slim AS builder
@@ -200,10 +184,8 @@ MONK_ENV=staging` overrides it for a staging app.
 `irb` (for `bin/console`), and its dependencies (`erb`, `io-console`,
 `prism`) compile native extensions. The image that runs has no compiler.
 The `pg` gem (1.6+) installs precompiled for Linux with its own `libpq`, so
-neither stage needs `libpq-dev` or `libpq5`.
-Port 9292 matches `bin/server`'s own default, not 9293 — that's `WS_PORT`'s
-default for the separate WebSocket process (section 3, below); running
-both on 9293 would collide them.
+neither stage needs `libpq-dev` or `libpq5`. Port 9292 is `bin/server`'s
+default; the WebSocket process's is 9293 (`WS_PORT`, section 3).
 
 **Fly resources**
 
@@ -232,17 +214,16 @@ or wire it into a release step if the app's Fly config defines one.
 
 ## 3. Adding `Monk::WebSocket` alongside either case
 
-`Monk::WebSocket::Server` is its own process on its own port
-(`docs/history/plan-websocket.md` Decision 1) — it never shares a port with Kino, and a
-reverse proxy in front routes by path: `/ws` to the WebSocket process,
-everything else to Kino. This has to be **path-based routing on the same
-host**, not a separate subdomain, unless the session cookie is explicitly
-given `Domain=<shared parent domain>` — the browser session cookie rides
-along on the WS handshake automatically only because cookies aren't
-port-scoped *within the same host* (`docs/design/websocket.md`'s "Identity
-crosses the process boundary"). Documented here, not generated by `monk
-new` (Decision 8) — proxy config varies more by host than the Ruby side of
-this feature does.
+`Monk::WebSocket::Server` is its own process on its own port, never
+Kino's. A reverse proxy in front routes by path: `/ws` to the WebSocket
+process, everything else to Kino. This has to be **path-based routing
+on the same host**, not a separate subdomain, unless the session cookie
+is given `Domain=<shared parent domain>`: cookies aren't port-scoped,
+so the browser sends the session cookie with the WebSocket handshake
+only within the same host ([Identity crosses the process
+boundary](../design/websocket.md#identity-crosses-the-process-boundary-the-same-way-it-crosses-ractors)).
+`monk add deploy` writes this rule for Docker Compose (section 4); the
+Caddy and nginx examples below are for other setups.
 
 On a deploy, the WebSocket process stops on `TERM` with exit 0, like
 `bin/server` and `bin/jobs`, but it drops its open sockets without a close
@@ -252,13 +233,11 @@ their page to catch up, which is a burst of page requests to `bin/server`
 after every WebSocket deploy. Any other client has to do the same; see
 [`websocket.md`](websocket.md), "Stopping and restarting".
 
-Setting `PUBLIC_URL=https://example.com` (matching whichever proxy config
-you use below) is what makes `WS_ALLOWED_ORIGINS` and `LIVE_WS_URL` default
-to values that actually fit this routing, with nothing else to configure:
-`WS_ALLOWED_ORIGINS` defaults to `PUBLIC_URL` itself (`https://example.com`,
-the origin browsers connect from), and `LIVE_WS_URL` defaults to
-`wss://example.com/ws` outside development — exactly the `/ws` path both
-snippets below route to the WebSocket process.
+Setting `PUBLIC_URL=https://app.your-domain.com` (matching whichever proxy
+config you use below) is all this routing needs: the WebSocket server
+allows that origin, the one browsers connect from, and `LIVE_WS_URL`
+defaults to `wss://app.your-domain.com/ws` outside development — exactly
+the `/ws` path both snippets below route to the WebSocket process.
 
 **Caddy** (shown here since it needs no separate config-reload step and
 the whole routing rule fits in a few lines):
@@ -295,9 +274,9 @@ server {
 
 Both processes bind `127.0.0.1`/`localhost` — only the proxy is
 internet-facing — and TLS terminates at the proxy either way; neither
-Monk process ever touches a certificate (`docs/history/plan-websocket.md`'s explicit
-scope cut). A browser connects `wss://example.com/ws`; the proxy talks
-plain `ws://` to the WebSocket process behind it.
+Monk process ever touches a certificate. A browser connects
+`wss://example.com/ws`; the proxy talks plain `ws://` to the WebSocket
+process behind it.
 
 **Idle timeouts.** A proxy closes a WebSocket that carries nothing for a
 while: nginx after 60 s (`proxy_read_timeout`), Cloudflare after 100 s;
@@ -311,7 +290,7 @@ raise `ping_interval:`, keep it under your proxy's timeout.
 
 - **Fly.io** is the natural fit: it's already a single Docker container
   (the "2. Fly.io" Dockerfile above), so add Caddy to that same image,
-  run `bin/websocket_server` and `kino` as two background processes, and
+  run `bin/websocket_server` and `bin/server` as two background processes, and
   let Caddy be the one process Fly's `EXPOSE`/health checks see — all
   three processes share `127.0.0.1` inside the one machine, satisfying
   the same-host requirement for free.
@@ -380,12 +359,3 @@ backups: [`deploy-hetzner.md`](deploy-hetzner.md).
 - `.env.production` is part of every backup: restoring a database under
   a new `AUTH_SECRET` leaves every session stuck, and under a new VAPID
   pair every push subscription dead. Save it beside each `pg_dump`.
-
-## Open question
-
-`config/persistence.rb` as scaffolded today only reads discrete `DB_*`
-vars. Both Render and Fly can supply those directly, but Fly's default
-Postgres attach flow hands you a `DATABASE_URL` instead — worth deciding
-whether the scaffold should support `DATABASE_URL` out of the box (a small
-`URI.parse` change) so `fly postgres attach` works with zero manual
-wiring.

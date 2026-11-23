@@ -30,6 +30,8 @@ claims; `Sniff.refuse_svg!(bytes)` raises on SVG.
   `presigned_put`. Don't stream them through a route: it holds a worker
   Ractor for the whole upload.
 - Never accept SVG or HTML as an upload: both can carry scripts.
+- Browser uploads to a bucket need its CORS and lifecycle rules:
+  `Monk::Storage.check` tells whether they're there (SETUP.md, storage).
 
 **Examples:** `storage-upload`, `storage-confirm` and `storage-download`
 in `app/routes/storage.rb`.

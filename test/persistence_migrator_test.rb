@@ -16,6 +16,7 @@ class PersistenceMigratorTest < Minitest::Test
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_test_tables(conn) }
       rescue Monk::UnknownPersistenceError
+        # never registered: nothing to drop
       end
     end
     Monk::Persistence::Pg.reset!
@@ -25,17 +26,18 @@ class PersistenceMigratorTest < Minitest::Test
     skip_unless_postgres_available
     Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
     dir = migrations_dir(
-      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT)", down: "DROP TABLE widgets" },
+      "1_create_widgets" => { up: "CREATE TABLE widgets (id SERIAL PRIMARY KEY, name TEXT)",
+                              down: "DROP TABLE widgets", },
       "2_create_gadgets" => { up: "CREATE TABLE gadgets (id SERIAL PRIMARY KEY)", down: "DROP TABLE gadgets" },
     )
     migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
 
     applied = migrator.migrate!
 
-    assert_equal ["1", "2"], applied
+    assert_equal %w[1 2], applied
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
-      assert_equal ["1", "2"], versions
+      assert_equal %w[1 2], versions
       assert table_exists?(conn, "widgets")
       assert table_exists?(conn, "gadgets")
     end
@@ -109,7 +111,7 @@ class PersistenceMigratorTest < Minitest::Test
 
     reverted = migrator.rollback!(steps: 2)
 
-    assert_equal ["3", "2"], reverted
+    assert_equal %w[3 2], reverted
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations ORDER BY version").map { |r| r["version"] }
       assert_equal ["1"], versions
@@ -131,7 +133,7 @@ class PersistenceMigratorTest < Minitest::Test
 
     reverted = migrator.rollback!(steps: 10)
 
-    assert_equal ["2", "1"], reverted
+    assert_equal %w[2 1], reverted
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       versions = conn.exec("SELECT version FROM schema_migrations").map { |r| r["version"] }
       assert_equal [], versions
@@ -179,7 +181,7 @@ class PersistenceMigratorTest < Minitest::Test
     )
     migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: full_dir)
 
-    assert_equal ["2", "3"], migrator.pending
+    assert_equal %w[2 3], migrator.pending
     assert_equal ["1"], migrator.applied
   end
 
@@ -193,23 +195,24 @@ class PersistenceMigratorTest < Minitest::Test
     migrator = Monk::Persistence::Pg::Migrator.new(db_name: DB_NAME, dir: dir)
     migrator.migrate!
 
-    assert_equal ["1", "2"], migrator.applied
+    assert_equal %w[1 2], migrator.applied
   end
 
   def test_lists_up_down_pairs_in_ascending_version_order
     dir = migrations_dir(
       "20260301000000_create_gadgets" => { up: "CREATE TABLE gadgets ()", down: "DROP TABLE gadgets" },
       "20260101000000_create_widgets" => { up: "CREATE TABLE widgets ()", down: "DROP TABLE widgets" },
-      "20260201000000_add_widgets_index" => { up: "CREATE INDEX widgets_idx ON widgets (id)", down: "DROP INDEX widgets_idx" },
+      "20260201000000_add_widgets_index" => { up: "CREATE INDEX widgets_idx ON widgets (id)",
+                                              down: "DROP INDEX widgets_idx", },
     )
 
     migrator = Monk::Persistence::Pg::Migrator.new(db_name: :whatever, dir: dir)
 
     assert_equal(
-      ["20260101000000", "20260201000000", "20260301000000"],
-      migrator.migrations.map(&:version)
+      %w[20260101000000 20260201000000 20260301000000],
+      migrator.migrations.map(&:version),
     )
-    assert_equal ["create_widgets", "add_widgets_index", "create_gadgets"], migrator.migrations.map(&:name)
+    assert_equal %w[create_widgets add_widgets_index create_gadgets], migrator.migrations.map(&:name)
   end
 
   def test_ordering_is_numeric_not_lexical
@@ -221,7 +224,7 @@ class PersistenceMigratorTest < Minitest::Test
 
     migrator = Monk::Persistence::Pg::Migrator.new(db_name: :whatever, dir: dir)
 
-    assert_equal ["2", "9", "10"], migrator.migrations.map(&:version)
+    assert_equal %w[2 9 10], migrator.migrations.map(&:version)
   end
 
   def test_raises_a_precise_error_for_a_filename_that_does_not_match_the_convention

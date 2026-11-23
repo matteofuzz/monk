@@ -6,6 +6,8 @@ require "stringio"
 require "tmpdir"
 require "fileutils"
 require "open3"
+require "base64"
+require "digest"
 require "monk"
 
 module EnvHelper
@@ -103,14 +105,14 @@ module ViewTestHelpers
 
   # Monk reads MONK_ENV once, at boot, never per request -- so a test
   # that wants development behavior has to set it before .freeze!.
-  def with_monk_env(value)
-    with_env("MONK_ENV", value) { yield }
+  def with_monk_env(value, &)
+    with_env("MONK_ENV", value, &)
   end
 
   # Sets (or, given nil, clears) an arbitrary ENV var for the duration of
   # the block, restoring whatever was there before either way.
   def with_env(name, value)
-    previous = ENV[name]
+    previous = ENV.fetch(name, nil)
     ENV[name] = value
     yield
   ensure
@@ -195,9 +197,9 @@ module GeneratorTestHelpers
   end
 
   # Runs a generated app's bin/ script, the way a developer runs it.
-  def run_generated_script(dest, script, env = {}, *args)
+  def run_generated_script(dest, script, env = {}, *)
     env = { "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__), "MONK_ENV" => nil }.merge(env)
-    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *args, chdir: dest)
+    Open3.capture2e(env, RbConfig.ruby, "-W0", script, *, chdir: dest)
   end
 
   def generated(dest, path) = File.read(File.join(dest, path))
@@ -270,8 +272,10 @@ module PersistenceTestHelpers
   end
 
   def skip_unless_postgres_available
+    return if postgres_available?
+
     skip "no local Postgres reachable at #{pg_test_opts[:host]}:#{pg_test_opts[:port]} " \
-      "(set MONK_TEST_PG_* env vars, or start one -- see docs/development.md)" unless postgres_available?
+         "(set MONK_TEST_PG_* env vars, or start one -- see docs/development.md)"
   end
 
   # Same information_schema check Migrator#ensure_schema_migrations_table
@@ -281,7 +285,7 @@ module PersistenceTestHelpers
   # cast defined for type regclass" warning on every call.
   def table_exists?(conn, table)
     conn.exec_params(
-      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table]
+      "SELECT 1 FROM information_schema.tables WHERE table_name = $1", [table],
     ).ntuples.positive?
   end
 
@@ -339,8 +343,10 @@ module RedisTestHelpers
   end
 
   def skip_unless_redis_available
+    return if redis_available?
+
     skip "no local Redis reachable at #{redis_test_url} " \
-      "(set MONK_TEST_REDIS_URL, or start one -- see docs/development.md)" unless redis_available?
+         "(set MONK_TEST_REDIS_URL, or start one -- see docs/development.md)"
   end
 end
 
@@ -348,18 +354,18 @@ end
 # (storage_s3_integration_test.rb): a local floci, never skipped. Not
 # included globally -- `include StorageTestHelpers` where needed.
 module StorageTestHelpers
-  FLOCI = "docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0"
+  FLOCI = "docker run -d --name monk-floci -p 4566:4566 -e FLOCI_AUTH_VALIDATE_SIGNATURES=true floci/floci:2.3.0".freeze
 
   def storage_test_url
     ENV.fetch("MONK_TEST_STORAGE_URL",
-      "s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1")
+      "s3://test:test@monk-test?endpoint=http://127.0.0.1:4566&region=us-east-1&path_style=1",)
   end
 
   # The backend under test, on an empty bucket that exists, on a server
   # that checks signatures. Fails, naming the fix, when any of that isn't so.
   def s3_test_backend
     backend = Monk::Storage::URL.parse(storage_test_url)
-    bucket_request(backend, "PUT", "/") # created, or already ours
+    bucket_request(backend, "PUT") # created, or already ours
     refuses_a_wrong_secret!(backend)
     empty_bucket!(backend)
     backend
@@ -371,7 +377,7 @@ module StorageTestHelpers
   # Without FLOCI_AUTH_VALIDATE_SIGNATURES floci accepts any signature, and
   # every refusal these tests expect would quietly pass as a success.
   def refuses_a_wrong_secret!(backend)
-    status = bucket_request(backend.with(secret_key: "#{backend.secret_key}-wrong"), "GET", "/").code
+    status = bucket_request(backend.with(secret_key: "#{backend.secret_key}-wrong"), "GET").code
     return if status == "403"
 
     flunk "the S3 server accepted a request signed with the wrong secret (HTTP #{status}): it isn't checking " \
@@ -380,28 +386,28 @@ module StorageTestHelpers
 
   def empty_bucket!(backend)
     loop do
-      keys = bucket_request(backend, "GET", "/", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>})
+      keys = bucket_request(backend, "GET", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>})
       break if keys.empty?
 
       keys.flatten.each { |key| backend.delete(key) }
     end
   end
 
+  # Sets a bucket subresource (cors, lifecycle) to xml. PutBucketCors and
+  # PutBucketLifecycle need Content-MD5.
+  def bucket_rule(backend, subresource, xml)
+    response = bucket_request(backend, "PUT", query: { subresource => "" }, body: xml)
+    assert_equal "200", response.code, "PUT ?#{subresource}: #{response.body}"
+  end
+
   # A request on the bucket itself (create, list), which the backend's API
   # has no call for. Addressed as the backend is, signed with the Phase 4
   # signer, over TLS unless the endpoint is http:// (floci).
-  def bucket_request(backend, method, path, query: {})
-    host = backend.path_style ? backend.endpoint : "#{backend.bucket}.#{backend.endpoint}"
-    full = backend.path_style ? "/#{backend.bucket}#{path.delete_suffix("/")}" : path
-    credentials = { access_key: backend.access_key, secret_key: backend.secret_key, region: backend.region }
-    signed = { "host" => host, "x-amz-content-sha256" => Monk::Storage::SigV4::EMPTY_PAYLOAD }
-    signed.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: full, query: query, headers: signed,
-      payload_hash: Monk::Storage::SigV4::EMPTY_PAYLOAD, credentials: credentials, now: Time.now.to_i,))
-    target = query.empty? ? full : "#{full}?#{Monk::Storage::SigV4.canonical_query(query)}"
-    port = host[/:(\d+)\z/, 1]&.to_i || (backend.tls ? 443 : 80)
-    Net::HTTP.start(host.sub(/:\d+\z/, ""), port, use_ssl: backend.tls, open_timeout: 5, read_timeout: 10) do |http|
-      http.request(Net::HTTPGenericRequest.new(method, false, true, target, signed))
-    end
+  # A signed request to the bucket itself (created, listed, its rules),
+  # signed by the backend's own private #request.
+  def bucket_request(backend, method, query: {}, body: nil)
+    headers = body ? { "content-md5" => Base64.strict_encode64(Digest::MD5.digest(body)) } : {}
+    backend.send(:request, method, "", body: body, headers: headers, query: query)
   end
 end
 
@@ -413,7 +419,7 @@ end
 # Monk::WebSocket::Connection where a test needs to see something
 # Connection#read hides (close/ping/pong control frames).
 module WebSocketTestHelpers
-  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+  CLIENT_KEY = "dGhlIHNhbXBsZSBub25jZQ==".freeze
 
   def teardown
     @server_thread&.kill
@@ -434,9 +440,9 @@ module WebSocketTestHelpers
     Monk::WebSocket::Server.const_set(:MIN_PING_INTERVAL, seconds)
   end
 
-  def start_server(**kwargs, &block)
-    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **kwargs)
-    @server_thread = Thread.new { server.run(&block) }
+  def start_server(**, &)
+    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", **)
+    @server_thread = Thread.new { server.run(&) }
     server
   end
 
@@ -446,8 +452,8 @@ module WebSocketTestHelpers
   end
 
   def handshake_request(extra_headers: {})
-    request = +"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
-      "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
+    request = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+              "Sec-WebSocket-Key: #{CLIENT_KEY}\r\nSec-WebSocket-Version: 13\r\n"
     extra_headers.each { |k, v| request << "#{k}: #{v}\r\n" }
     request << "\r\n"
   end
@@ -560,6 +566,27 @@ module AuthTestHelpers
   end
 end
 
+# setup and teardown for a test class on the auth tables, on the class's
+# DB_NAME: each test calls setup_auth_tables when it needs them, and
+# teardown drops them if it did. A class with more to do calls super.
+module AuthDatabaseTest
+  include AuthTestHelpers
+
+  def setup
+    Monk::Persistence::Pg.reset!
+    Monk::Auth.reset!
+  end
+
+  def teardown
+    Monk::Persistence::Pg.checkout(self.class::DB_NAME) { |conn| drop_auth_tables(conn) } if postgres_available?
+  rescue Monk::UnknownPersistenceError
+    nil # this test never registered the database
+  ensure
+    Monk::Persistence::Pg.reset!
+    Monk::Auth.reset!
+  end
+end
+
 # Shared by the Monk::Jobs Postgres tests (jobs_pg_*_test.rb): the real
 # schema from the one canonical migration, applied through Migrator.
 # Include alongside PersistenceTestHelpers.
@@ -594,6 +621,27 @@ module JobsTestHelpers
 
   def count_rows(db_name, table)
     Monk::Persistence::Pg.checkout(db_name) { |conn| conn.exec("SELECT count(*) FROM #{table}").getvalue(0, 0) }
+  end
+end
+
+# setup and teardown for a test class on the jobs tables: Monk::Jobs
+# configured on the class's DB_NAME, freshly migrated; skips without
+# Postgres. A class with more to do calls super.
+module JobsDatabaseTest
+  include JobsTestHelpers
+
+  def setup
+    Monk::Persistence::Pg.reset!
+    Monk::Jobs.reset!
+    skip_unless_postgres_available
+    setup_jobs_tables(self.class::DB_NAME)
+    Monk::Jobs.configure(db_name: self.class::DB_NAME)
+  end
+
+  def teardown
+    Monk::Persistence::Pg.checkout(self.class::DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
+    Monk::Persistence::Pg.reset!
+    Monk::Jobs.reset!
   end
 end
 
@@ -705,5 +753,18 @@ module PushTestHelpers
       "_private_key" => Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_private(key)),
       "keys" => { "p256dh" => Monk::Push::Base64Url.encode(Monk::Push::Keys.raw_public(key)),
                   "auth" => Monk::Push::Base64Url.encode(SecureRandom.random_bytes(16)), }, }
+  end
+end
+
+# The headless Chromes of the browser tests (test/live_browser_helpers.rb,
+# test/pwa_browser_test.rb). Notifications stay in Chrome's own message
+# center, which headless Chrome never draws, instead of going to macOS's
+# Notification Center: a test run shows nothing on screen. Ferrum passes
+# disable-features itself, and browser_options replaces its value, so its
+# list is kept.
+module ChromeOptions
+  def self.browser_options
+    ferrums = Ferrum::Browser::Options::Chrome::DEFAULT_OPTIONS.fetch("disable-features")
+    { "disable-features" => "#{ferrums},NativeNotifications,SystemNotifications" }
   end
 end

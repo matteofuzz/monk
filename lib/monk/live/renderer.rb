@@ -1,10 +1,10 @@
 module Monk
   module Live
-    # Renders a Monk::Views template to a String fragment, for pushing to
-    # open browsers (ADR 0010) -- no HTTP response, no layout, and no
-    # request behind it: a detached Monk::Context, so a live partial can
-    # only see what it's given as locals. Callable from any Ractor once
-    # views are frozen (Phase 0 spike: ~3us per render).
+    # Renders a Monk::Views template to a String fragment, for pushing to open
+    # browsers (ADR 0010) -- no HTTP response, no layout, and no request
+    # behind it: a detached Monk::Context, so a live partial can only see what
+    # it's given as locals. Callable from any Ractor once views are frozen
+    # (about 3 µs per render).
     module Renderer
       def self.render(partial, **locals)
         # Context#render's own `layout:` keyword would swallow this
@@ -17,8 +17,8 @@ module Monk
         ensure_frozen!
         html = Monk::Context.new({}).render(partial, layout: false, **locals)
         # A plain, frozen String, not Views::Raw: frozen means Ractor-
-        # shareable, so a broadcast hands every port a reference instead
-        # of a copy (ADR 0010, measured in the Phase 0 fan-out spike).
+        # shareable, so a broadcast hands every port a reference instead of a
+        # copy (ADR 0010).
         String.new(html).freeze
       end
 

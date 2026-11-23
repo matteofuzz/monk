@@ -62,7 +62,7 @@ class BinTest < Minitest::Test
   def test_a_fanout_that_cant_listen
     redis = Monk::WebSocket::ListenError.new("Monk::WebSocket::RedisFanout#listen! couldn't subscribe: whatever")
     pg = Monk::WebSocket::ListenError.new(
-      "Monk::WebSocket::PgFanout#listen! couldn't LISTEN: PG::ConnectionBad: connection to server at " \
+      "Monk::WebSocket::PgFanout#listen! couldn't subscribe: PG::ConnectionBad: connection to server at " \
       "\"127.0.0.1\", port 5999 failed: Connection refused",
     )
 

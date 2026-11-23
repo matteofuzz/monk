@@ -1,10 +1,11 @@
 require_relative "test_helper"
 require_relative "live_browser_helpers"
 
-# The Live client on real networks (docs/plan-live-networks-presence.md,
-# A2-A3): its heartbeat, and what it does when the page is hidden, shown,
-# offline, online, frozen or restored from the back/forward cache. Real
-# Chrome, with the heartbeat shortened as protocol.js is served.
+# The Live client on real networks
+# (docs/history/plan-live-networks-presence.md, A2-A3): its heartbeat, and
+# what it does when the page is hidden, shown, offline, online, frozen or
+# restored from the back/forward cache. Real Chrome, with the heartbeat
+# shortened as protocol.js is served.
 class LiveClientNetworkBrowserTest < Minitest::Test
   ALLOW = proc { |_subject, _topic| true }
   PAGE = %(<ul data-live-topic="t:1"><li id="contact-1">before</li></ul>).freeze
@@ -54,7 +55,8 @@ class LiveClientNetworkBrowserTest < Minitest::Test
   def test_an_answering_socket_stays_open
     open_page(PAGE)
 
-    sleep 1.5 # five heartbeats
+    # Six pings, so five have each had their whole PONG_TIMEOUT.
+    wait_for("six heartbeats") { sent_ops.count("ping") >= 6 }
 
     assert_empty events("stale")
     assert_equal 1, events("connected").size
@@ -98,13 +100,14 @@ class LiveClientNetworkBrowserTest < Minitest::Test
   end
 
   def test_a_hidden_page_reconnects_once_then_waits_to_be_shown
+    fast_backoff!
     open_page(PAGE)
     hide_page!
 
     @proxy.sever!
     wait_for("one reconnect while hidden") { events("connected").size == 2 }
     @proxy.sever!
-    sleep 2 # past two backoff steps
+    sleep 0.3 # past two backoff steps
 
     assert_equal 2, events("connected").size
     assert_equal 2, @proxy.connections
@@ -125,13 +128,14 @@ class LiveClientNetworkBrowserTest < Minitest::Test
   end
 
   def test_offline_stops_reconnecting_and_online_reconnects_at_once
+    fast_backoff!
     open_page(PAGE)
     @page.command("Network.enable")
     emulate_offline(true)
     wait_for("offline") { evaluate("navigator.onLine") == false }
 
     @proxy.sever!
-    sleep 4 # backoff steps of 0.5, 1 and 2 s: the delay is past 4 s now
+    sleep 0.6 # past three backoff steps
 
     assert_equal 1, evaluate("window.__sockets"), "expected no attempt while offline"
     emulate_offline(false)

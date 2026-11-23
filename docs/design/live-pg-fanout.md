@@ -1,5 +1,7 @@
 # Monk::Live without Redis: Postgres as the cross-process fanout transport
 
+> **Status: implemented** in 0.16 as `Monk::WebSocket::PgFanout` (usage: [`guides/websocket.md`](../guides/websocket.md#cross-process-fan-out--monkwebsocketredisfanout), [`guides/live.md`](../guides/live.md)). The text below is the original design record: the `monk new --live`/`--redis`/`--postgres` flags and `lib/monk/scaffold.rb` it mentions are gone, and an app now picks its transport in the `config/websocket.rb` that `monk add websocket` writes (ADR 0017).
+
 Status: design exploration, 2026-09-24. Prompted by `../standup-quiz` (a
 dozen users at most), where `monk new --live` pulls in Redis purely because
 of how `Monk::Live` is currently wired, not because the app needs it.

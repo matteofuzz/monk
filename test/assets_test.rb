@@ -196,9 +196,9 @@ class AssetsTest < Minitest::Test
 
   private
 
-  def boot_app(&block)
+  def boot_app(&)
     root = Monk::Assets.root
-    app = Class.new(Monk::Base, &block)
+    app = Class.new(Monk::Base, &)
     app.assets(root)
     boot_quietly(app)
     app

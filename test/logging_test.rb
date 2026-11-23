@@ -157,7 +157,7 @@ class LoggingTest < Minitest::Test
   end
 
   def with_monk_env(value)
-    original = ENV["MONK_ENV"]
+    original = ENV.fetch("MONK_ENV", nil)
     ENV["MONK_ENV"] = value
     yield
   ensure

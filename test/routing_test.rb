@@ -32,7 +32,7 @@ class RoutingTest < Minitest::Test
     end
 
     { "GET" => "got-get", "POST" => "got-post", "PUT" => "got-put",
-      "PATCH" => "got-patch", "DELETE" => "got-delete" }.each do |verb, expected|
+      "PATCH" => "got-patch", "DELETE" => "got-delete", }.each do |verb, expected|
       _status, _headers, body = app.call(env_for(verb, "/x"))
       assert_equal expected, body.join
     end

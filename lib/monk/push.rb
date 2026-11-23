@@ -10,11 +10,10 @@ require_relative "push/store"
 require_relative "push/delivery"
 require_relative "push/helpers"
 
-# Opt-in: require "monk/push" explicitly; `require "monk"` alone doesn't
-# load it. Web push to the browsers people allowed it in
-# (docs/history/plan-pwa-push.md, part B): the encryption (RFC 8291) and the VAPID
-# header (RFC 8292) are written here over OpenSSL, with no gem, the way
-# Storage signs its own S3 requests.
+# Opt-in: require "monk/push" explicitly; `require "monk"` alone doesn't load
+# it. Web push to the browsers people allowed it in: the encryption (RFC 8291)
+# and the VAPID header (RFC 8292) are written here over OpenSSL, with no gem,
+# the way Storage signs its own S3 requests.
 module Monk
   Context.include(Push::Helpers)
 

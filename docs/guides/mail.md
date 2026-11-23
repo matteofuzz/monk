@@ -1,10 +1,10 @@
 # Sending email — `Monk::Mail`
 
-Text and/or HTML email over SMTP, opt-in (`require "monk"` never loads
-it). Monk builds the MIME itself and sends from inside whichever worker
-Ractor serves the request: the `mail` gem, and so Action Mailer, raises
-`Ractor::IsolationError` there, which is why Monk ships its own
-(`docs/adr/0012-minimal-built-in-mailer.md`). Deliberately small: no
+Text and/or HTML email over SMTP, opt-in (`require "monk"` never loads it).
+Monk builds the MIME itself and sends from inside whichever worker Ractor
+serves the request: the `mail` gem, and so Action Mailer, raises
+`Ractor::IsolationError` there, which is why Monk ships its own ([ADR
+0012](../adr/0012-minimal-built-in-mailer.md)). Deliberately small: no
 attachments, no inline images, no BCC lists, no bulk sending.
 
 ```ruby
@@ -88,6 +88,27 @@ because credentials are set. Most also listen on 2525 (Brevo, Lettermint,
 Postmark, Mailgun; Resend uses 2587), useful when a network blocks 587:
 change only the port. Verify your sending domain with the provider
 (SPF, DKIM) before going live.
+
+### Checking `MAIL_URL`
+
+`Monk::Mail.check` does what a send does up to the message: it connects,
+starts TLS and logs in, then quits. Nothing is sent. It returns what it
+did, or raises `Monk::Mail::DeliveryError` saying what failed: the server
+unreachable, no STARTTLS, the login refused. The password is never in the
+message.
+
+```bash
+bundle exec ruby -e 'require "./config/settings"; require "./config/mail"; puts Monk::Mail.check'
+# smtp://8f1a2b001@smtp-brevo.com:***@smtp-relay.brevo.com:587: connected (STARTTLS),
+#   logged in as 8f1a2b001@smtp-brevo.com. Nothing was sent.
+```
+
+It loads only the mail config, so it needs no database. Run it after
+setting `MAIL_URL` on a deploy, before anyone waits for a login link: in
+the Compose stack, `docker compose exec -T web bundle exec ruby -e '...'`.
+It doesn't check `MAIL_FROM`: a sender on an unverified domain is
+accepted at login and lands in spam later. To see a message arrive, send
+one with `Monk::Mail.deliver`.
 
 ## `Monk::Mail.deliver`
 
@@ -186,7 +207,7 @@ Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
   stay in the queue until retried or discarded ([`jobs.md`](jobs.md),
   "When a job fails"), so after fixing a bad `MAIL_URL`,
   `Monk::Jobs.retry_failed(id)` resends.
-- **The `mailers` queue.** Mail jobs run on it, and `monk new` sets
+- **The `mailers` queue.** Mail jobs run on it, and `monk add jobs` sets
   `JOBS_QUEUES=mailers,push,default` so they're served before other
   work. Once the app has slow jobs, run a separate `bin/jobs` just for
   `mailers` (`JOBS_QUEUES=mailers`), so an email never waits behind them.
@@ -206,7 +227,7 @@ configured; point it at `Monk::Mail`, built as a module constant so it's
 it lives in `app/mailers/` with the app's other emails:
 
 ```ruby
-# app/mailers/app_mailer.rb
+# app/mailers/auth_mailer.rb
 module AuthMailer
   MAGIC_LINK = lambda do |email:, link:, token:|
     Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
@@ -218,15 +239,15 @@ end
 
 ```ruby
 # config/auth.rb
-require_relative "../app/mailers/app_mailer" # configure checks deliver: right away
+require_relative "../app/mailers/auth_mailer" # configure checks deliver: right away
 
 Monk::Auth.configure(..., deliver: AuthMailer::MAGIC_LINK)
 ```
 
-Require `config/mail.rb` from `config/load.rb`, not from `config/auth.rb`:
-`bin/websocket_server` loads `config/auth.rb` too, never sends mail, and
-shouldn't need `MAIL_URL` to boot. That's why the mailer touches
-`Monk::Mail` only inside the lambda.
+`config/load.rb` loads `config/mail.rb`; `config/auth.rb` doesn't
+require it: `bin/websocket_server` loads `config/auth.rb` on its own,
+never sends mail, and shouldn't need `MAIL_URL` to boot. That's why the
+mailer touches `Monk::Mail` only inside the lambda.
 
 **Don't point `deliver:` at `deliver_later`.** The job would store the
 login link, a working token included, in the queue until it's sent. That

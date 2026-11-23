@@ -11,8 +11,7 @@ require "json"
 module Monk
   # Background jobs on Postgres. Opt-in: require "monk/jobs" explicitly --
   # `require "monk"` alone does not load this. Design:
-  # docs/adr/0013-jobs-narrow-state-table-plus-payloads.md; plan:
-  # docs/history/plan-jobs.md.
+  # docs/adr/0013-jobs-narrow-state-table-plus-payloads.md.
   module Jobs
     # last_error keeps the first lines of a failure, not all of it.
     MAX_ERROR_LENGTH = 4_000
@@ -77,7 +76,7 @@ module Monk
       # the job class keeps its place in the schedule. cron: is UTC (Cron).
       # skip_if_pending: true skips an occurrence while the job enqueued for
       # the previous one hasn't finished. Everything is checked here, so a
-      # mistake fails at boot (docs/history/plan-scheduled-jobs.md decision 2).
+      # mistake fails at boot.
       def recurring(key, job_class, cron:, args: [], skip_if_pending: false)
         if @recurring_registry
           raise RegistryFrozenError,

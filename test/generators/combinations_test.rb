@@ -3,7 +3,8 @@ require "pg"
 
 # Properties across modules (docs/history/plan-scaffold.md Phase 6): the order
 # modules are added in doesn't matter, adding to an app is the same as
-# creating it with them, and every combination works.
+# creating it with them, and the modules that look for each other work
+# together.
 class GeneratorsCombinationsTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
@@ -12,6 +13,19 @@ class GeneratorsCombinationsTest < Minitest::Test
   MODULES = %i[postgres redis mail auth jobs websocket live storage pwa push deploy].freeze
   # websocket and live need a transport; Postgres, so a pair adds it.
   OPTIONS = { transport: "postgres" }.freeze
+  # The sets where one module's code changes when another is there
+  # (`defined?(Monk::X)`, `const_defined?`), each with its dependencies;
+  # every module alone is its own generator test, and all of them
+  # together run below over each transport. A module that starts to look
+  # for another adds its set here.
+  INTERACTING = [
+    %i[jobs mail],          # Mail.deliver_later loads with jobs
+    %i[jobs auth],          # Auth::SendLoginLink and Auth::Sweep, recurring.rb's sweep
+    %i[websocket auth],     # bin/websocket_server authenticates sockets
+    %i[live auth],          # ...and Live's are optional
+    %i[presence],           # bin/websocket_server starts presence, without live
+    %i[presence live],      # ...and with it, start_visible: false
+  ].freeze
   # push's VAPID pairs are fresh on every run, by design.
   VAPID_KEY = /\A(VAPID_(?:PUBLIC|PRIVATE)_KEY=)[A-Za-z0-9_-]+\z/
 
@@ -49,13 +63,15 @@ class GeneratorsCombinationsTest < Minitest::Test
     end
   end
 
-  # Every pair, and everything over each transport, works: the generated
-  # app migrates and passes its own tests. SLOW=1 runs every combination.
-  def test_every_combination_works
+  # Each interacting set, and everything over each transport, works: the
+  # generated app migrates and passes its own tests.
+  def test_the_interacting_modules_and_all_of_them_work
     skip_unless_postgres_available
     skip_unless_redis_available
 
-    combinations.each do |modules, options|
+    runs = INTERACTING.map { |set| [set, OPTIONS] } +
+           %w[postgres redis].map { |transport| [MODULES, { transport: transport }] }
+    runs.each do |modules, options|
       with_new_app(*modules, options: options) do |dest|
         with_generated_database { |database| assert_app_works(dest, database, "#{modules.inspect} #{options.inspect}") }
       end
@@ -77,17 +93,6 @@ class GeneratorsCombinationsTest < Minitest::Test
 
     out, status = run_generated_tests(dest, env)
     assert status.success?, "#{label}:\n#{out}"
-  end
-
-  def combinations
-    sizes = ENV["SLOW"] ? (1..MODULES.size) : [2]
-    sets = sizes.flat_map { |size| MODULES.combination(size).to_a }
-    runs = sets.flat_map do |set|
-      next [[set, {}]] unless set.intersect?(%i[websocket live])
-
-      %w[postgres redis].map { |transport| [set, { transport: transport }] }
-    end
-    runs + %w[postgres redis].map { |transport| [MODULES, { transport: transport }] }
   end
 
   # The app's files after the block, normalized as the test above says.

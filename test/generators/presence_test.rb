@@ -5,9 +5,9 @@ require "pg"
 require "monk/auth"
 require "monk/presence"
 
-# monk add presence (docs/plan-live-networks-presence.md, open question 5):
-# needs auth and websocket; bin/websocket_server counts the signed-in
-# sockets, config.ru starts the reactor.
+# monk add presence (docs/history/plan-live-networks-presence.md, open
+# question 5): needs auth and websocket; bin/websocket_server counts the
+# signed-in sockets, config.ru starts the reactor.
 class GeneratorsPresenceTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers

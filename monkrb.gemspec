@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "A light Ruby web framework designed to be fully Ractor-safe."
   spec.description = "Monk produces Rack 3 apps that are also Ractor.shareable?, so they can be " \
-    "served in parallel across Ractor worker pools without silently losing that safety property."
+                     "served in parallel across Ractor worker pools without silently losing that safety property."
   spec.homepage = "https://github.com/matteofuzz/monk"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 4.0"

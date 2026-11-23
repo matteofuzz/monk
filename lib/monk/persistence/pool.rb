@@ -1,9 +1,8 @@
 module Monk
   module Persistence
-    # Named connection pools for short-lived Ractors
-    # (docs/history/plan-pg-pool.md). A PG::Connection can't be moved or
-    # shared across Ractors, so a pool lends nothing: a few worker Ractors
-    # own connections, and other Ractors send them calls to run.
+    # Named connection pools for short-lived Ractors. A PG::Connection can't
+    # be moved or shared across Ractors, so a pool lends nothing: a few worker
+    # Ractors own connections, and other Ractors send them calls to run.
     #
     #   caller --[:call, receiver, method, args, kwargs, reply, deadline]--> dispatcher's inbox
     #   dispatcher --> an idle worker (or the queue, until one is idle)
@@ -178,7 +177,9 @@ module Monk
             message = @inbox.receive
             case message.first
             when :ready then ready(*message.drop(1))
-            when :failed then failure ||= message[2]
+            when :failed
+              failed(*message.drop(1))
+              failure ||= message[2]
             when :idle then @idle.push(message[1])
             end
             pending -= 1 if %i[ready failed].include?(message.first)
@@ -216,7 +217,7 @@ module Monk
           when :idle then idle(message[1])
           when :tick then tick
           when :ready then ready(*message.drop(1))
-          when :failed then @workers[message[1]]&.store(:failure, message[2])
+          when :failed then failed(*message.drop(1))
           when :died then died(*message.drop(1))
           end
         end
@@ -287,6 +288,10 @@ module Monk
           watch(index, ractor)
         end
 
+        def failed(index, why)
+          @workers[index]&.store(:failure, why)
+        end
+
         def ready(index, port)
           worker = @workers[index]
           return unless worker
@@ -296,12 +301,14 @@ module Monk
         end
 
         # A thread per worker turns its Ractor ending into a message here.
+        # Ruby 4.0's monitor sends :exited or :aborted, 4.1's
+        # [ractor, :exited] or [ractor, :aborted]: keep the Symbol.
         def watch(index, ractor)
           inbox = @inbox
           Thread.new do
             port = Ractor::Port.new
             ractor.monitor(port)
-            inbox.send([:died, index, ractor, port.receive])
+            inbox.send([:died, index, ractor, Array(port.receive).last])
           rescue Ractor::ClosedError
             nil
           end
@@ -333,12 +340,32 @@ module Monk
         # told before any is waited for, so they stop side by side.
         def stop_workers
           @stopping = true
-          @workers.each_value do |worker|
-            worker[:port]&.send(:stop)
-          rescue Ractor::ClosedError
-            nil
+          @workers.each_value { |worker| tell_stop(worker[:port]) }
+          stop_connecting_workers
+          @workers.each_value { |worker| worker[:ractor].join }
+        end
+
+        # A worker still connecting has no port to be told :stop on yet:
+        # wait for its :ready and tell it then, or for its :failed (it has
+        # ended). The connect has a timeout, so this wait does too. One
+        # with a failure and no port has ended already: it is waiting out
+        # a backoff. Calls arriving meanwhile are answered :stopped.
+        def stop_connecting_workers
+          connecting = @workers.select { |_, worker| worker[:port].nil? && worker[:failure].nil? }.keys
+          until connecting.empty?
+            message = @inbox.receive
+            case message.first
+            when :ready then tell_stop(message[2])
+            when :call then answer(message, [:stopped])
+            end
+            connecting.delete(message[1]) if %i[ready failed].include?(message.first)
           end
-          @workers.each_value { |worker| worker[:ractor].join } # rubocop:disable Style/CombinableLoops
+        end
+
+        def tell_stop(port)
+          port&.send(:stop)
+        rescue Ractor::ClosedError
+          nil
         end
 
         def release_callers

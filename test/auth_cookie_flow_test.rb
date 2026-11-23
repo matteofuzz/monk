@@ -8,24 +8,9 @@ require "monk/auth"
 # proven in auth_ractor_integration_test.rb.
 class AuthCookieFlowTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_cookie_flow_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
 
   def build_app
     Class.new(Monk::Base) do
@@ -148,7 +133,7 @@ class AuthCookieFlowTest < Minitest::Test
     session_cookie = log_in(app)
     old_token = Monk::Auth.csrf_token_for(session_cookie.split("=", 2).last)
     Monk::Auth.configure(db_name: DB_NAME, secret: "rotated", login_ttl: 600, session_ttl: 1_209_600,
-      redirect_allowlist: ["/dashboard"])
+      redirect_allowlist: ["/dashboard"],)
     stale = "#{session_cookie}; csrf_token=#{old_token}"
 
     status, headers, = app.call(orders(stale, old_token))
@@ -193,7 +178,7 @@ class AuthCookieFlowTest < Minitest::Test
   end
 
   def csrf_cookie_value(headers)
-    Array(headers["set-cookie"]).find { |c| c.start_with?("csrf_token=") }&.split(";")&.first&.split("=", 2)&.last
+    Array(headers["set-cookie"]).find { |c| c.start_with?("csrf_token=") }.to_s.split(";").first.to_s.split("=", 2).last
   end
 
   def log_in(app)

@@ -4,6 +4,54 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.27.0 - 2026-11-23
+
+### Added
+
+- **`Monk::Mail.check`**: connects, starts TLS and logs in with
+  `MAIL_URL`, then quits without sending, so a wrong password or a
+  blocked port shows up on deploy, not when nobody gets their login link
+  ([`mail.md`](docs/guides/mail.md#checking-mail_url)).
+- **`Monk::Storage.check`**: whether a bucket is ready for browsers'
+  uploads, writing nothing. It reads the lifecycle rule with the app's
+  keys (which proves the keys and the bucket), sends the CORS preflight a
+  browser sends from `PUBLIC_URL`, and names each missing rule
+  ([`storage.md`](docs/guides/storage.md#checking-a-bucket)).
+
+### Changed
+
+- **Settings that are present but wrong are refused at boot**, in every
+  process, instead of failing the first time someone uses the app
+  ([`settings.md`](docs/guides/settings.md#values-refused-at-boot)):
+  - `PUBLIC_URL` must be an origin only (no path or trailing slash), in
+    every environment. Outside development and test it must be
+    `https://` and not on a placeholder host (`example.com`, `*.test`,
+    ...); `localhost` and IP addresses pass.
+  - `LIVE_WS_URL` must be `wss://` outside development and test.
+  - `AUTH_SECRET` is refused outside development and test if it contains
+    `change-me` or is shorter than 32 characters.
+  - `Monk::WebSocket::Server.new(allowed_origins:)` refuses an entry that
+    isn't an origin.
+  - New `Monk::InvalidSettingError`.
+- **`WS_ALLOWED_ORIGINS` lists the origins allowed besides `PUBLIC_URL`**,
+  which the scaffolded `bin/websocket_server` now always allows.
+- `docs/guides/settings.md` has a table of what each `MONK_ENV` changes.
+- **The docs, reviewed for clarity** against the code as it is: every
+  guide, a shorter README with a status section, the scaffold's
+  `SETUP.md` and `AGENTS.md`, `CONTEXT.md` and the design docs' status
+  lines. Finished plans and superseded notes are in `docs/history/`, and
+  the steps left from earlier releases are under the roadmap's "Open
+  checks".
+
+### Fixed
+
+- **Stopping a database pool no longer hangs** when a worker is still
+  connecting, a replacement for one that died, say: `reset!` and the
+  process's shutdown waited forever.
+- Ruby 4.1 (checked on 4.1.0-preview1): `Monk::Base.freeze!` still names
+  the route whose block can't be shared, and the pool logs a worker's
+  death the same way as on 4.0.
+
 ## 0.26.0 - 2026-11-20
 
 ### Added
@@ -272,7 +320,7 @@ in `lib/monk/version.rb`.
   were enough. `Monk::WebSocket` now loads `digest/sha1` when it is
   required, and `Monk::Auth` (login tokens) and `Monk::Assets`
   (development ETags) load `digest/sha2` for the same race on
-  `Digest::SHA256` (`docs/plan-digest-preload.md`).
+  `Digest::SHA256` (`docs/history/plan-digest-preload.md`).
 
 ## 0.22.1 - 2026-10-20
 
@@ -297,7 +345,7 @@ in `lib/monk/version.rb`.
   Before, every accepted socket started its handshake at once, and a
   burst past what the process could verify (a restart's reconnect wave)
   filled the `db_pool:` queue and timed most of them out
-  (`docs/plan-ws-connect-ceiling.md`, item 1).
+  (`docs/history/plan-ws-connect-ceiling.md`, item 1).
 - **A WebSocket handshake has a deadline and a size limit.** A handshake
   not over within `handshake_timeout:` (10 s by default) is dropped, and a request head past 16 KiB gets a
   `431`. Before, a socket that connected and sent nothing held its
@@ -763,8 +811,8 @@ in `lib/monk/version.rb`.
 ### Added
 
 - `docs/ai_usage_disclaimer.md`, linked from the README.
-- `docs/deployment-options.md`: analysis of hosting options for Postgres,
-  Redis, and SMTP.
+- `docs/history/deployment-options.md`: analysis of hosting options for
+  Postgres, Redis, and SMTP.
 
 ## 0.15.0 - 2026-09-22
 

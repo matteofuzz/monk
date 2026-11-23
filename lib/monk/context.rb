@@ -64,7 +64,7 @@ module Monk
     def redirect(location, status: 302, allow_other_host: false, flash: nil)
       unless allow_other_host || this_app?(location)
         raise UnsafeRedirectError, "redirect to #{location.inspect}: another host, or not a plain path " \
-          "(allow_other_host: true if the app built it)"
+                                   "(allow_other_host: true if the app built it)"
       end
 
       add_cookie(FLASH_COOKIE, URI.encode_www_form_component(flash), max_age: FLASH_MAX_AGE) if flash
@@ -142,9 +142,8 @@ module Monk
       end
     end
 
-    # Secure everywhere but development, where the app is served over
-    # plain http and Safari would drop a Secure cookie
-    # (docs/history/secure-cookie-dev-http.md).
+    # Secure everywhere but development, where the app is served over plain
+    # http and Safari would drop a Secure cookie.
     def add_cookie(name, value, max_age:, http_only: true, secure: !Monk.env.development?)
       flags = ["Path=/", "SameSite=Lax", "Max-Age=#{max_age}"]
       flags << "Secure" if secure

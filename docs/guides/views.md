@@ -1,8 +1,9 @@
 # Views — HTML with ERB
 
 Templates live in `views/` by default, and in `app/views/` in a `monk new`
-app (`views "app/views"`, see [`scaffolding.md`](scaffolding.md)). They are compiled **once at boot**, in the main Ractor, into ordinary
-methods — never at request time. That's not a performance preference, it's
+app (`views "app/views"`, see [`scaffolding.md`](scaffolding.md)). They
+are compiled **once at boot**, in the main Ractor, into ordinary methods —
+never at request time. That's not a performance preference, it's
 what Ractor-safety leaves available: a worker can't hold a template cache
 or install methods on a shared module. It also means a template with a
 syntax error fails `Monk.boot`, naming the file and line, instead of
@@ -71,7 +72,7 @@ imports with real extensions between your own files, and an import map in
 the layout for bare specifiers. An app that needs a bundler should run one
 itself and drop the output into `public/`.
 
-# Static assets
+## Static assets
 
 `public/` is walked at boot into a frozen manifest (body, content-type,
 ETag) that worker Ractors read by reference. Assets are looked up **before**
@@ -80,17 +81,18 @@ front of the app, so a catch-all splat route can't shadow a stylesheet. The
 tradeoff: a route can't override a path that exists as a file.
 
 Responses carry an `ETag` and answer `if-none-match` with a `304`.
-`asset_path("/css/app.css")` stamps the URL with a content digest in
-production, and a request carrying that stamp is served
+`asset_path("/css/app.css")` stamps the URL with a content digest outside
+development, and a request carrying that stamp is served
 `cache-control: public, max-age=31536000, immutable`; everything else gets
 `must-revalidate`. No digested filenames, no build manifest.
 
-In production a lookup is an exact-match fetch of a path enumerated at
-boot, which makes path traversal structurally impossible rather than
-defended against. In development (`MONK_ENV != "production"`) the body is
-re-read from disk per request instead, so an edited `.css` or `.js` shows
-up on the next refresh with no restart — and `asset_path` doesn't stamp,
-since a boot-time digest would go stale the moment you save.
+Outside development (test, staging, production) a lookup is an exact-match
+fetch of a path enumerated at boot, which makes path traversal structurally
+impossible rather than defended against. In development the body is re-read
+from disk per request instead, so an edited `.css` or `.js` shows up on the
+next refresh with no restart — and `asset_path` doesn't stamp, since a
+boot-time digest would go stale the moment you save.
 
-Putting nginx or a CDN in front of Monk is still the right call in
-production; this exists so an app is complete on its own.
+Putting a proxy (Caddy, in `monk add deploy`'s stack) or a CDN in front of
+Monk is still the right call in production; this exists so an app is complete
+on its own.

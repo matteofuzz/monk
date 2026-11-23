@@ -34,6 +34,7 @@ class WebSocketAuthTest < Minitest::Test
       begin
         Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
       rescue Monk::UnknownPersistenceError
+        # never registered: nothing to drop
       end
     end
     Monk::Persistence::Pg.reset!
@@ -126,6 +127,22 @@ class WebSocketAuthTest < Minitest::Test
     socket&.close
   end
 
+  # The browser's Origin header is scheme, host and port: an entry with
+  # anything more could never match, so it's refused at once.
+  def test_allowed_origins_that_arent_origins_are_refused
+    ["https://app.monkrb.org/", "https://app.monkrb.org/app", "app.monkrb.org", nil].each do |origin|
+      error = assert_raises(ArgumentError, origin.inspect) do
+        Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", allowed_origins: ["https://ok.monkrb.org", origin])
+      end
+      assert_match(/allowed_origins must be origins/, error.message)
+      assert_includes error.message, origin.inspect
+    end
+
+    origins = ["https://app.monkrb.org", "http://localhost:9292"]
+    server = Monk::WebSocket::Server.new(port: 0, bind: "127.0.0.1", allowed_origins: origins)
+    server.instance_variable_get(:@tcp_server).close
+  end
+
   def test_a_bearer_connection_is_never_origin_checked_even_with_allowed_origins_configured
     setup_auth_tables(DB_NAME)
     session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
@@ -162,7 +179,6 @@ class WebSocketAuthTest < Minitest::Test
 
     assert status.success?
     assert_equal "Monk::AuthNotConfiguredError", stdout.strip
-
   end
 
   def test_reverify_interval_requires_authenticate_true
@@ -273,9 +289,9 @@ class WebSocketAuthTest < Minitest::Test
     socket&.close
   end
 
-  # docs/plan-ws-connect-ceiling.md item 3: a verify that raises (here, no
-  # sessions table; in production, the pool full or the database down) is
-  # a 503 and one line on stderr, not a dead Ractor and a backtrace.
+  # docs/history/plan-ws-connect-ceiling.md item 3: a verify that raises
+  # (here, no sessions table; in production, the pool full or the database
+  # down) is a 503 and one line on stderr, not a dead Ractor and a backtrace.
   def test_a_verify_that_raises_gets_a_503_with_retry_after_and_one_log_line
     setup_auth_tables(DB_NAME)
     session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))

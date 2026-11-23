@@ -1,8 +1,7 @@
-# Files users send (Monk::Storage): local files in development and test,
-# an S3-compatible bucket in production. No service to start, no migration
-# and no JS: the upload flow comes as commented routes driven with curl,
-# and the guide carries the uploads table and browser code
-# (docs/history/plan-storage.md Phase 8).
+# Files users send (Monk::Storage): local files in development and test, an
+# S3-compatible bucket in production. No service to start, no migration and no
+# JS: the upload flow comes as commented routes driven with curl, and the
+# guide carries the uploads table and browser code.
 Monk::Generator.define(:storage) do
   summary "File storage (local files in development, an S3 bucket in production)"
   installed_if "config/storage.rb"

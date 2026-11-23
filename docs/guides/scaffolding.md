@@ -1,8 +1,7 @@
 # Scaffolding: `monk new` and `monk add`
 
-`monk new` writes a bare app. `monk add` adds a Monk module to an app,
-new or years old: Postgres, Redis, mail, auth, jobs, WebSocket, Live.
-Each module is one generator (ADR 0017): it creates files and appends
+`monk new` writes a bare app. `monk add` adds a Monk module (the table
+below) to an app, new or years old. Each module is one generator (ADR 0017): it creates files and appends
 lines to the end of a few shared ones (`Gemfile`, the `.env` files,
 `.gitignore`, `SETUP.md`, `AGENTS.md`), and never edits or replaces a file
 in the middle. So it doesn't matter which modules an app already has, or
@@ -33,15 +32,15 @@ modules it needs, first:
 
 | Module | What it is | Needs |
 |---|---|---|
-| `postgres` | Postgres persistence and migrations | — |
+| `postgres` | Postgres persistence and migrations ([`persistence.md`](persistence.md), [`migrations.md`](migrations.md)) | — |
 | `redis` | the app's Redis: a cache, rate limits, or WebSocket's transport | — |
-| `mail` | email over SMTP; printed to the console in development | — |
-| `auth` | passwordless login by email link | `postgres`, `mail` |
-| `jobs` | background jobs on Postgres, run by `bin/jobs` | `postgres` |
-| `websocket` | the WebSocket server process | `postgres` or `redis` |
-| `live` | HTML pushed to open pages | `websocket` |
+| `mail` | email over SMTP; printed to the console in development ([`mail.md`](mail.md)) | — |
+| `auth` | passwordless login by email link ([`auth.md`](auth.md)) | `postgres`, `mail` |
+| `jobs` | background jobs on Postgres, run by `bin/jobs` ([`jobs.md`](jobs.md)) | `postgres` |
+| `websocket` | the WebSocket server process ([`websocket.md`](websocket.md)) | `postgres` or `redis` |
+| `live` | HTML pushed to open pages ([`live.md`](live.md)) | `websocket` |
 | `presence` | who is online, from the sockets ([`presence.md`](presence.md)) | `auth`, `websocket` |
-| `storage` | files users send: local files in development, an S3 bucket in production | — |
+| `storage` | files users send: local files in development, an S3 bucket in production ([`storage.md`](storage.md)) | — |
 | `pwa` | an installable app: manifest, icons, service worker ([`pwa.md`](pwa.md)) | — |
 | `push` | web push notifications, from jobs ([`push.md`](push.md)) | `pwa`, `jobs`, `auth` |
 | `deploy` | Docker Compose and Caddy on one host, from the modules installed ([`deploying.md`](deploying.md), [`deploy-hetzner.md`](deploy-hetzner.md)) | — |
@@ -103,8 +102,8 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
 - **jobs:** `config/jobs.rb`, `bin/jobs`, the queue's migration and the
   recurring tasks' one, the demo `HelloJob`, the `jobs-enqueue` example,
   and `config/recurring.rb` with the `jobs-recurring` example (the demo
-  job every hour); a test that enqueues and drains. With mail installed, `Monk::Mail.deliver_later` exists; with
-  auth, `Monk::Auth::SendLoginLink`.
+  job every hour); a test that enqueues and drains. With mail installed,
+  `Monk::Mail.deliver_later` exists; with auth, `Monk::Auth::SendLoginLink`.
 - **websocket:** `config/websocket.rb` (`AppWebSocket::REGISTRY`, over the
   transport), `bin/websocket_server`, and the `websocket-chat` example in
   `app/sockets/`; a test that sends a broadcast across the transport.
@@ -165,6 +164,7 @@ config/
   settings.rb          # the app's settings; loads .env
   load.rb              # every module's config that exists, then app/ by role
   persistence.rb redis.rb auth.rb ... storage.rb pwa.rb push.rb   # one per module added
+  recurring.rb         # with jobs: the recurring jobs
 app/
   app.rb               # class App < Monk::Base, its base routes; loads app/routes/*.rb
   routes/              # more routes, one file per module or feature, each reopening class App
@@ -173,6 +173,8 @@ app/
   sockets/             # with websocket: socket handlers, when the app doesn't use live
 db/migrate/  public/  bin/  test/
 storage/               # with storage: development's and test's files (ignored by git)
+Dockerfile  .env  .env.test   # .env files written by the modules that need settings
+compose.yaml  Caddyfile  .env.production.example   # with deploy
 SETUP.md  AGENTS.md  CLAUDE.md
 ```
 

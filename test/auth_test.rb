@@ -5,24 +5,9 @@ require "monk/auth"
 
 class AuthTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
 
   def test_configure_stores_config_and_is_readable_back
     Monk::Auth.configure(db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600)
@@ -83,7 +68,7 @@ class AuthTest < Minitest::Test
     refute_equal first, second
     rows = fetch_login_tokens(email: "a@b.com")
     assert_equal 2, rows.size
-    assert_equal [nil, nil], rows.map { |r| r["used_at"] }
+    assert_equal([nil, nil], rows.map { |r| r["used_at"] })
   end
 
   def test_redeem_on_a_fresh_token_returns_a_session_and_marks_the_login_token_used

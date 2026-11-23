@@ -18,8 +18,11 @@ adds `pwa`, `jobs` and `auth` first if they're missing, and writes:
 - `app/routes/push.rb`: the examples `push-subscribe` and `push-notify`;
 - `app/views/push/_settings.erb`: a switch to turn notifications on and
   off;
-- `test/push_test.rb`;
-- in `config/recurring.rb` (jobs), `Monk::Push::Sweep` every night.
+- `test/push_test.rb`.
+
+The nightly `Monk::Push::Sweep` is already in the `config/recurring.rb`
+that `monk add jobs` writes, behind `if defined?(Monk::Push::Sweep)`: it
+starts running once push is installed.
 
 ## Turning it on
 

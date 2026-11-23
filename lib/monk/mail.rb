@@ -44,15 +44,23 @@ module Monk
       #
       #   Monk::Mail.deliver(to: email, subject: "Your login link", text: "Log in: #{link}")
       def deliver(to:, subject:, text: nil, html: nil, reply_to: nil, from: nil)
-        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.deliver" unless config
-
-        from ||= config[:from]
-        if from.nil?
-          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
-        end
-
-        message = Message.new(from: from, to: to, subject: subject, text: text, html: html, reply_to: reply_to)
+        message = message_for(:deliver, from: from, to: to, subject: subject, text: text, html: html,
+          reply_to: reply_to,)
         config[:transport].deliver(message)
+      end
+
+      # MAIL_URL checked without sending anything: with smtp:// or
+      # smtps://, it connects, starts TLS and logs in as a send would, then
+      # quits. Returns what it did; a failure raises DeliveryError saying
+      # what went wrong. For a deploy, before anyone waits for a login
+      # link (docs/guides/mail.md, "Checking MAIL_URL").
+      def check
+        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.check" unless config
+
+        transport = config[:transport]
+        transport.class.require_library! if transport.class.respond_to?(:require_library!)
+        helo = config[:from] ? MIME.domain(Address.bare(config[:from])) : "localhost"
+        transport.check(helo: helo)
       end
 
       # Renders a Monk::Views template to an HTML String for deliver's
@@ -86,6 +94,19 @@ module Monk
       end
 
       private
+
+      # deliver's and deliver_later's Message, with from: defaulting to
+      # configure's (MAIL_FROM).
+      def message_for(method, from:, **fields)
+        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.#{method}" unless config
+
+        from ||= config[:from]
+        if from.nil?
+          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
+        end
+
+        Message.new(from: from, **fields)
+      end
 
       # Unfrozen, a render from a worker Ractor dies with an opaque
       # Ractor::IsolationError inside Monk::Views, and one from the main

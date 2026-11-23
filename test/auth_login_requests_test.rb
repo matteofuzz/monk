@@ -6,26 +6,9 @@ require "monk/auth"
 # login_request_interval, recorded in login_requests by one upsert.
 class AuthLoginRequestsTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_login_requests_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-        nil # a configure-only test never registered the database
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
 
   # --- configure ---
 

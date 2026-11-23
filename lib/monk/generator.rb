@@ -4,8 +4,8 @@ require_relative "generator/result"
 
 module Monk
   # `monk add`: one generator per module, run on any app, new or existing
-  # (docs/adr/0017, docs/history/plan-scaffold.md). A generator only creates files
-  # and appends lines; Run plans and checks everything before writing.
+  # (docs/adr/0017). A generator only creates files and appends lines; Run
+  # plans and checks everything before writing.
   module Generator
     TEMPLATES_DIR = File.expand_path("templates", __dir__)
 

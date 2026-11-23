@@ -104,6 +104,12 @@ class LivePublisherTest < Minitest::Test
     assert_equal "#sentinel", JSON.parse(receive(port))["target"]
   end
 
+  def test_a_topic_must_be_a_string_or_symbol
+    error = assert_raises(ArgumentError) { @publisher.remove(42, to: "#a") }
+
+    assert_match(/String or Symbol, got 42/, error.message)
+  end
+
   def test_an_unknown_mode_is_rejected_before_anything_is_rendered_or_sent
     port = subscribe(:t)
 

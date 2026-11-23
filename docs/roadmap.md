@@ -51,8 +51,8 @@ gets its own design doc and plan when work on it starts.
 3. **0.24: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.
    Done (2026-11-13), measured on desktop, iPhone and Android
-   (`docs/plan-live-networks-presence.md`). A few device checks on a
-   deployed app are still open there; they run on the first real deploy.
+   (`docs/history/plan-live-networks-presence.md`). A few device checks on a
+   deployed app are still open: see "Open checks" below.
    - **Mobile.** Done: with `ping_interval:`, the WebSocket server closes a
      connection silent for two intervals. The Live client pings while its
      page is visible, gives up on a socket silent for 10 s, and reconnects
@@ -101,39 +101,86 @@ gets its own design doc and plan when work on it starts.
      made on the host. `docs/guides/deploy-hetzner.md` is the tested
      deploy on Hetzner Cloud with Brevo, from the accounts to backups.
 
-6. **0.27: `monk check`: verifying an environment's wiring.** `bin/check`
-   (written by the base app) loads `config/load` and runs a read-only check
-   for each loaded module. The checks belong to the framework modules
-   (`Monk::Mail.check`, `Monk::Storage.check`, ...), not to the scaffold, so
-   they work in a deployed app. Output and exit codes match `monk add`'s (text
-   and `--json`). It covers what boot (missing settings) and `rake test`
-   (wiring in the test environment) can't: problems that otherwise show up the
-   first time a real user hits them.
-   - **Before switching traffic to a deploy**, the main use:
-     - SMTP connect and login without sending;
-     - Postgres reachable with no migrations pending (including a module's
-       new ones, such as recurring jobs');
-     - Redis and `LISTEN` reachable (`LISTEN` doesn't work through
-       PgBouncer in transaction mode);
-     - values that are present but wrong: a placeholder `AUTH_SECRET`,
-       `PUBLIC_URL` on `http://`, `LIVE_WS_URL` not on `wss://`,
-       `WS_ALLOWED_ORIGINS` missing `PUBLIC_URL`, VAPID keys that don't
-       match.
-   - **A local "doctor"**: services up, env files filled in, versions
-     matching `.ruby-version`/`Gemfile.lock`.
-   - **Agents** get one diagnosis to act on (`--json`).
-   - **Bug reports** get versions, modules and failed checks, with secrets
-     redacted.
-   - **After upgrading Monk**, a first signal that a module needs something
-     the app lacks, such as a new migration.
+6. **0.27: Catching wrong settings early, and other enhancements.** Done
+   (2026-11-23, `docs/history/plan-boot-settings-checks.md`). A smaller
+   release than the `monk check` command first planned. Most of
+   what that command would check already fails loudly (Postgres, pending
+   migrations, Redis), is set once per environment rather than per
+   deploy, or can't be seen from inside the app (TLS, Caddy's `/ws`
+   route: the curl checks in `docs/guides/deploy-hetzner.md` stay the
+   way to test those). What's left:
+   - **Values that are present but wrong, refused at boot in
+     production.** Done (`docs/guides/settings.md`): a placeholder or
+     short `AUTH_SECRET`, `PUBLIC_URL` that isn't an `https://` origin,
+     `LIVE_WS_URL` not on `wss://`, an `allowed_origins` entry that isn't
+     an origin. `PUBLIC_URL` is now always allowed, and
+     `WS_ALLOWED_ORIGINS` lists only the other origins. This extends the
+     checks `Monk::Settings` already makes for `MONK_ENV` and
+     `LOG_LEVEL`: no new command, and it runs on every boot, before any
+     traffic.
+   - **Checking SMTP login without sending.** Login is by magic link,
+     so broken SMTP means nobody can log in, and nothing shows it until
+     someone tries. Done: `Monk::Mail.check` (`docs/guides/mail.md`),
+     and a step in the deploy guide.
+   - **A read-only check of the bucket's CORS rule** for `PUBLIC_URL`,
+     run once when the bucket is set up (`bin/storage_check` applies and
+     removes rules, so it needs a test bucket). Done:
+     `Monk::Storage.check`, which also checks the lifecycle rule.
+   - **A review of the code and the test suite.** Done
+     (`docs/history/plan-code-review.md`). Two goals: fewer lines
+     (duplication, code no longer needed, simpler ways to do the same
+     thing) and best practice (Ruby idioms, error handling, Ractor
+     safety). For the tests, the same two goals, plus a coverage check:
+     measure it, and fill the gaps that matter, not chase a percentage.
+   - **A review of all the docs for clarity.** Done
+     (`docs/history/plan-docs-review.md`). README, guides, ADRs,
+     SETUP.md and the scaffold's templates: easy to follow for someone
+     new to Monk, consistent with each other and with the code as it is
+     now, and without outdated references.
+   - **Ruby 4.1 fixes, ahead of its release.** Done:
+     `Monk::Base.freeze!` and the pool work on 4.1.0-preview1, and the
+     pool no longer hangs when stopped while a worker is still
+     connecting, a hang 4.0 has too.
+   - Other enhancements found along the way.
 
-   It isn't a load balancer's health check: it's heavier and runs once per
-   deploy. A test email is opt-in (`--send-test-mail=addr`). It builds on the
-   check command each `monk add` generator declares for its service
-   (`docs/history/plan-scaffold.md` decision 29). Storage shipped first
-   (0.23), so this release adds its check too: bucket access, and CORS
-   allowing `PUBLIC_URL` (the checks `bin/storage_check` runs by hand
-   today).
+   Left out until a real need shows up: a local "doctor" (the `bin/`
+   scripts and Bundler already say what's wrong), `--json` output for
+   agents, redacted bug-report output, and a `LISTEN` check through
+   PgBouncer (Monk's deploy stack has none).
+
+7. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+   recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
+   4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
+   and the upgrade guide.
+
+## Open checks
+
+Steps left from releases that shipped, run by hand on a real device or
+on the benchmark's VM rather than in code. Their plans are in
+`docs/history/`.
+
+- **0.24: Live on real phones** (`docs/history/plan-live-networks-presence.md`,
+  "A0 still open"). On a deployed app, behind TLS and its proxy, with
+  the server log at hand:
+  - iPhone with the current client: screen locked, and switched to
+    another app, for 1 and 5 minutes, then back.
+  - Airplane mode for 30 s, then back.
+  - Screen locked for 15 minutes.
+  - Why Android DuckDuckGo's socket closed cleanly after 441 s.
+- **0.22.1: the WebSocket server's connect ceiling**
+  (`docs/history/plan-ws-connect-ceiling.md`):
+  - The VM run: the benchmark's S6 at a sweep of connect rates, 25K
+    sockets held, on its 8-core VM.
+  - The plan's item 10, on each Ruby 4.1 preview and on the release (with
+    release 7 above): held 0 / 5K / 15K sockets, `--server-cpus` 0 / 0-1
+    / 0-3, and a churn step, recording global GCs and RSS. If Ruby's
+    #22454 and #22455 are fixed in 4.1, the WebSocket process recommends
+    4.1 and the plan's items 6 and 9 are dropped; if not, item 6 for
+    4.0, then 9 only if one process at 25K held is still too slow.
+  - Broadcast latency at 25K sockets (the benchmark's S7 with more
+    sockets): the same GC pauses likely slow it.
+  - `docs/guides/persistence.md`'s "about 1,350 a second", restated for
+    a burst into an empty server, not one already holding thousands.
 
 ## To evaluate
 
@@ -144,7 +191,11 @@ before they become features.
   app but doesn't upgrade one written by an earlier version, so moving an app
   to 0.21's layout means bringing each part over by hand. Options range from
   upgrade notes per release in the `CHANGELOG` to a `monk upgrade` command.
-  `monk check`'s "after upgrading Monk" signal covers part of it.
+  `bin/migrate status` already shows a module's new migrations.
+- **`DATABASE_URL` in the scaffold.** `config/persistence.rb` reads five
+  `DB_*` vars, but some hosts hand over a `DATABASE_URL` instead (Fly's
+  `fly postgres attach`). Reading it too, with `URI.parse`, would be a
+  small change.
 
 ## Other work
 

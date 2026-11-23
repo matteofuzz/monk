@@ -42,7 +42,9 @@ class PersistenceBootTest < Minitest::Test
     model.db_name = :a_db_nobody_registered
     model.table_name = "widgets"
 
-    Monk::Persistence::Model.freeze_all! # must not raise Monk::UnknownPersistenceError
+    Monk::Persistence::Model.freeze_all! # no Monk::UnknownPersistenceError
+
+    assert Ractor.shareable?(model.db_name)
   end
 
   def test_freeze_all_is_idempotent_across_repeated_calls

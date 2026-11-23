@@ -26,6 +26,11 @@ module Monk
     class RequestError < StandardError
     end
 
+    # Monk::Storage.check: a bucket the keys reach, but without the CORS
+    # or lifecycle rule browsers' uploads need.
+    class CheckError < StandardError
+    end
+
     # Bytes that must never be served as uploaded (SVG, which can carry
     # scripts).
     class UnsafeContentError < StandardError

@@ -35,7 +35,10 @@ module Monk
 
         counts = @counts.update do |current|
           count, window_start = current[frozen_key] || [0, now]
-          count, window_start = 0, now if now - window_start >= window
+          if now - window_start >= window
+            count = 0
+            window_start = now
+          end
           current.merge(frozen_key => [count + 1, window_start])
         end
 

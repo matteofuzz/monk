@@ -15,8 +15,8 @@ Monk::Settings.configure do
   # should open), instead of request headers like X-Forwarded-Proto/Host,
   # which any direct client can spoof. Declared here, not in config/auth.rb
   # or config/live.rb, since both read it: auth.md's "Sending the magic
-  # link" and live.md's `live_ws_url`. Set to your real https:// origin
-  # outside development.
+  # link" and live.md's `live_ws_url`. Outside development and test, boot
+  # refuses it unless it's your real https:// origin (no trailing slash).
   optional :public_url, default: "http://localhost:9292"
 end
 

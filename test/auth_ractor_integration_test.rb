@@ -4,12 +4,12 @@ require "monk/auth"
 
 class AuthRactorIntegrationTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_ractor_integration_db
 
   def setup
-    Monk::Persistence::Pg.reset!
+    super
     setup_auth_tables(DB_NAME)
 
     # Real end-to-end boot, exactly as a real app would: this is what
@@ -19,14 +19,6 @@ class AuthRactorIntegrationTest < Minitest::Test
     # persistence_ractor_integration_test.rb's identical setup.
     app = Class.new(Monk::Base) { get("/x") { "hi" } }
     app.freeze!
-  end
-
-  def teardown
-    if postgres_available?
-      Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
   end
 
   def test_n_real_ractors_redeeming_the_same_login_token_concurrently_exactly_one_wins

@@ -29,7 +29,7 @@ class ResourcesTest < Minitest::Test
     { %w[GET /widgets] => "index:", %w[GET /widgets/new] => "new:",
       %w[POST /widgets] => "create:", %w[GET /widgets/1] => "show:1",
       %w[GET /widgets/1/edit] => "edit:1", %w[PATCH /widgets/1] => "update:1",
-      %w[PUT /widgets/1] => "update:1", %w[DELETE /widgets/1] => "destroy:1" }.each do |(verb, path), expected|
+      %w[PUT /widgets/1] => "update:1", %w[DELETE /widgets/1] => "destroy:1", }.each do |(verb, path), expected|
       _status, _headers, body = app.call(env_for(verb, path))
       assert_equal expected, body.join
     end

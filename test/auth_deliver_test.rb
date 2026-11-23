@@ -3,19 +3,13 @@ require "monk/auth"
 
 class AuthDeliverTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_deliver_test_db
 
   def setup
-    Monk::Persistence::Pg.reset!
+    super
     setup_auth_tables(DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
   end
 
   def test_deliver_link_calls_the_configured_deliver_with_email_link_and_token
