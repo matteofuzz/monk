@@ -148,11 +148,11 @@ class StorageS3IntegrationTest < Minitest::Test
   private
 
   def remove_rules
-    bucket_request(backend, "DELETE", "/", query: { "cors" => "" })
-    bucket_request(backend, "DELETE", "/", query: { "lifecycle" => "" })
+    bucket_request(backend, "DELETE", query: { "cors" => "" })
+    bucket_request(backend, "DELETE", query: { "lifecycle" => "" })
   end
 
   def backend_keys
-    bucket_request(backend, "GET", "/", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>}).flatten
+    bucket_request(backend, "GET", query: { "list-type" => "2" }).body.scan(%r{<Key>([^<]*)</Key>}).flatten
   end
 end

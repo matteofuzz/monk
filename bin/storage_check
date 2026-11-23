@@ -123,20 +123,16 @@ class StorageCheck
       "Access-Control-Request-Headers" => "content-type",)
   end
 
-  # A request on the bucket's ?cors or ?lifecycle, signed with SigV4.
-  # PutBucketCors and PutBucketLifecycle need Content-MD5.
+  # A request on the bucket's ?cors or ?lifecycle, signed by the backend's
+  # own private #request. PutBucketCors and PutBucketLifecycle need
+  # Content-MD5.
   def bucket(method, subresource, body = nil)
-    path = @backend.path_style ? "/#{@backend.bucket}/" : "/"
-    payload = body.to_s
-    headers = { "host" => host, "x-amz-content-sha256" => Digest::SHA256.hexdigest(payload) }
+    headers = {}
     if body
-      headers.merge!("content-md5" => Base64.strict_encode64(Digest::MD5.digest(payload)),
-        "content-type" => "application/xml",)
+      headers["content-md5"] = Base64.strict_encode64(Digest::MD5.digest(body))
+      headers["content-type"] = "application/xml"
     end
-    headers.merge!(Monk::Storage::SigV4.sign_headers(method: method, path: path, query: { subresource => "" },
-      headers: headers, payload_hash: headers["x-amz-content-sha256"], credentials: credentials,
-      now: Time.now.to_i,))
-    send_request(method, URI("#{scheme}://#{host}#{path}?#{subresource}="), headers.except("host"), body)
+    @backend.send(:request, method, "", body: body, headers: headers, query: { subresource => "" })
   end
 
   def send_request(method, uri, headers, body = nil)
@@ -162,7 +158,6 @@ class StorageCheck
   end
 
   def heading(text) = puts("\n#{text}")
-  def credentials = { access_key: @backend.access_key, secret_key: @backend.secret_key, region: @backend.region }
   def scheme = @backend.tls ? "https" : "http"
   def host = @backend.path_style ? @backend.endpoint : "#{@backend.bucket}.#{@backend.endpoint}"
   def base_url = "#{scheme}://#{host}"

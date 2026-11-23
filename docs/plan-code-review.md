@@ -245,6 +245,9 @@ sign a bucket request with SigV4.
 - Change: the two outside `lib/` could share one helper, or call the
   backend's, if it stops being private.
 - Saves: about 30 lines. Low value: `bin/storage_check` is a dev tool.
+- **Done 2026-11-23:** both call the backend's private `request` (with
+  `send`, so `lib/` gets no new public method). `bin/storage_check` prints
+  the same on floci before and after. 15 lines fewer.
 
 **T7. 64 fixed `sleep`s in tests, most short.** The longest:
 - one of 4 s, one of 2, four of 1.5, one of 1.2, two of 1;
