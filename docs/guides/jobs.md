@@ -23,7 +23,7 @@ end
 ```
 
 ```ruby
-# a route, in app/app.rb
+# a route, in app/routes/orders.rb
 post("/orders") do
   id = Order.create(email: params[:email])[:id]
   SendReceipt.enqueue(id)
@@ -159,18 +159,18 @@ process does, so a job sees every config and all of `app/` (models,
 mailers, other jobs), and never boots the app itself. Then it runs until
 `TERM` or Ctrl-C:
 
-- **Worker Ractors** (`JOBS_WORKERS`, default 5) each take a job, run it,
-  and take the next. Each has its own database connection.
-- **Queues** (`JOBS_QUEUES`, comma-separated, default `default`) are
-  served in the order given: a worker only takes from a later queue when
+- **Worker Ractors** (`JOBS_WORKERS`: 2 in the `.env` `monk add jobs`
+  writes, 5 if unset) each take a job, run it, and take the next. Each has
+  its own database connection.
+- **Queues** (`JOBS_QUEUES`, comma-separated, `mailers,push,default` if
+  unset) are served in the order given: a worker only takes from a later queue when
   the earlier ones have nothing ready. Within a queue, a lower `priority`
   goes first, then whichever job has been due longest.
 - **A supervisor** in the main Ractor makes scheduled jobs that have come
   due claimable, enqueues recurring jobs that are due (see
   [Recurring jobs](#recurring-jobs)), and restarts any worker that died,
-  once a second. Every
-  15 seconds it also records that this process is alive, and releases the
-  jobs of any process that has gone quiet.
+  once a second. Every 15 seconds it also records that this process is
+  alive, and releases the jobs of any process that has gone quiet.
 
 On `TERM` each worker finishes the job in hand, for up to 25 seconds, then
 the process exits. Any job still running after that is put back for
@@ -353,7 +353,7 @@ In tests, jobs run right in the test, on the app's test database. No job
 process is needed:
 
 ```ruby
-# test/test_helper.rb (as monk new's SETUP.md writes it)
+# test/test_helper.rb (as monk new writes it)
 require_relative "../config/load" # config/jobs.rb, then app/jobs/
 ```
 
@@ -464,10 +464,9 @@ cleanup everywhere.
 
 ## What's not here
 
-Deliberately left out of the first version
-([`../history/plan-jobs.md`](../history/plan-jobs.md)): unique jobs, limits on how many of a kind run at once, pausing a
-queue, batches, keeping finished jobs, a dashboard, a Redis backend, and
-more than one job at a time per worker. Finished jobs are deleted; failed
-ones stay until retried or discarded. Recurring jobs came in 0.22,
-without time zones, every missed occurrence, or schedules edited at
-runtime ([`../history/plan-scheduled-jobs.md`](../history/plan-scheduled-jobs.md)).
+Deliberately left out: unique jobs, limits on how many of a kind run at
+once, pausing a queue, batches, keeping finished jobs, a dashboard, a
+Redis backend, and more than one job at a time per worker. Finished jobs
+are deleted; failed ones stay until retried or discarded. Recurring jobs
+have no time zones, don't run every missed occurrence, and can't be
+edited at runtime.

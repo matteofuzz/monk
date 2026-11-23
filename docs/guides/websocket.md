@@ -3,7 +3,8 @@
 A hand-rolled RFC 6455 server, opt-in (`require "monk/websocket"`),
 running as its **own process on its own port** — Kino has no hijack
 support, so this never shares a process with your HTTP app
-([`design/websocket.md`](../design/websocket.md)). Each connection gets its own dedicated Ractor:
+([`design/websocket.md`](../design/websocket.md)). Each connection gets
+its own dedicated Ractor:
 
 ```ruby
 require "monk/websocket"
@@ -32,53 +33,44 @@ server = Monk::WebSocket::Server.new(
 server.run(&Chat::HANDLER)
 ```
 
-`authenticate: true` reuses `Monk::Auth` unmodified — the same
-`Authorization: Bearer` header or `session_token` cookie the HTTP side
-accepts, verified before the `101` response is sent; a missing or invalid
-credential gets a `401`. `allowed_origins:` guards the cookie path
-specifically against Cross-Site WebSocket Hijacking (a Bearer connection
-has no `Origin` header to forge). `ping_interval:` (seconds, off by
-default) sends a server-initiated ping on that cadence — a spec-compliant
-client answers it with a pong automatically, no app code involved either
-side, which is what actually defeats an idle reverse-proxy timeout: a
-connection that only ever answers a client's own pings stays vulnerable
-whenever the client is a browser, since browser JavaScript has no API to
-send WS pings at all. It also closes a connection that has sent nothing,
-not even a pong, for two intervals: a peer that vanished without closing
-(a phone that changed network, a laptop that went to sleep) would
-otherwise hold its socket, and everything subscribed through it, until
-the kernel gave up, about 15 minutes on Linux with a ping pending and
-never without one. Any frame from the client counts, so a client that
-answers pings is never closed. It must be at least 5 s
-(`Server::MIN_PING_INTERVAL`): reads stall during a GC pause, and a
-timeout near that would close healthy sockets in bulk. The scaffolded
-`bin/websocket_server` uses 25 s, under nginx's 60 s idle timeout and
-Cloudflare's 100 s, so a vanished peer is closed after 50 s.
-`reverify_interval:` (seconds, off by default,
-requires `authenticate: true` or `:optional`) re-runs `Monk::Auth.verify` against the
-same credential on that cadence and closes the socket the moment it comes
-back nil — without it, a session revoked or expired after the handshake
-leaves the connection live indefinitely, since `authenticate: true` only
-checks the credential once, at connect time. `max_payload_size:` (bytes,
-1 MiB by default, **on** by default unlike the other two) rejects a frame
-whose declared length exceeds it before ever reading that many bytes off
-the wire, and applies the same cap to a fragmented message's reassembled
-total — a public endpoint shouldn't trust a claimed length, or let many
-small frames add up past it. `max_handshakes:` (128 by default, also
-always on) caps the connections still in their handshake, the HTTP
-upgrade and the session check: at the cap the server stops accepting
-until one finishes, and new connects wait in the kernel's listen
-backlog, so a burst past what the process can verify (every page
-reconnecting after a restart) queues instead of timing out all at once.
-A slot can't be held forever: a handshake not over within
-`handshake_timeout:` (10 s by default, the session check included) is
-dropped, and a request head past 16 KiB gets a `431`.
-`reuse_port: true` lets several processes listen on the same port
-([Several processes](#several-processes)).
-A reverse proxy in front routes `/ws` to
-this process and everything else to Kino, on the **same host** — see
-[`deploying.md`](deploying.md) for a worked Caddy/nginx example. Full design and
-phase-by-phase build: [`design/websocket.md`](../design/websocket.md) / `docs/history/plan-websocket.md`.
+| Option | Default | What it does |
+|---|---|---|
+| `authenticate:` | `false` | `true` checks the same `Authorization: Bearer` header or `session_token` cookie as the HTTP side, with `Monk::Auth`, before the `101`; a missing or invalid one gets a `401`. `:optional` lets visitors in anonymously. The three modes are below. |
+| `allowed_origins:` | none: no check | The `Origin`s a browser socket may come from, against Cross-Site WebSocket Hijacking (a Bearer connection has no `Origin` to forge). The scaffold allows `PUBLIC_URL` and `WS_ALLOWED_ORIGINS`. |
+| `ping_interval:` | off | Seconds between server pings, and closes a connection silent for two intervals. At least 5. |
+| `reverify_interval:` | off | Seconds between new checks of the session; the socket is closed once it's revoked or expired. Needs `authenticate:`. |
+| `max_payload_size:` | 1 MiB | The largest frame, and the largest message once its fragments are put together; checked before the bytes are read. |
+| `max_handshakes:` | 128 | Connections in their handshake at once (the upgrade and the session check). At the cap the server stops accepting, and connects wait in the kernel's backlog. |
+| `handshake_timeout:` | 10 s | A handshake not over by then, the session check included, is dropped. A request head past 16 KiB gets a `431`. |
+| `reuse_port:` | `false` | Several processes on one port ([Several processes](#several-processes)). |
+| `db_pool:` | none | Checks sessions through a pool (below). |
+
+**Why the server pings.** A browser can't send WebSocket pings, so
+without them a quiet page is cut by the proxy's idle timeout (nginx's
+60 s, Cloudflare's 100 s); any client answers a ping with a pong, with no
+code on either side. The same pings find a peer that vanished without
+closing (a phone that changed network, a laptop that went to sleep):
+nothing from it, not even a pong, for two intervals, and it's closed.
+Without pings the kernel holds such a socket, and everything subscribed
+through it, for about 15 minutes on Linux, or forever. Any frame from the
+client counts, so a client that answers is never closed. The minimum of
+5 s (`Server::MIN_PING_INTERVAL`) is because reads stall during a GC
+pause, and a timeout near that would close healthy sockets in bulk. The
+scaffolded `bin/websocket_server` uses 25 s: a vanished peer is closed
+after 50 s.
+
+**Why `reverify_interval:`.** `authenticate:` checks the session once, at
+connect time; without a recheck, a session revoked or expired later
+leaves its socket open.
+
+**Why `max_handshakes:`.** After a restart every page reconnects at once;
+with the cap, a burst past what the process can check queues instead of
+timing out all together.
+
+A reverse proxy in front routes `/ws` to this process and everything else
+to the HTTP app, on the **same host**: `monk add deploy` writes that
+Caddyfile, and [`deploying.md`](deploying.md) has it for other setups.
+The design is in [`design/websocket.md`](../design/websocket.md).
 
 `db_pool:` (a pool name) checks sessions through that
 [`Monk::Persistence::Pg` pool](persistence.md#pools) instead of in each

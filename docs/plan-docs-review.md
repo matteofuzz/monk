@@ -275,3 +275,71 @@ title (no `##`); the intro ends on `docs/history/plan-auth.md`'s
 `docs/development.md`'s services table, so nothing moved there.
 `bin/setup_db` migrates but doesn't create the database; migrations.md
 says so.
+
+## Round 4: real time
+
+Read: jobs, websocket, live, presence. Checked against the code and the
+templates: `bin/jobs`'s and the runtime's defaults, the test helper,
+`bin/websocket_server`, `config/websocket.rb`, `config.ru`'s reactor,
+`Live.listen!`. presence.md matches; jobs.md has small slips; the
+findings are mostly in live.md and websocket.md.
+
+**T1. live.md reads as if the transport were Redis.** The diagram says
+`--- Redis --->`; "Running it" says "Both processes must be up, plus
+Redis" and "If Redis is down, `Monk::Live.patch` raises
+(`Redis::CannotConnectError`)". With the Postgres transport (the pool) a
+failed publish is logged, not raised, as the same guide says further
+down.
+- Change: "the transport" in the diagram and "Running it", with what a
+  publish does when it's down for each.
+
+**T2. live.md, "Without Redis": "horizontal scaling (that's still a
+separate, unbuilt feature; see
+`docs/design/ws-horizontal-scaling-considerations.md`)"**. Several
+WebSocket processes are built since 0.22.1 (`WS_PROCESSES`, the
+transport between them: websocket.md, "Several processes").
+- Change: drop the aside; the transport is needed because there are
+  always two processes, and it's also what carries a broadcast between
+  several WebSocket processes.
+
+**T3. live.md, "Publishing": "Both processes build the fanout from the
+same `config/live.rb`"**: the fanout is built in `config/websocket.rb`;
+`config/live.rb` only configures Live on it. The example's
+`Monk::Live.listen!` works, but the scaffold calls
+`AppWebSocket::REGISTRY.listen!`.
+- Change: "from `config/websocket.rb`", and the scaffold's call.
+
+**T4. live.md's pointers to history and to "the monk gem's own repo"**:
+`docs/history/reactive-partials.md`, `plan-live.md`,
+`plan-live-pg-fanout.md` in the intro and in "Without Redis"; and a note
+for apps that copied the client into `public/js/monk_live/` before it
+was served from the gem.
+- Change: the intro keeps the ADRs (0007–0011) and the design doc
+  `live-pg-fanout.md`; the plans and the old-copy note go.
+
+**T5. live.md, "Who may subscribe", says twice that a rule block must be
+Ractor-shareable** (the paragraph after the code, and a bullet).
+- Change: keep the paragraph, drop the bullet.
+
+**T6. websocket.md's options are one paragraph of about 650 words**
+(lines 35–81): `authenticate:`, `allowed_origins:`, `ping_interval:`,
+`reverify_interval:`, `max_payload_size:`, `max_handshakes:`,
+`handshake_timeout:`, `reuse_port:`, then the proxy, then history.
+- Change: a table (option, default, what it does), with the longer
+  reasons (why pings, why a minimum of 5 s) as short paragraphs under
+  it. The `docs/history/plan-websocket.md` pointer goes; "the proxy" points
+  to `monk add deploy` and `deploying.md`.
+
+**T7. jobs.md, small:**
+- "`JOBS_QUEUES` ... default `default`": the scaffolded `bin/jobs`
+  defaults to `mailers,push,default` (and `monk add jobs` sets
+  `JOBS_WORKERS=2` in `.env`).
+- "`# a route, in app/app.rb`": routes go in `app/routes/`.
+- "`# test/test_helper.rb (as monk new's SETUP.md writes it)`": `monk
+  new` writes the test helper itself.
+- "What's not here" points to two plans in `docs/history/`; the list
+  stands without them.
+
+**Round 4 done:** T1–T7 applied. In websocket.md's table, `allowed_origins:`
+unset means no `Origin` check at all (`Server#authenticate!`), so the
+Default column says so.
