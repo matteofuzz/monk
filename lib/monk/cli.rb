@@ -9,14 +9,9 @@ module Monk
   # 1 usage error, 2 a missing choice, 3 a conflict on a wiring file
   # (decision 28). It never prompts without a terminal (decision 23).
   class CLI
-    Error = Class.new(StandardError) do
-      attr_reader :suggestion
-
-      def initialize(message, suggestion: nil)
-        @suggestion = suggestion
-        super(message)
-      end
-    end
+    # A usage error, with the command to type instead: the same class as
+    # monk add's own, so both answer the same way.
+    Error = Generator::Run::UsageError
 
     # `monk new`'s flags before docs/adr/0017, in the order --with lists
     # them. Each is a usage error now, showing the command to type instead.
