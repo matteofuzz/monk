@@ -276,7 +276,8 @@ sign a bucket request with SigV4.
 - **Done 2026-11-23 (18 found, by running the suite with a probe):**
   seven that passed if nothing raised now assert on the result. Ten wait
   in a helper that fails on timeout: left. One can't fail at all
-  (`websocket_heartbeat_test` "does not outlive the socket"): open.
+  (`websocket_heartbeat_test` "does not outlive the socket"): deleted;
+  the connection's Ractor ends its threads with it.
 
 **T9. The JS has no coverage figure.** Its pure logic is tested by Node
 (`protocol.js`, push state, the service worker's click), and the rest by

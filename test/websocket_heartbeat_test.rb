@@ -199,21 +199,6 @@ class WebSocketHeartbeatTest < Minitest::Test
     client&.close
   end
 
-  def test_the_heartbeat_thread_does_not_outlive_the_socket
-    server = start_server(ping_interval: 0.02, &WAIT_FOR_DISCONNECT)
-
-    socket = TCPSocket.new("127.0.0.1", server.port)
-    handshake!(socket)
-    read_raw_frame(socket) # at least one ping, to prove the thread actually started
-    socket.close
-
-    # A background heartbeat thread still writing to an already-closed
-    # socket would surface as a Thread.report_on_exception warning on
-    # $stderr, or (worse) a raised IOError -- give it a few cadences to
-    # prove it quietly stops instead.
-    sleep 0.1
-  end
-
   private
 
   # The next frame, or nil once the server has closed the socket.
