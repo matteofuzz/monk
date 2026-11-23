@@ -343,3 +343,27 @@ Ractor-shareable** (the paragraph after the code, and a bullet).
 **Round 4 done:** T1–T7 applied. In websocket.md's table, `allowed_origins:`
 unset means no `Origin` check at all (`Server#authenticate!`), so the
 Default column says so.
+
+## Round 5: files and devices
+
+Read: storage, pwa, push. Checked against the code and the templates:
+the key rules, the API table, `Sniff`, `Storage.check`, the file
+backend's paths, `monk push keys`, `push.js` served from the gem, the
+recurring sweeps. All three match the code and are written for a newcomer
+already (they're the most recent); only small things.
+
+**F1. push.md's list of what `monk add push` writes ends with "in
+`config/recurring.rb` (jobs), `Monk::Push::Sweep` every night"**: push
+writes nothing there; jobs' `config/recurring.rb` already has the line,
+guarded by `defined?(Monk::Push::Sweep)`, as for auth's sweep.
+- Change: say that, after the list.
+
+**F2. ADRs as code paths, not links**, in storage.md
+(`docs/adr/0018-…`) and mail.md (`docs/adr/0012-…`), where jobs.md and
+auth.md link theirs.
+- Change: links.
+
+**F3. Small:** storage.md line 243, one unwrapped line (the `415`).
+
+**Round 5 done:** F1–F3 applied; the two opening paragraphs with the new
+ADR links rewrapped.

@@ -1,10 +1,10 @@
 # Sending email — `Monk::Mail`
 
-Text and/or HTML email over SMTP, opt-in (`require "monk"` never loads
-it). Monk builds the MIME itself and sends from inside whichever worker
-Ractor serves the request: the `mail` gem, and so Action Mailer, raises
-`Ractor::IsolationError` there, which is why Monk ships its own
-(`docs/adr/0012-minimal-built-in-mailer.md`). Deliberately small: no
+Text and/or HTML email over SMTP, opt-in (`require "monk"` never loads it).
+Monk builds the MIME itself and sends from inside whichever worker Ractor
+serves the request: the `mail` gem, and so Action Mailer, raises
+`Ractor::IsolationError` there, which is why Monk ships its own ([ADR
+0012](../adr/0012-minimal-built-in-mailer.md)). Deliberately small: no
 attachments, no inline images, no BCC lists, no bulk sending.
 
 ```ruby

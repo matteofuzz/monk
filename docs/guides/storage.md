@@ -1,13 +1,13 @@
 # Storing files — `Monk::Storage`
 
-The files users send (photos, voice notes, documents), stored by key in
-any S3-compatible bucket, and on the local disk in development and test.
-Opt-in: `require "monk"` never loads it. Uploads go from the browser
-straight to the bucket through a signed link, and downloads redirect to
-one, so the bytes never pass through a worker Ractor
-(`docs/adr/0018-storage-s3-compatible-direct-upload.md`). Deliberately
-small: Monk stores bytes and the app keeps the records. No attachments
-table, no image processing, no multipart uploads to S3.
+The files users send (photos, voice notes, documents), stored by key in any
+S3-compatible bucket, and on the local disk in development and test. Opt-in:
+`require "monk"` never loads it. Uploads go from the browser straight to the
+bucket through a signed link, and downloads redirect to one, so the bytes
+never pass through a worker Ractor ([ADR
+0018](../adr/0018-storage-s3-compatible-direct-upload.md)). Deliberately
+small: Monk stores bytes and the app keeps the records. No attachments table,
+no image processing, no multipart uploads to S3.
 
 ```ruby
 # config/storage.rb -- `monk add storage` writes this (as Settings) for you
@@ -240,8 +240,8 @@ async function upload(file) {
 A PUT to a bucket on another origin needs the bucket's CORS rule. In
 development the link is a path on the app itself (the file backend), so
 no CORS is involved. There's no upload form without JavaScript: Monk
-doesn't parse `multipart/form-data` (it answers `415`), because Rack's parser can't run in a
-worker Ractor.
+doesn't parse `multipart/form-data` (it answers `415`), because Rack's
+parser can't run in a worker Ractor.
 
 ## Downloads
 
