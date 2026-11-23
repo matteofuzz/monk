@@ -45,24 +45,20 @@ module Monk
         # Monk::Mail::DeliveryError (the original is its #cause), so a
         # caller rescues one class whatever went wrong.
         def deliver(message)
-          session(MIME.domain(message.envelope_from)) do |smtp|
+          session("delivery", MIME.domain(message.envelope_from)) do |smtp|
             smtp.send_message(message.to_mime, message.envelope_from, *message.envelope_to)
           end
           message
-        rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
-          raise DeliveryError, "SMTP delivery via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
         end
 
         # What #deliver does up to the message: connect, TLS, log in. Then
         # it quits, so nothing is sent. Returns what it did, for a person.
         def check(helo: "localhost")
-          session(helo) { nil }
+          session("check", helo) { nil }
           encryption = if tls then "TLS"
                        else { always: "STARTTLS", auto: "STARTTLS if offered", never: "no TLS" }.fetch(starttls)
                        end
           "#{redacted_url}: connected (#{encryption}), #{user ? "logged in as #{user}" : "no login"}. Nothing was sent."
-        rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
-          raise DeliveryError, "SMTP check via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
         end
 
         # Never print the password -- a transport ends up in logs and
@@ -74,11 +70,13 @@ module Monk
 
         def redacted_url = "#{tls ? "smtps" : "smtp"}://#{"#{user}:***@" if user}#{host}:#{port}"
 
-        def session(helo, &)
+        def session(what, helo, &)
           smtp = Net::SMTP.new(host, port, tls: tls, starttls: starttls == :never ? false : starttls)
           smtp.open_timeout = open_timeout
           smtp.read_timeout = read_timeout
           smtp.start(helo: helo, user: user, secret: password, &)
+        rescue Net::SMTPError, IOError, SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e
+          raise DeliveryError, "SMTP #{what} via #{host}:#{port} failed: #{e.class}: #{e.message.strip}"
         end
       end
 
