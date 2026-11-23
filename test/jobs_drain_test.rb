@@ -36,24 +36,13 @@ end
 
 class JobsDrainTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_drain_test_db
 
   def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
     JobsDrainJobs::SEEN.clear
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
+    super
   end
 
   # --- drain! ---

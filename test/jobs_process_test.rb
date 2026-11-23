@@ -9,35 +9,28 @@ require_relative "support/jobs_process_jobs"
 # stopped the two ways production stops one -- TERM, and kill -9.
 class JobsProcessTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = JobsProcessJobs::DB
   SCRIPT = File.expand_path("support/jobs_process.rb", __dir__)
 
   def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
     @children = []
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
+    super
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       drop_table_if_exists(conn, "jobs_process_results")
       conn.exec("CREATE TABLE jobs_process_results (value TEXT NOT NULL)")
     end
-    Monk::Jobs.configure(db_name: DB_NAME)
   end
 
   def teardown
     @children.each { |pid| kill(pid, "KILL") }
     if postgres_available?
       Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-        drop_jobs_tables(conn)
         drop_table_if_exists(conn, "jobs_process_results")
       end
     end
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
+    super
   end
 
   def test_a_job_process_runs_jobs_and_stops_cleanly_on_term

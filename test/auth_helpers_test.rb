@@ -6,29 +6,13 @@ require "monk/auth"
 
 class AuthHelpersTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_helpers_test_db
 
   LOG_OUT = proc do |ctx|
     ctx.log_out!
     ctx.json(ok: true)
-  end
-
-  def setup
-    Monk::Persistence::Pg.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-        # never registered: nothing to drop
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
   end
 
   def test_require_user_bang_returns_401_when_the_authorization_header_is_missing

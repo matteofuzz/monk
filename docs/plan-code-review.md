@@ -233,6 +233,10 @@ guard, `setup_jobs_tables`); four auth ones the same for auth tables.
 - Change: a `JobsTestHelpers#setup_jobs_db` (and one for auth) in
   `test_helper.rb`.
 - Saves: about 40 lines. Risk: low.
+- **Done 2026-11-23:** `JobsDatabaseTest` and `AuthDatabaseTest` in
+  `test_helper.rb`, used by 10 jobs and 6 auth classes; one with more to do
+  calls `super`. The auth+jobs and push classes keep their own. 153 lines
+  fewer.
 
 **T6. Signed bucket requests are written three times.** The S3 backend's
 `request` (which takes `query:` since `Storage.check`),

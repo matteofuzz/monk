@@ -5,25 +5,9 @@ require "monk/auth"
 
 class AuthTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-        # never registered: nothing to drop
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
 
   def test_configure_stores_config_and_is_readable_back
     Monk::Auth.configure(db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600)

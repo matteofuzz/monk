@@ -12,25 +12,10 @@ end
 
 class JobsPgFailuresTest < Minitest::Test
   include PersistenceTestHelpers
-  include JobsTestHelpers
+  include JobsDatabaseTest
 
   DB_NAME = :jobs_pg_failures_test_db
   PROCESS_ID = 1
-
-  def setup
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-    skip_unless_postgres_available
-
-    setup_jobs_tables(DB_NAME)
-    Monk::Jobs.configure(db_name: DB_NAME)
-  end
-
-  def teardown
-    Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
-    Monk::Persistence::Pg.reset!
-    Monk::Jobs.reset!
-  end
 
   # --- fail ---
 

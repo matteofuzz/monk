@@ -8,25 +8,9 @@ require "monk/auth"
 # proven in auth_ractor_integration_test.rb.
 class AuthCookieFlowTest < Minitest::Test
   include PersistenceTestHelpers
-  include AuthTestHelpers
+  include AuthDatabaseTest
 
   DB_NAME = :auth_cookie_flow_test_db
-
-  def setup
-    Monk::Persistence::Pg.reset!
-  end
-
-  def teardown
-    if postgres_available?
-      begin
-        Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
-      rescue Monk::UnknownPersistenceError
-        # never registered: nothing to drop
-      end
-    end
-    Monk::Persistence::Pg.reset!
-    Monk::Auth.reset!
-  end
 
   def build_app
     Class.new(Monk::Base) do

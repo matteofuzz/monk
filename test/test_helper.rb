@@ -576,6 +576,27 @@ module AuthTestHelpers
   end
 end
 
+# setup and teardown for a test class on the auth tables, on the class's
+# DB_NAME: each test calls setup_auth_tables when it needs them, and
+# teardown drops them if it did. A class with more to do calls super.
+module AuthDatabaseTest
+  include AuthTestHelpers
+
+  def setup
+    Monk::Persistence::Pg.reset!
+    Monk::Auth.reset!
+  end
+
+  def teardown
+    Monk::Persistence::Pg.checkout(self.class::DB_NAME) { |conn| drop_auth_tables(conn) } if postgres_available?
+  rescue Monk::UnknownPersistenceError
+    nil # this test never registered the database
+  ensure
+    Monk::Persistence::Pg.reset!
+    Monk::Auth.reset!
+  end
+end
+
 # Shared by the Monk::Jobs Postgres tests (jobs_pg_*_test.rb): the real
 # schema from the one canonical migration, applied through Migrator.
 # Include alongside PersistenceTestHelpers.
@@ -610,6 +631,27 @@ module JobsTestHelpers
 
   def count_rows(db_name, table)
     Monk::Persistence::Pg.checkout(db_name) { |conn| conn.exec("SELECT count(*) FROM #{table}").getvalue(0, 0) }
+  end
+end
+
+# setup and teardown for a test class on the jobs tables: Monk::Jobs
+# configured on the class's DB_NAME, freshly migrated; skips without
+# Postgres. A class with more to do calls super.
+module JobsDatabaseTest
+  include JobsTestHelpers
+
+  def setup
+    Monk::Persistence::Pg.reset!
+    Monk::Jobs.reset!
+    skip_unless_postgres_available
+    setup_jobs_tables(self.class::DB_NAME)
+    Monk::Jobs.configure(db_name: self.class::DB_NAME)
+  end
+
+  def teardown
+    Monk::Persistence::Pg.checkout(self.class::DB_NAME) { |conn| drop_jobs_tables(conn) } if postgres_available?
+    Monk::Persistence::Pg.reset!
+    Monk::Jobs.reset!
   end
 end
 
