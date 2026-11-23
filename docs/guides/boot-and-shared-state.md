@@ -11,7 +11,7 @@ get("/hits") { count += 1 }  # raises at boot: routes can't close over mutable s
 
 `.freeze!` (which `Monk.boot` calls) raises `Monk::UnshareableRouteError` naming the offending route, rather than letting it fail silently or crash on the first live request.
 
-# Shared state — `Monk::StateRactor`
+## Shared state — `Monk::StateRactor`
 
 Route blocks can't safely close over ordinary mutable objects — that's what the error above is about. For state that genuinely needs to be shared and mutated across concurrent requests, use `Monk::StateRactor`, which wraps a value inside its own dedicated Ractor and serializes access to it:
 

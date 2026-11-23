@@ -159,3 +159,54 @@ app the heading has nothing under it.
 
 **Round 1 done:** G1–G7 applied. Generator tests: 108 runs, 0
 failures, 0 skips; a generated app's `AGENTS.md` checked with mail added.
+
+## Round 2: core guides
+
+Read: routing, forms, boot and shared state, settings, views, logging.
+Checked against the code: params merging and the splat, `halt`/`json`
+throwing and `render` returning, the default 500, `resources`, the
+error classes, `required`/`optional`, `StateRactor#value`/`#update`, the
+Model calls in forms.md, `MAX_PARSED_BODY`, the flash cookie, the three
+headers, `Log.root`, `kino --check` (Kino 0.7.1). forms.md, settings.md
+and logging.md match the code; the findings are in the other three.
+
+**C1. routing.md: "helpers are called bare via `instance_exec`".** Since
+0.23.1 each route block becomes a method of `Monk::Context`, not an
+`instance_exec`. The one-arg form is described as "useful when you want
+to pass a customized `Context` subclass around", which nothing supports.
+- Change: "`self` is the request's `Context`, so its methods are called
+  bare"; the one-arg form gets the same `Context` as its argument.
+
+**C2. routing.md's `resources` example does what forms.md and AGENTS.md
+forbid:** `Order.create(@context.params)`.
+- Change: `Order.create(Order.from_form(@context.params[:order]))`,
+  with a pointer to forms.md's "From form to row".
+
+**C3. views.md says assets are re-read and unstamped "in development
+(`MONK_ENV != "production"`)", and stamped "in production".** The code
+(`Assets#production?` is `!Monk.env.development?`) and settings.md's
+table say: development only; test, staging and production all build the
+manifest and stamp.
+- Change: "outside development" / "in development", as settings.md has
+  it.
+
+**C4. routing.md's Context list leaves out `flash` and `header(name)`**
+(and `csrf_field`, with auth).
+- Change: add them, `csrf_field` with a pointer to forms.md.
+
+**C5. routing.md's second paragraph repeats forms.md** (params merging,
+`_method`, the cross-site 403) in one dense paragraph.
+- Change: keep the matching rule and the 404; one sentence pointing to
+  forms.md's "Params", "Verbs other than POST" and "Requests from
+  another site".
+
+**C6. Headings: routing.md, boot-and-shared-state.md and views.md each
+have two or three `#` titles** ("Context", "Error handling", "Shared
+state", "Static assets") under the guide's own. Anchors don't change.
+- Change: `##`.
+
+**C7. Small, views.md:** the first paragraph has an unwrapped line;
+"Putting nginx or a CDN in front of Monk" → "a proxy (Caddy, in
+`monk add deploy`'s stack) or a CDN".
+
+**Round 2 done:** C1–C7 applied; links and anchors checked by script.
