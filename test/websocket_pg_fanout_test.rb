@@ -3,6 +3,7 @@ require "timeout"
 require "securerandom"
 require "monk/websocket"
 require "monk/websocket/pg_fanout"
+require_relative "support/fanout_contract"
 require "socket"
 
 # A socket handler that broadcasts, as a chat's does: its Ractor opens a
@@ -16,130 +17,18 @@ module PgFanoutPublisherHandler
   end
 end
 
-# PgFanout wraps a Registry for cross-process fan-out, the Postgres
-# LISTEN/NOTIFY counterpart to RedisFanout (docs/design/live-pg-fanout.md,
-# docs/history/plan-live-pg-fanout.md). It has to be usable the exact way
-# Registry and RedisFanout already are -- held behind a module constant,
-# read from every connection's own Ractor -- with plain delegation for
-# #register/#unregister/#count, #broadcast has to deliver locally and
-# publish via pg_notify while respecting Postgres's own payload cap, and
-# its subscriber Ractor has to actually relay a sibling instance's
-# broadcast while dropping its own echo. It listens only once #listen! is
-# called -- by the one process that holds sockets -- so a publish-only
-# process opens no LISTEN connection at all. Every test skips without a
-# local Postgres.
+# PgFanout: the fan-out over Postgres LISTEN/NOTIFY
+# (docs/design/live-pg-fanout.md). Everything it shares with RedisFanout
+# is in FanoutContract; here, what is Postgres's own: the NOTIFY payload
+# cap, the publisher connection, and publishing through a pool.
 class WebSocketPgFanoutTest < Minitest::Test
   include PersistenceTestHelpers
   include WebSocketTestHelpers
+  include FanoutContract
 
   def teardown
     super # WebSocketTestHelpers: stops the server thread
     Monk::Persistence::Pg.reset!
-  end
-
-  def test_a_fanout_instance_is_frozen_and_ractor_shareable
-    skip_unless_postgres_available
-
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-
-    assert fanout.frozen?
-    assert Ractor.shareable?(fanout), "expected PgFanout to be Ractor-shareable, same as Registry"
-  end
-
-  # The real-world shape this exists for: an app holds PgFanout behind a
-  # module constant, read from inside a connection's own dedicated Ractor
-  # -- which raises Ractor::IsolationError unless the constant's value is
-  # shareable.
-  def test_a_fanout_instance_is_readable_as_a_module_constant_from_a_worker_ractor
-    skip_unless_postgres_available
-
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    holder = Module.new
-    holder.const_set(:REGISTRY, fanout)
-
-    result = Ractor.new(holder) { |h| h::REGISTRY.count(:room1) }.value
-
-    assert_equal 0, result
-  end
-
-  def test_register_unregister_and_count_delegate_to_the_wrapped_registry
-    skip_unless_postgres_available
-
-    registry = Monk::WebSocket::Registry.new
-    fanout = Monk::WebSocket::PgFanout.new(registry, pg_opts: pg_test_opts).listen!
-    port = Ractor::Port.new
-
-    fanout.register(:room1, port)
-    assert_equal 1, fanout.count(:room1)
-
-    fanout.unregister(:room1, port)
-    assert_equal 0, fanout.count(:room1)
-
-    fanout.register_many(%i[room1 room2], port)
-    assert_equal [1, 1], [fanout.count(:room1), fanout.count(:room2)]
-
-    fanout.unregister_many(%i[room1 room2], port)
-    assert_equal [0, 0], [fanout.count(:room1), fanout.count(:room2)]
-  ensure
-    port&.close
-  end
-
-  # A publish-only process (bin/server, bin/jobs) builds the same fanout
-  # from the same config/live.rb, and never needs to hear other processes'
-  # broadcasts -- so constructing one mustn't LISTEN.
-  def test_constructing_opens_no_listen_connection
-    skip_unless_postgres_available
-
-    before = listener_count
-    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-
-    assert_equal before, listener_count
-  end
-
-  # #listen! returns once the LISTEN is in effect, so a broadcast sent right
-  # after it can't be missed -- and calling it again changes nothing.
-  def test_listen_bang_opens_one_listen_connection_and_is_idempotent
-    skip_unless_postgres_available
-
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    before = listener_count
-
-    assert_same fanout, fanout.listen!
-    assert_equal before + 1, listener_count
-
-    fanout.listen!
-    assert_equal before + 1, listener_count
-  end
-
-  # A socket registered on a fanout that isn't listening would never get
-  # another process's broadcasts -- silently. Raising turns a missing
-  # #listen! into an error at the first subscription.
-  def test_register_before_listen_bang_raises
-    skip_unless_postgres_available
-
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    port = Ractor::Port.new
-
-    error = assert_raises(Monk::WebSocket::NotListeningError) { fanout.register(:room1, port) }
-    assert_match(/listen!/, error.message)
-
-    error = assert_raises(Monk::WebSocket::NotListeningError) { fanout.register_many(%i[room1], port) }
-    assert_match(/#register_many before #listen!/, error.message)
-  ensure
-    port&.close
-  end
-
-  # The LISTEN connection is opened by #listen!, in the WS process's boot --
-  # an unreachable Postgres fails it right there, not in a background
-  # Ractor nobody watches.
-  def test_listen_bang_raises_when_postgres_is_unreachable
-    skip_unless_postgres_available
-
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts.merge(port: 1))
-
-    error = assert_raises(Monk::WebSocket::ListenError) { fanout.listen! }
-    assert_match(/PgFanout/, error.message)
-    assert_raises(Monk::WebSocket::NotListeningError) { fanout.register(:room1, Ractor::Port.new) }
   end
 
   def test_constructing_with_a_non_shareable_registry_raises
@@ -186,56 +75,6 @@ class WebSocketPgFanoutTest < Minitest::Test
     assert_raises(Monk::WebSocket::PayloadTooLargeError) do
       fanout.broadcast(key, "#{at_cap}a")
     end
-  end
-
-  def test_broadcast_from_one_instance_reaches_a_connection_registered_on_a_sibling_instance
-    skip_unless_postgres_available
-
-    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    fanout_b = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
-
-    port = Ractor::Port.new
-    fanout_b.register(:room1, port)
-    received = []
-    reader = Thread.new { loop { received << port.receive } }
-
-    fanout_a.broadcast(:room1, "hello from A")
-
-    wait_until { received.any? }
-    assert_equal ["hello from A"], received
-  ensure
-    reader&.kill
-    port&.close
-  end
-
-  # Without the origin tag, A's own subscriber would relay A's own
-  # broadcast back into registry_a a second time -- a connection
-  # registered directly on registry_a would see it twice.
-  def test_a_fanouts_own_broadcast_is_not_delivered_twice_to_its_own_registry
-    skip_unless_postgres_available
-
-    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
-    # A second listening instance on the same Postgres, standing in for a
-    # sibling process, so A's notify really goes out and comes back -- A's
-    # own subscriber is the one that must drop it.
-    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
-
-    port = Ractor::Port.new
-    fanout_a.register(:room1, port)
-    received = []
-    reader = Thread.new { loop { received << port.receive } }
-
-    fanout_a.broadcast(:room1, "only once")
-
-    wait_until { received.any? }
-    # Give a wrongly-undropped echo time to complete its round trip
-    # through Postgres and arrive -- if the origin-tag guard were removed,
-    # it would show up here as a second entry.
-    sleep 0.3
-    assert_equal ["only once"], received
-  ensure
-    reader&.kill
-    port&.close
   end
 
   # plan-pg-reconnect.md, phase 4: the publisher connection (one per
@@ -304,83 +143,6 @@ class WebSocketPgFanoutTest < Minitest::Test
     PgFanoutPublisherHandler.send(:remove_const, :FANOUT) if PgFanoutPublisherHandler.const_defined?(:FANOUT)
   end
 
-  def test_disconnect_publisher_closes_this_ractors_publisher
-    skip_unless_postgres_available
-
-    Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).broadcast(:room1, "x")
-    conn = Ractor.current[:monk_pg_fanout_publisher]
-
-    Monk::WebSocket::PgFanout.disconnect_publisher
-
-    assert conn.finished?
-    assert_nil Ractor.current[:monk_pg_fanout_publisher]
-    Monk::WebSocket::PgFanout.disconnect_publisher # none left: a no-op
-  end
-
-  # plan-pg-reconnect.md, phase 5: the LISTEN connection is dropped. Its
-  # subscriber reconnects and LISTENs again, so a broadcast from another
-  # process sent after that still arrives.
-  def test_the_listener_reconnects_after_its_backend_is_terminated
-    skip_unless_postgres_available
-
-    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    fanout_b, listen_pid = listening_fanout
-    port = Ractor::Port.new
-    fanout_b.register(:room1, port)
-    received = []
-    reader = Thread.new { loop { received << port.receive } }
-
-    terminate_backend(listen_pid)
-    wait_until(timeout: 5) { (listen_pids - [listen_pid]).size > @other_listeners.size }
-    wait_until { received.any? } # the CloseRequest after the reconnect
-    fanout_a.broadcast(:room1, "after the drop")
-
-    wait_until { received.include?("after the drop") }
-  ensure
-    reader&.kill
-    port&.close
-  end
-
-  # Notifies sent while the listener was down are lost, and no client can
-  # tell, so after reconnecting every open socket is asked to close: its
-  # client reconnects and resyncs.
-  def test_after_reconnecting_the_listener_asks_every_open_socket_to_close
-    skip_unless_postgres_available
-
-    fanout, listen_pid = listening_fanout
-    port = Ractor::Port.new
-    fanout.register(:room1, port)
-
-    terminate_backend(listen_pid)
-
-    message = Timeout.timeout(5) { port.receive }
-    assert_equal Monk::WebSocket::CloseRequest.new(code: 1011, reason: "missed broadcasts"), message
-  ensure
-    port&.close
-  end
-
-  def test_a_malformed_notify_is_skipped_and_the_next_one_still_arrives
-    skip_unless_postgres_available
-
-    fanout_a = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts)
-    fanout_b, = listening_fanout
-    port = Ractor::Port.new
-    fanout_b.register(:room1, port)
-    received = []
-    reader = Thread.new { loop { received << port.receive } }
-
-    conn = PG.connect(**pg_test_opts)
-    conn.exec_params("SELECT pg_notify($1, $2)", [Monk::WebSocket::PgFanout::CHANNEL, "not an envelope"])
-    fanout_a.broadcast(:room1, "after the bad one")
-
-    wait_until { received.any? }
-    assert_equal ["after the bad one"], received
-  ensure
-    conn&.close
-    reader&.kill
-    port&.close
-  end
-
   # -- db_pool: (docs/history/plan-pg-pool.md, phase 9) --
   # The publisher through a pool of one worker, instead of one connection
   # per Ractor that publishes.
@@ -388,7 +150,7 @@ class WebSocketPgFanoutTest < Minitest::Test
   def test_a_fanout_with_db_pool_publishes_through_the_pool
     start_notify_pool(size: 1)
     publisher = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
-    listener, = listening_fanout
+    listener = listening_fanout
     port = Ractor::Port.new
     listener.register(:room1, port)
 
@@ -412,7 +174,7 @@ class WebSocketPgFanoutTest < Minitest::Test
   def test_one_senders_broadcasts_arrive_in_order
     start_notify_pool(size: 1)
     publisher = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, db_pool: :notify)
-    listener, = listening_fanout
+    listener = listening_fanout
     port = Ractor::Port.new
     listener.register(:room1, port)
 
@@ -477,25 +239,36 @@ class WebSocketPgFanoutTest < Minitest::Test
     conn&.close
   end
 
-  # Backends whose last statement was this fanout's LISTEN: pg_stat_activity
-  # keeps an idle backend's last query text (test/support/live_ws_process_pg.rb).
-  def listener_count
-    conn = PG.connect(**pg_test_opts)
-    conn.exec_params(
-      "SELECT count(*) FROM pg_stat_activity WHERE query = $1 AND datname = current_database()",
-      ["LISTEN #{Monk::WebSocket::PgFanout::CHANNEL}"],
-    ).getvalue(0, 0).to_i
-  ensure
-    conn&.close
+  def fanout_class = Monk::WebSocket::PgFanout
+  def new_fanout(registry = Monk::WebSocket::Registry.new) = fanout_class.new(registry, pg_opts: pg_test_opts)
+  def skip_unless_transport_available = skip_unless_postgres_available
+  def current_publisher = Ractor.current[:monk_pg_fanout_publisher]
+  def publisher_closed?(conn) = conn.finished?
+  def drop_listener = terminate_backend(@listen_pid)
+
+  def unreachable_fanout
+    skip_unless_postgres_available # for pg_test_opts
+    fanout_class.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts.merge(port: 1))
   end
 
-  # A fanout that has called #listen!, and its LISTEN backend's pid --
-  # told apart from the listeners earlier tests left running in this
-  # process, which are kept in @other_listeners.
+  # Backends whose last statement was this fanout's LISTEN: pg_stat_activity
+  # keeps an idle backend's last query text (test/support/live_ws_process_pg.rb).
+  def subscriber_count = listen_pids.size
+
+  # A listening fanout, and its LISTEN backend's pid for #drop_listener,
+  # told apart from the listeners earlier tests left running.
   def listening_fanout
-    @other_listeners = listen_pids
-    fanout = Monk::WebSocket::PgFanout.new(Monk::WebSocket::Registry.new, pg_opts: pg_test_opts).listen!
-    [fanout, (listen_pids - @other_listeners).first]
+    others = listen_pids
+    fanout = new_fanout.listen!
+    @listen_pid = (listen_pids - others).first
+    fanout
+  end
+
+  def publish_malformed(_key)
+    conn = PG.connect(**pg_test_opts)
+    conn.exec_params("SELECT pg_notify($1, $2)", [fanout_class::CHANNEL, "not an envelope"])
+  ensure
+    conn&.close
   end
 
   def listen_pids

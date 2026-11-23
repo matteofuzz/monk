@@ -1,49 +1,12 @@
-require "rbconfig"
-require "securerandom"
-require "timeout"
-require "monk/websocket"
 require "monk/websocket/redis_fanout"
-require "monk/live"
+require_relative "support/live_multiprocess"
 
-# The publisher (this test process, holding a RedisFanout) and the WebSocket
-# server (a child process, test/support/live_ws_process.rb) share nothing but
-# Redis: the shape of a real deployment, HTTP app in one process and the WS
-# process in another.
+# LiveMultiprocess over Redis: the child is test/support/live_ws_process.rb.
 module LiveMultiprocessHelpers
   include RedisTestHelpers
+  include LiveMultiprocess
 
-  SCRIPT = File.expand_path("support/live_ws_process.rb", __dir__)
-
-  def start_ws_process
-    reader, writer = IO.pipe
-    @ws_pid = Process.spawn({ "REDIS_URL" => redis_test_url }, RbConfig.ruby, SCRIPT, out: writer)
-    writer.close
-    line = Timeout.timeout(30) { reader.gets }
-    raise "WS process did not start" unless line&.start_with?("PORT ")
-
-    @ws_port = line.split.last.to_i
-  ensure
-    reader&.close
-  end
-
-  def stop_ws_process
-    return unless @ws_pid
-
-    Process.kill("TERM", @ws_pid)
-    Process.wait(@ws_pid)
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
-  end
-
-  # A publisher in this process, the way an HTTP app would hold one: it
-  # never calls #listen!, so it publishes without subscribing.
-  def build_publisher
-    @registry = Monk::WebSocket::Registry.new
-    @fanout = Monk::WebSocket::RedisFanout.new(@registry, redis_url: redis_test_url)
-    @publisher = Monk::Live::Publisher.new(@fanout)
-  end
-
-  def unique_topic
-    "t:#{SecureRandom.hex(4)}"
-  end
+  def ws_process_script = File.expand_path("support/live_ws_process.rb", __dir__)
+  def ws_process_env = { "REDIS_URL" => redis_test_url }
+  def new_publishing_fanout(registry) = Monk::WebSocket::RedisFanout.new(registry, redis_url: redis_test_url)
 end

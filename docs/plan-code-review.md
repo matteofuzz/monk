@@ -222,6 +222,10 @@ twice.**
   backends.
 - Saves: maybe 150–250 lines, and a new transport would get every test
   for free. Risk: low.
+- **Done 2026-11-23:** `test/support/fanout_contract.rb` (12 tests) and
+  `live_fanout_contract.rb` (7), on hooks each transport defines;
+  `support/live_multiprocess.rb` starts and stops the WS process for both.
+  Every test now runs on both transports. 333 lines fewer.
 
 **T5. Repeated setup across the jobs and auth tests.** Six jobs test
 classes repeat the same `setup` (`Persistence::Pg.reset!`, register, skip
