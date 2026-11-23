@@ -244,7 +244,7 @@ class LiveSessionTest < Minitest::Test
     assert_equal ["t:1"], next_json(connection)["topics"]
   end
 
-  # The client's heartbeat (docs/plan-live-networks-presence.md, A2):
+  # The client's heartbeat (docs/history/plan-live-networks-presence.md, A2):
   # browser JS can't see WebSocket pings, so it asks in Live's protocol.
   def test_a_ping_gets_a_pong_and_touches_no_subscription
     Monk::Live.authorize("t:*", &ALLOW)

@@ -54,8 +54,8 @@ class WebSocketRegistryTest < Minitest::Test
     port&.close
   end
 
-  # docs/plan-ws-connect-ceiling.md item 5: a Live subscribe's topics in one
-  # ask.
+  # docs/history/plan-ws-connect-ceiling.md item 5: a Live subscribe's topics
+  # in one ask.
   def test_register_many_and_unregister_many_cover_every_key_in_one_ask
     registry = Monk::WebSocket::Registry.new
     port = Ractor::Port.new

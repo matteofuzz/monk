@@ -1,10 +1,11 @@
 require_relative "test_helper"
 require_relative "live_browser_helpers"
 
-# The Live client on real networks (docs/plan-live-networks-presence.md,
-# A2-A3): its heartbeat, and what it does when the page is hidden, shown,
-# offline, online, frozen or restored from the back/forward cache. Real
-# Chrome, with the heartbeat shortened as protocol.js is served.
+# The Live client on real networks
+# (docs/history/plan-live-networks-presence.md, A2-A3): its heartbeat, and
+# what it does when the page is hidden, shown, offline, online, frozen or
+# restored from the back/forward cache. Real Chrome, with the heartbeat
+# shortened as protocol.js is served.
 class LiveClientNetworkBrowserTest < Minitest::Test
   ALLOW = proc { |_subject, _topic| true }
   PAGE = %(<ul data-live-topic="t:1"><li id="contact-1">before</li></ul>).freeze

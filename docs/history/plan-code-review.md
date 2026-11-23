@@ -2,8 +2,8 @@
 
 Reviewed 2026-11-21 on `main_dev/v_0_27` at `13c3e3d`. Roadmap item 6, the
 code and test suite review: fewer lines, best practice, test coverage.
-**Review only: nothing has been changed.** Each finding says what it would
-save and what it costs; each needs a yes or no before any work starts.
+**Done 2026-11-23**: each finding says what it would save and what it
+cost, and its outcome is under it.
 
 ## The numbers
 

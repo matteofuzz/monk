@@ -289,9 +289,9 @@ class WebSocketAuthTest < Minitest::Test
     socket&.close
   end
 
-  # docs/plan-ws-connect-ceiling.md item 3: a verify that raises (here, no
-  # sessions table; in production, the pool full or the database down) is
-  # a 503 and one line on stderr, not a dead Ractor and a backtrace.
+  # docs/history/plan-ws-connect-ceiling.md item 3: a verify that raises
+  # (here, no sessions table; in production, the pool full or the database
+  # down) is a 503 and one line on stderr, not a dead Ractor and a backtrace.
   def test_a_verify_that_raises_gets_a_503_with_retry_after_and_one_log_line
     setup_auth_tables(DB_NAME)
     session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))

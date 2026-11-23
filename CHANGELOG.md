@@ -314,7 +314,7 @@ in `lib/monk/version.rb`.
   were enough. `Monk::WebSocket` now loads `digest/sha1` when it is
   required, and `Monk::Auth` (login tokens) and `Monk::Assets`
   (development ETags) load `digest/sha2` for the same race on
-  `Digest::SHA256` (`docs/plan-digest-preload.md`).
+  `Digest::SHA256` (`docs/history/plan-digest-preload.md`).
 
 ## 0.22.1 - 2026-10-20
 
@@ -339,7 +339,7 @@ in `lib/monk/version.rb`.
   Before, every accepted socket started its handshake at once, and a
   burst past what the process could verify (a restart's reconnect wave)
   filled the `db_pool:` queue and timed most of them out
-  (`docs/plan-ws-connect-ceiling.md`, item 1).
+  (`docs/history/plan-ws-connect-ceiling.md`, item 1).
 - **A WebSocket handshake has a deadline and a size limit.** A handshake
   not over within `handshake_timeout:` (10 s by default) is dropped, and a request head past 16 KiB gets a
   `431`. Before, a socket that connected and sent nothing held its
@@ -805,8 +805,8 @@ in `lib/monk/version.rb`.
 ### Added
 
 - `docs/ai_usage_disclaimer.md`, linked from the README.
-- `docs/deployment-options.md`: analysis of hosting options for Postgres,
-  Redis, and SMTP.
+- `docs/history/deployment-options.md`: analysis of hosting options for
+  Postgres, Redis, and SMTP.
 
 ## 0.15.0 - 2026-09-22
 

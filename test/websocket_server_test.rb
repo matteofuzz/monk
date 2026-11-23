@@ -140,8 +140,8 @@ class WebSocketServerTest < Minitest::Test
     healthy&.close
   end
 
-  # docs/plan-ws-connect-ceiling.md item 1: at max_handshakes:, the accept
-  # loop waits for a handshake to end before it takes the next connect.
+  # docs/history/plan-ws-connect-ceiling.md item 1: at max_handshakes:, the
+  # accept loop waits for a handshake to end before it takes the next connect.
   def test_at_max_handshakes_a_new_connect_waits_for_a_handshake_to_end
     server = start_server(max_handshakes: 2, &ECHO_ONE_MESSAGE)
 

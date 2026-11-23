@@ -161,8 +161,8 @@ should keep `true`, which refuses them at the door.
   connection's Ractor takes a page of the heap, a GC runs once the free
   pages are gone, and every GC stops and marks every open socket. At 15K
   sockets held, these run 6–30× fewer GCs, for ~30% more memory
-  (`docs/plan-ws-connect-ceiling.md`). On 4.1 they were measured to change
-  nothing.
+  (`docs/history/plan-ws-connect-ceiling.md`). On 4.1 they were measured to
+  change nothing.
 
 **Switching transports** is three steps:
 

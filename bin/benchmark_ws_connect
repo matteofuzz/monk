@@ -2,8 +2,8 @@
 # frozen_string_literal: true
 
 # Connect-rate benchmark for Monk::WebSocket::Server
-# (docs/plan-ws-connect-ceiling.md). Not run in CI or by `rake test`: a
-# manual tool, like bin/benchmark_router.
+# (docs/history/plan-ws-connect-ceiling.md). Not run in CI or by `rake test`:
+# a manual tool, like bin/benchmark_router.
 #
 # Opens sockets at fixed rates (an open model: each connect is due at its
 # time whether or not earlier ones finished, and its latency counts from

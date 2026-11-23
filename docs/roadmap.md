@@ -51,8 +51,8 @@ gets its own design doc and plan when work on it starts.
 3. **0.24: Live on real networks, and presence.** For apps that show
    whether a person is online, on mobile browsers as well as desktop ones.
    Done (2026-11-13), measured on desktop, iPhone and Android
-   (`docs/plan-live-networks-presence.md`). A few device checks on a
-   deployed app are still open there; they run on the first real deploy.
+   (`docs/history/plan-live-networks-presence.md`). A few device checks on a
+   deployed app are still open: see "Open checks" below.
    - **Mobile.** Done: with `ping_interval:`, the WebSocket server closes a
      connection silent for two intervals. The Live client pings while its
      page is visible, gives up on a socket silent for 10 s, and reconnects
@@ -109,19 +109,24 @@ gets its own design doc and plan when work on it starts.
    route: the curl checks in `docs/guides/deploy-hetzner.md` stay the
    way to test those). What's left:
    - **Values that are present but wrong, refused at boot in
-     production.** A placeholder `AUTH_SECRET`, `PUBLIC_URL` on
-     `http://`, `LIVE_WS_URL` not on `wss://`, `WS_ALLOWED_ORIGINS`
-     missing `PUBLIC_URL`. This extends the checks `Monk::Settings`
-     already makes for `MONK_ENV` and `LOG_LEVEL`: no new command, and
-     it runs on every boot, before any traffic.
+     production.** Done (`docs/guides/settings.md`): a placeholder or
+     short `AUTH_SECRET`, `PUBLIC_URL` that isn't an `https://` origin,
+     `LIVE_WS_URL` not on `wss://`, an `allowed_origins` entry that isn't
+     an origin. `PUBLIC_URL` is now always allowed, and
+     `WS_ALLOWED_ORIGINS` lists only the other origins. This extends the
+     checks `Monk::Settings` already makes for `MONK_ENV` and
+     `LOG_LEVEL`: no new command, and it runs on every boot, before any
+     traffic.
    - **Checking SMTP login without sending.** Login is by magic link,
      so broken SMTP means nobody can log in, and nothing shows it until
-     someone tries. A small `Monk::Mail.check` to run from
-     `bin/console`, and a step in the deploy guide.
+     someone tries. Done: `Monk::Mail.check` (`docs/guides/mail.md`),
+     and a step in the deploy guide.
    - **A read-only check of the bucket's CORS rule** for `PUBLIC_URL`,
-     run once when the bucket is set up (`bin/storage_check` today
-     applies and removes rules, so it needs a test bucket).
-   - **A review of the code and the test suite.** Two goals: fewer lines
+     run once when the bucket is set up (`bin/storage_check` applies and
+     removes rules, so it needs a test bucket). Done:
+     `Monk::Storage.check`, which also checks the lifecycle rule.
+   - **A review of the code and the test suite.** Done
+     (`docs/history/plan-code-review.md`). Two goals: fewer lines
      (duplication, code no longer needed, simpler ways to do the same
      thing) and best practice (Ruby idioms, error handling, Ractor
      safety). For the tests, the same two goals, plus a coverage check:
@@ -130,9 +135,10 @@ gets its own design doc and plan when work on it starts.
      SETUP.md and the scaffold's templates: easy to follow for someone
      new to Monk, consistent with each other and with the code as it is
      now, and without outdated references.
-   - **Ruby 4.1 fixes, ahead of its release.** `Monk::Base.freeze!` and
-     the pool work on 4.1.0-preview1, and the pool no longer hangs when
-     stopped while a worker is still connecting, a hang 4.0 has too.
+   - **Ruby 4.1 fixes, ahead of its release.** Done:
+     `Monk::Base.freeze!` and the pool work on 4.1.0-preview1, and the
+     pool no longer hangs when stopped while a worker is still
+     connecting, a hang 4.0 has too.
    - Other enhancements found along the way.
 
    Left out until a real need shows up: a local "doctor" (the `bin/`
@@ -144,6 +150,35 @@ gets its own design doc and plan when work on it starts.
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.
+
+## Open checks
+
+Steps left from releases that shipped, run by hand on a real device or
+on the benchmark's VM rather than in code. Their plans are in
+`docs/history/`.
+
+- **0.24: Live on real phones** (`docs/history/plan-live-networks-presence.md`,
+  "A0 still open"). On a deployed app, behind TLS and its proxy, with
+  the server log at hand:
+  - iPhone with the current client: screen locked, and switched to
+    another app, for 1 and 5 minutes, then back.
+  - Airplane mode for 30 s, then back.
+  - Screen locked for 15 minutes.
+  - Why Android DuckDuckGo's socket closed cleanly after 441 s.
+- **0.22.1: the WebSocket server's connect ceiling**
+  (`docs/history/plan-ws-connect-ceiling.md`):
+  - The VM run: the benchmark's S6 at a sweep of connect rates, 25K
+    sockets held, on its 8-core VM.
+  - The plan's item 10, on each Ruby 4.1 preview and on the release (with
+    release 7 above): held 0 / 5K / 15K sockets, `--server-cpus` 0 / 0-1
+    / 0-3, and a churn step, recording global GCs and RSS. If Ruby's
+    #22454 and #22455 are fixed in 4.1, the WebSocket process recommends
+    4.1 and the plan's items 6 and 9 are dropped; if not, item 6 for
+    4.0, then 9 only if one process at 25K held is still too slow.
+  - Broadcast latency at 25K sockets (the benchmark's S7 with more
+    sockets): the same GC pauses likely slow it.
+  - `docs/guides/persistence.md`'s "about 1,350 a second", restated for
+    a burst into an empty server, not one already holding thousands.
 
 ## To evaluate
 
