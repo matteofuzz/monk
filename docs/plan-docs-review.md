@@ -111,3 +111,51 @@ For each guide, the questions: can someone new follow it top to bottom;
 does every example match the code and the templates as they are now;
 does it repeat another guide, or contradict it; does it point to plans
 or history a reader doesn't need.
+
+## Round 1: getting started
+
+Read: README, `docs/guides/scaffolding.md`, the base module's `setup.md`
+and `agents.md`. Checked against the code: module dependencies
+(`depends_on`), `config/load.rb`'s order, the exit codes, `monk help
+--file`, the old flags, the base app's routes and page, the Dockerfile's
+`MONK_ENV`, `bin/server`'s warning, the 415 for multipart, the README's
+taste (`where`, `render` with locals, `error`). All of those match.
+
+**G1. scaffolding.md's first paragraph lists the modules up to Live**
+("Postgres, Redis, mail, auth, jobs, WebSocket, Live"), written in 0.21;
+presence, storage, pwa, push and deploy came later.
+- Change: "a Monk module (the table below)", no list to keep current.
+
+**G2. scaffolding.md's module table links a guide for four modules**
+(presence, pwa, push, deploy) and not the others, though each but redis
+has one.
+- Change: a guide link for every module that has one.
+
+**G3. scaffolding.md's tree in "What every app looks like"** leaves out
+`config/recurring.rb` (jobs), the `.env` files, `Dockerfile`, and deploy's
+`compose.yaml`, `Caddyfile`.
+- Change: add them, each with the module that writes it.
+
+**G4. The README's paragraph on `monk new` and `monk add`** (Quick start)
+is one sentence of about 120 words: what `monk new` writes, the `app/`
+layout, every module, `--with`, and the guide.
+- Change: two short paragraphs, what `monk new` writes, then what
+  `monk add` adds, with the module list left to scaffolding.md.
+
+**G5. Base `SETUP.md`, "Before production"**: "Platform examples:
+`docs/guides/deploying.md` in the monk repo". Since 0.26 an app's own
+path is `monk add deploy`.
+- Change: "To deploy on one host with Docker Compose: `monk add deploy`;
+  other platforms: `docs/guides/deploying.md` in the monk repo."
+
+**G6. Base `AGENTS.md` ends on an empty `## Modules`**, and each module's
+section is appended as a sibling `##` after it, not under it. In a bare
+app the heading has nothing under it.
+- Change: one line under it, as `SETUP.md` has: "Each module added with
+  `monk add` appends its own section below."
+
+**G7. Small:** scaffolding.md line 106 is one unwrapped line (jobs'
+`deliver_later`).
+
+**Round 1 done:** G1–G7 applied. Generator tests: 108 runs, 0
+failures, 0 skips; a generated app's `AGENTS.md` checked with mail added.
