@@ -130,8 +130,7 @@ module Monk
       end
     end
 
-    @root = DEFAULT_ROOT
-    @threshold = DEFAULT_LEVEL
+    reset!
 
     Monk.freeze_hooks << self
   end

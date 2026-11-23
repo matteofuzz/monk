@@ -22,11 +22,6 @@ module Monk
     CLIENT_PATH = "/_monk/pwa".freeze
     Monk::Assets.mount(CLIENT_PATH, CLIENT_DIR)
 
-    # Eager, never `@x ||=` (a lazy write from a worker Ractor is an
-    # isolation error).
-    @manifest = nil
-    @apple_touch_icon = nil
-
     class << self
       # The parsed manifest, frozen; nil until configured.
       attr_reader :manifest, :apple_touch_icon
@@ -50,5 +45,9 @@ module Monk
         @apple_touch_icon = nil
       end
     end
+
+    # Eager, never `@x ||=` (a lazy write from a worker Ractor is an
+    # isolation error).
+    reset!
   end
 end

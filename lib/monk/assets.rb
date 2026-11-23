@@ -222,10 +222,8 @@ module Monk
       end
     end
 
-    @root = DEFAULT_ROOT
-    @manifest = {}
+    reset!
     @mounts = {}
-    @production = false
 
     Monk.freeze_hooks << self
   end

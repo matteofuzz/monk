@@ -199,9 +199,7 @@ module Monk
       end
     end
 
-    @registry = {}
-    @root = DEFAULT_ROOT
-    @layout = nil
+    reset!
 
     Monk.freeze_hooks << self
   end

@@ -16,13 +16,6 @@ module Monk
   Context.include(Live::Helpers)
 
   module Live
-    # Eager, never `@x ||=`: a lazy reader writes on first access, which is
-    # an isolation error from a non-main Ractor (same rule as Monk::Views).
-    @publisher = nil
-    @registry = nil
-    @rules = [].freeze
-    @max_topics = 100
-
     # Handed to Monk::WebSocket::Server#run in a WS process:
     #   server.run(&Monk::Live::HANDLER)
     # Built here, in the module body, where self is shareable, as the
@@ -115,5 +108,9 @@ module Monk
           "Monk::Live isn't configured -- call Monk::Live.configure(registry: ...) at boot",)
       end
     end
+
+    # Eager, never `@x ||=`: a lazy reader writes on first access, which is
+    # an isolation error from a non-main Ractor (same rule as Monk::Views).
+    reset!
   end
 end
