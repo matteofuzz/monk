@@ -44,14 +44,8 @@ module Monk
       #
       #   Monk::Mail.deliver(to: email, subject: "Your login link", text: "Log in: #{link}")
       def deliver(to:, subject:, text: nil, html: nil, reply_to: nil, from: nil)
-        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.deliver" unless config
-
-        from ||= config[:from]
-        if from.nil?
-          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
-        end
-
-        message = Message.new(from: from, to: to, subject: subject, text: text, html: html, reply_to: reply_to)
+        message = message_for(:deliver, from: from, to: to, subject: subject, text: text, html: html,
+          reply_to: reply_to,)
         config[:transport].deliver(message)
       end
 
@@ -100,6 +94,19 @@ module Monk
       end
 
       private
+
+      # deliver's and deliver_later's Message, with from: defaulting to
+      # configure's (MAIL_FROM).
+      def message_for(method, from:, **fields)
+        raise NotConfiguredError, "call Monk::Mail.configure(url:, from:) before Monk::Mail.#{method}" unless config
+
+        from ||= config[:from]
+        if from.nil?
+          raise InvalidMessageError, "no from: given, and Monk::Mail.configure has no default from: (MAIL_FROM)"
+        end
+
+        Message.new(from: from, **fields)
+      end
 
       # Unfrozen, a render from a worker Ractor dies with an opaque
       # Ractor::IsolationError inside Monk::Views, and one from the main
