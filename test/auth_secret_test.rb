@@ -2,7 +2,7 @@ require_relative "test_helper"
 require "monk/auth"
 
 # AUTH_SECRET present but guessable: refused outside development and test
-# (docs/plan-boot-settings-checks.md).
+# (docs/history/plan-boot-settings-checks.md).
 class AuthSecretTest < Minitest::Test
   STRONG = "0123456789abcdef" * 4
 

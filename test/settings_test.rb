@@ -69,7 +69,7 @@ class SettingsTest < Minitest::Test
   end
 
   # public_url and live_ws_url: declared by the app, read by Monk, so
-  # checked at Boot (docs/plan-boot-settings-checks.md).
+  # checked at Boot (docs/history/plan-boot-settings-checks.md).
 
   def test_public_url_must_be_an_origin_in_every_environment
     %w[development test production].each do |env|

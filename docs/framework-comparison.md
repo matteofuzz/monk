@@ -1,6 +1,6 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase at 0.27 (unreleased; LOC recomputed for it: settings, secrets and WebSocket origins refused at boot when they're wrong, `Monk::Mail.check` and `Monk::Storage.check`, and a code and test review that made both shorter). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at 0.27 (LOC recomputed for it: settings, secrets and WebSocket origins refused at boot when they're wrong, `Monk::Mail.check` and `Monk::Storage.check`, and a code and test review that made both shorter). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
@@ -27,7 +27,7 @@ Complexity and weight comparison, based on the codebase at 0.27 (unreleased; LOC
   (`monk new`, `monk add`).
   Runtime dependencies: `rack` and `base64` only; `pg`, `redis`, `rqrcode`,
   `net-smtp` and `dotenv` are opt-in per app (dev-only for Monk itself), and `kino` is only in the
-  repo's `Gemfile` for the demo app. 24,021 lines of tests.
+  repo's `Gemfile` for the demo app. 24,022 lines of tests.
 - **Sinatra**: core is comparable in size (~2,000 lines), but ships as a
   thin routing DSL only — everything else (sessions/CSRF protection,
   persistence, websockets, live updates, presence, email, background
@@ -58,11 +58,11 @@ that covers each module.
 | Presence | 5 | 759 | 1,164 (incl. the reactor as a child process, and a real browser) | the store's SQL: rows per process, transitions settled once under an advisory lock, `NOTIFY` in batches, expiry of a dead process's rows (274); configure, `status`/`online?` and `on_change` (130); the reactor in `bin/server`, elected by an advisory lock, that `LISTEN`s and calls `on_change` (126); the per-process counts Ractor (118) and the tracker thread that writes them once a second (111) |
 | Auth | 8 | 726 | 1,729 | sessions, tokens, cookies, CSRF incl. `csrf_field` and a stale cookie reissued, a placeholder or short secret refused at boot, the login-email rate limit, batched `sweep!` and its job, per-process rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
 | Mail | 9 | 675 | 1,396 (incl. a fake SMTP server) | MIME builder, configure/deliver/render, `check` of `MAIL_URL`'s login without sending, SMTP and log transports, `MAIL_URL` parsing, message value, `deliver_later` and its job (loaded with jobs), address handling |
-| Live | 8 | 633 | 2,437 (incl. one contract run on both fan-outs) | publisher, session incl. the client's ping and `hidden` messages and whether its page is visible, policy incl. pooled rules, renderer, envelope, `live_topic` and its `<head>` tags, `listen!`, the client served from the gem |
+| Live | 8 | 633 | 2,438 (incl. one contract run on both fan-outs) | publisher, session incl. the client's ping and `hidden` messages and whether its page is visible, policy incl. pooled rules, renderer, envelope, `live_topic` and its `<head>` tags, `listen!`, the client served from the gem |
 | Assets | 1 | 230 | 293 | boot-time static-asset manifest, plus modules' own files mounted under `/_monk/` |
 | Views | 1 | 203 | 366 | ERB views/layouts/partials |
 | Pwa | 4 | 161 | 416 (incl. real headless Chrome) | the manifest checked the way Chrome does (74), configure, `monk_head`'s tags, errors |
-| **Total** | **122** | **13,433** | **24,021** | |
+| **Total** | **122** | **13,433** | **24,022** | |
 
 Not counted above: the browser code, Live's runtime (`monk_live.js` 365,
 `protocol.js` 129, vendored minified idiomorph), push's (`push.js` 132,

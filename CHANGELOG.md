@@ -36,6 +36,12 @@ in `lib/monk/version.rb`.
 - **`WS_ALLOWED_ORIGINS` lists the origins allowed besides `PUBLIC_URL`**,
   which the scaffolded `bin/websocket_server` now always allows.
 - `docs/guides/settings.md` has a table of what each `MONK_ENV` changes.
+- **The docs, reviewed for clarity** against the code as it is: every
+  guide, a shorter README with a status section, the scaffold's
+  `SETUP.md` and `AGENTS.md`, `CONTEXT.md` and the design docs' status
+  lines. Finished plans and superseded notes are in `docs/history/`, and
+  the steps left from earlier releases are under the roadmap's "Open
+  checks".
 
 ### Fixed
 

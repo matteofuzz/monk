@@ -101,8 +101,9 @@ gets its own design doc and plan when work on it starts.
      made on the host. `docs/guides/deploy-hetzner.md` is the tested
      deploy on Hetzner Cloud with Brevo, from the accounts to backups.
 
-6. **0.27: Catching wrong settings early, and other enhancements.** A
-   smaller release than the `monk check` command first planned. Most of
+6. **0.27: Catching wrong settings early, and other enhancements.** Done
+   (2026-11-23, `docs/history/plan-boot-settings-checks.md`). A smaller
+   release than the `monk check` command first planned. Most of
    what that command would check already fails loudly (Postgres, pending
    migrations, Redis), is set once per environment rather than per
    deploy, or can't be seen from inside the app (TLS, Caddy's `/ws`
@@ -131,7 +132,8 @@ gets its own design doc and plan when work on it starts.
      thing) and best practice (Ruby idioms, error handling, Ractor
      safety). For the tests, the same two goals, plus a coverage check:
      measure it, and fill the gaps that matter, not chase a percentage.
-   - **A review of all the docs for clarity.** README, guides, ADRs,
+   - **A review of all the docs for clarity.** Done
+     (`docs/history/plan-docs-review.md`). README, guides, ADRs,
      SETUP.md and the scaffold's templates: easy to follow for someone
      new to Monk, consistent with each other and with the code as it is
      now, and without outdated references.
