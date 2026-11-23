@@ -1,5 +1,7 @@
 # Transactional mail providers for `Monk::Mail` — preset analysis
 
+> **Status: research, 2026-09-26.** `Monk::Mail` shipped with SMTP only ([ADR 0012](adr/0012-minimal-built-in-mailer.md)); no HTTPS presets were built, since every provider below offers an SMTP relay. [`guides/mail.md`](guides/mail.md#provider-examples) uses this research's three picks (Brevo, Lettermint, Resend) over SMTP. The text below is the research as written.
+
 Research only: which HTTPS API "presets" the planned `Monk::Mail` module
 should ship next to its SMTP transport. Nothing here changes `monk`
 itself. The module is opt-in and zero-dependency. It will have one

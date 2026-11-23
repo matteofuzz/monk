@@ -440,3 +440,51 @@ isn't.
 
 **Round 6 done:** P1–P10 applied. The `DATABASE_URL` question is now a
 line under the roadmap's "To evaluate".
+
+## Round 7: decisions and background
+
+Read: the 20 ADRs, the 7 design docs' openings and status lines,
+`CONTEXT.md`, `mail-providers.md`. Checked against the code: route blocks
+as Context methods (`Base.define_block_methods!`), `Monk.boot`,
+`Settings`' checks, `Monk::Log`, the auth scaffold's `deliver_link`, and
+whether `Monk::Mail` has HTTPS presets (it doesn't).
+
+The ADRs stay as written: they record a decision at its date, and a later
+one says when a premise changed (0014 on 0012's "no job queue", 0017 on
+0015's flags). Paths to files since removed (`lib/monk/scaffold.rb`) are
+part of that record. 0015 and 0018 name the app that drove them, as
+records of why.
+
+**K1 (S3). live-pg-fanout.md opens as "design exploration, 2026-09-24"**,
+with `monk new --live`'s flags and `scaffold.rb`; it shipped in 0.16 as
+`Monk::WebSocket::PgFanout`, and the flags are gone (ADR 0017).
+- Change: the same "Status: implemented" banner as auth-sessions,
+  persistence and websocket, linking websocket.md's fan-out section and
+  live.md, and saying the flags are now `monk add websocket`'s transport.
+
+**K2 (S3). ws-horizontal-scaling-considerations.md says several WebSocket
+processes are "unbuilt"**: `WS_PROCESSES` (0.22.1) built them, and
+presence counts across processes. Nothing links to it.
+- Change: move it to `docs/history/`, with a line on top pointing to
+  websocket.md's "Several processes".
+
+**K3. CONTEXT.md's "Context" says a route block is `instance_exec`'d, the
+style picked by arity**: since 0.23.1 each block is a private method of
+`Context`, and a block with a parameter gets the context as it.
+- Change: say that.
+
+**K4. Small, CONTEXT.md:** "Boot" names "Monk's own Rack entrypoint
+helper" (it's `Monk.boot(App)` in `config.ru`); "Settings" says only
+missing required keys raise at boot (0.27 also refuses `PUBLIC_URL`,
+`LIVE_WS_URL` and `AUTH_SECRET` values that are present but wrong);
+"Asset manifest" says "in production" (outside development, as the
+`MONK_ENV` entry says). Two double blank lines.
+
+**K5. mail-providers.md describes "the planned `Monk::Mail`" with HTTPS
+presets**: it shipped with SMTP only (ADR 0012), and mail.md's provider
+examples use the research's three picks over SMTP.
+- Change: a status banner saying so, the text below kept as the research
+  of 2026-09-26.
+
+**Round 7 done:** K1–K5 applied; the scaling notes are in
+`docs/history/ws-horizontal-scaling-considerations.md`.

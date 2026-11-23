@@ -1,5 +1,7 @@
 # WS horizontal scaling: what it means and what's actually unbuilt
 
+> **Superseded.** Several WebSocket processes were built in 0.22.1 (`WS_PROCESSES`, [`guides/websocket.md`](../guides/websocket.md#several-processes)), and presence counts sockets across them. Kept as the notes of 2026-09-24.
+
 Status: notes, 2026-09-24. Written while scoping
 `../history/plan-live-pg-fanout.md`, to pin down exactly what "WS
 horizontal scaling" excludes from that plan, rather than leaving it as a
