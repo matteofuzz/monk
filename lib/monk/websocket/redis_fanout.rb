@@ -1,7 +1,6 @@
 require "redis"
 require "securerandom"
-require_relative "errors"
-require_relative "listeners"
+require_relative "fanout"
 
 module Monk
   module WebSocket
@@ -32,6 +31,8 @@ module Monk
     # get this process's own direct/local deliveries but never a relayed
     # one, since the relayed call always uses a Symbol.
     class RedisFanout
+      include Fanout
+
       # Frozen explicitly, not just left as a String literal -- the
       # subscriber Ractor below reads this constant from a non-main
       # Ractor, which raises Ractor::IsolationError unless its value is
@@ -132,48 +133,6 @@ module Monk
         freeze
       end
 
-      # Starts relaying other processes' broadcasts into this process's
-      # registry: a subscriber Ractor with its own Redis connection. Only
-      # the process that holds sockets calls this (bin/websocket_server, at
-      # boot, from the main Ractor) -- a publish-only process (bin/server,
-      # bin/jobs) never does, so it holds no subscriber connection at all.
-      # Returns once the psubscribe is in effect, so nothing broadcast
-      # after it can be missed; raises ListenError if Redis can't be
-      # reached. Calling it again is a no-op.
-      def listen!
-        return self if Listeners.listening?(@origin)
-
-        ready = Ractor::Port.new
-        # Ractor.new's block args must be shareable: registry is (Registry
-        # freezes itself around a Ractor, which is inherently shareable),
-        # the URL and origin are frozen Strings, a Port always is. The
-        # Redis client itself is built inside the block, never passed in --
-        # mirrors PG::Connection's per-Ractor pattern (persistence/pg.rb).
-        Ractor.new(@registry, @redis_url, @origin, ready) do |registry, url, origin, ready|
-          Monk::WebSocket::RedisFanout.subscribe(registry, url, origin, ready)
-        end
-
-        result = ready.receive
-        raise ListenError, "Monk::WebSocket::RedisFanout#listen! couldn't subscribe: #{result}" unless result == :ok
-
-        Listeners.add(@origin)
-        self
-      end
-
-      def register(key, port)
-        ensure_listening!(:register)
-        @registry.register(key, port)
-      end
-
-      def register_many(keys, port)
-        ensure_listening!(:register_many)
-        @registry.register_many(keys, port)
-      end
-
-      def unregister(key, port) = @registry.unregister(key, port)
-      def unregister_many(keys, port) = @registry.unregister_many(keys, port)
-      def count(key) = @registry.count(key)
-
       def broadcast(key, payload)
         @registry.broadcast(key, payload)
         publisher.publish("#{CHANNEL_PREFIX}#{key}", "#{@origin}\0#{payload}")
@@ -181,14 +140,7 @@ module Monk
 
       private
 
-      def ensure_listening!(method)
-        return if Listeners.listening?(@origin)
-
-        raise NotListeningError,
-          "Monk::WebSocket::RedisFanout##{method} before #listen!: this socket would never get " \
-          "other processes' broadcasts -- call listen! once at boot in the process that holds " \
-          "sockets (bin/websocket_server: Monk::Live.listen!)"
-      end
+      def subscriber_target = @redis_url
 
       # A single shared Redis client called concurrently from every
       # connection Ractor's #broadcast wouldn't be safe -- redis-rb clients

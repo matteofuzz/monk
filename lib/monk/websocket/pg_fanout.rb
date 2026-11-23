@@ -1,8 +1,7 @@
 require "pg"
 require "securerandom"
 require_relative "../persistence/pg"
-require_relative "errors"
-require_relative "listeners"
+require_relative "fanout"
 
 module Monk
   module WebSocket
@@ -18,6 +17,8 @@ module Monk
     # or its lack of a payload cap (see the design doc's "Where this is
     # worse than Redis").
     class PgFanout
+      include Fanout
+
       # Postgres has no pattern LISTEN (unlike Redis's own
       # psubscribe("monk:ws:*")), so every key shares one fixed channel;
       # the key rides inside the notification payload instead of the
@@ -194,50 +195,6 @@ module Monk
         freeze
       end
 
-      # Starts relaying other processes' broadcasts into this process's
-      # registry: a subscriber Ractor with its own LISTEN connection. Only
-      # the process that holds sockets calls this (bin/websocket_server, at
-      # boot, from the main Ractor) -- a publish-only process (bin/server,
-      # bin/jobs) never does, so it holds no LISTEN connection at all.
-      # Returns once the LISTEN is in effect, so nothing notified after it
-      # can be missed; raises ListenError if Postgres can't be reached.
-      # Calling it again is a no-op.
-      def listen!
-        return self if Listeners.listening?(@origin)
-
-        ready = Ractor::Port.new
-        # Ractor.new's block args must be shareable: registry is
-        # (Registry freezes itself around a Ractor, which is inherently
-        # shareable), @pg_opts and @origin are already made so, a Port
-        # always is. The PG::Connection itself is never passed in --
-        # opened fresh inside the block, mirroring RedisFanout's
-        # subscriber and Monk::Persistence::Pg's per-Ractor connection
-        # pattern.
-        Ractor.new(@registry, @pg_opts, @origin, ready) do |registry, pg_opts, own_origin, ready|
-          Monk::WebSocket::PgFanout.subscribe(registry, pg_opts, own_origin, ready)
-        end
-
-        result = ready.receive
-        raise ListenError, "Monk::WebSocket::PgFanout#listen! couldn't LISTEN: #{result}" unless result == :ok
-
-        Listeners.add(@origin)
-        self
-      end
-
-      def register(key, port)
-        ensure_listening!(:register)
-        @registry.register(key, port)
-      end
-
-      def register_many(keys, port)
-        ensure_listening!(:register_many)
-        @registry.register_many(keys, port)
-      end
-
-      def unregister(key, port) = @registry.unregister(key, port)
-      def unregister_many(keys, port) = @registry.unregister_many(keys, port)
-      def count(key) = @registry.count(key)
-
       def broadcast(key, payload)
         # Delivers locally first, regardless of what happens next -- same
         # latency and reliability as a plain Registry if Postgres is
@@ -266,14 +223,7 @@ module Monk
 
       private
 
-      def ensure_listening!(method)
-        return if Listeners.listening?(@origin)
-
-        raise NotListeningError,
-          "Monk::WebSocket::PgFanout##{method} before #listen!: this socket would never get " \
-          "other processes' broadcasts -- call listen! once at boot in the process that holds " \
-          "sockets (bin/websocket_server: Monk::Live.listen!)"
-      end
+      def subscriber_target = @pg_opts
 
       # The pool's database's connection options, for #listen!.
       def pooled_pg_opts(db_pool)

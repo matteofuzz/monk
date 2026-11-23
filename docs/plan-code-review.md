@@ -41,6 +41,11 @@ They differ only in how they subscribe, publish and frame the envelope.
   RedisFanout's ..." in both files.
 - Risk: medium. It's Ractor code (what's shareable is passed to
   `Ractor.new`), but both have thorough tests.
+- **Done 2026-11-23:** `websocket/fanout.rb` (62 lines) has `listen!`, the
+  register/unregister/count methods and `ensure_listening!`; each class
+  keeps `.subscribe`, `#broadcast`, `.disconnect_publisher` and names its
+  `#subscriber_target`. PgFanout's ListenError now says "couldn't
+  subscribe", like Redis's. Net 36 lines fewer.
 
 **L2. Two identical error classes.** `CLI::Error` (`cli.rb:12`) and
 `Generator::Run::UsageError` (`generator/run.rb:21`) are the same
