@@ -35,7 +35,7 @@ that name everywhere — each Ractor lazily opens and memoizes its own
 Ractors):
 
 ```ruby
-Monk::Persistence::Pg.register(:main, host: "127.0.0.1", port: 5432, user: "postgres", password: "postgres", dbname: "monk_app")
+Monk::Persistence::Pg.register(:primary, host: "127.0.0.1", port: 5432, user: "postgres", password: "postgres", dbname: "monk_app")
 ```
 
 Do this once at app boot, before `Monk.boot(App)` (in a `monk new` app,
@@ -46,23 +46,12 @@ Connections get `connect_timeout: 5` unless you pass your own, so
 connecting to a host that doesn't answer fails after 5 seconds instead of
 waiting indefinitely.
 
-**Per-environment database names.** `MONK_ENV` (see [`settings.md`](settings.md)) and
-the database name are two separate, unlinked knobs — setting `MONK_ENV=test`
-does not change which database you connect to. `monk add postgres`'s
-`config/persistence.rb` reads a single `DB_NAME` env var with a static
-fallback (`app_development`), so naming a database per environment is
-entirely by convention/operator action, not framework magic:
-
-- **Locally**: export `DB_NAME` yourself before running tests, e.g. in a
-  `.env.test` your test runner loads, or inline: `DB_NAME=myapp_test bin/...`.
-- **Deploys** (see [`deploying.md`](deploying.md)): Render/Fly secrets set `DB_NAME`
-  explicitly per service/environment — there's a real, separate Postgres
-  instance per environment, and its name is whatever you typed into
-  `fly secrets set` / Render's env var UI.
-- **Monk's own test suite** (testing the `monk` gem itself, not a generated
-  app) uses a different variable, `MONK_TEST_PG_DATABASE` (default
-  `monk_test`), read in `test/test_helper.rb`. That's internal to this repo
-  and isn't inherited by apps `monk new` generates.
+**Database names per environment.** `MONK_ENV` (see [`settings.md`](settings.md))
+doesn't pick the database: `DB_NAME` does. `monk add postgres` writes
+`DB_NAME=<app>_development` to `.env` and `DB_NAME=<app>_test` to
+`.env.test`, which the test helper loads first, and `monk add deploy`
+sets `DB_NAME=<app>` for production. Anywhere else, set `DB_NAME` where
+the app runs.
 
 ## Models
 
@@ -73,7 +62,7 @@ method takes or returns plain Symbol-keyed `Hash`es.
 
 ```ruby
 class Widget < Monk::Persistence::Pg::Model
-  self.db_name = :main
+  self.db_name = :primary
   self.table_name = "widgets"
 end
 
@@ -103,7 +92,7 @@ Ractor (a checkout that can't acquire the connection within
 `timeout:` seconds, 5 by default, raises `Monk::PersistenceTimeoutError`):
 
 ```ruby
-Monk::Persistence::Pg.checkout(:main) do |conn|
+Monk::Persistence::Pg.checkout(:primary) do |conn|
   conn.exec_params("SELECT * FROM widgets WHERE quantity > $1", [5])
 end
 ```
@@ -113,7 +102,7 @@ Use `conn.transaction { ... }` for a transaction. If a block runs a raw
 the block ends, so the next checkout in that Ractor doesn't run inside it.
 A transaction can't span two `checkout` blocks.
 
-`Monk::Persistence::Pg[:main]` returns that Ractor's memoized connection
+`Monk::Persistence::Pg[:primary]` returns that Ractor's memoized connection
 without the checkout lock, and without the dropped-connection check below
 — use it for read-only, single-threaded-per-Ractor access; prefer
 `checkout` whenever sibling threads might touch the same connection

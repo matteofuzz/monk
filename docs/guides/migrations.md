@@ -11,7 +11,7 @@ db/migrate/20260831120000_create_widgets.down.sql
 ```
 
 ```ruby
-migrator = Monk::Persistence::Pg::Migrator.new(db_name: :main, dir: "db/migrate")
+migrator = Monk::Persistence::Pg::Migrator.new(db_name: :primary, dir: "db/migrate")
 
 migrator.migrate!              # runs every pending .up.sql, in order, one transaction each
 migrator.rollback!             # reverts the most recently applied migration
@@ -24,6 +24,11 @@ Applied versions are tracked in a `schema_migrations` table, created
 automatically on first use. A failing statement rolls back just that
 migration's transaction and halts the run — later pending migrations are
 never attempted. Migrations never run implicitly (no hook into
-`Monk.boot`/`.freeze!`); running them is an explicit step your app invokes
-itself, e.g. a `bin/migrate` script — see `docs/history/plan-migrations.md` for the full
-design and phase-by-phase plan.
+`Monk.boot`/`.freeze!`); running them is an explicit step.
+
+`monk add postgres` writes that step: `bin/migrate` (`bin/migrate`,
+`bin/migrate rollback [N]`, `bin/migrate status`) and `bin/setup_db`,
+which migrates the database `DB_NAME` names once it exists (the app's
+`SETUP.md` has the command that creates it). Modules that need tables
+(`auth`, `jobs`, `push`, `presence`) add their migrations to
+`db/migrate/`, versioned with the time they're added.

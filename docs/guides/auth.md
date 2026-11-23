@@ -12,31 +12,45 @@ a commented example to turn on (`auth-routes` in `app/routes/auth.rb`) — see
 [`scaffolding.md`](scaffolding.md).
 
 ```ruby
+# config/auth.rb
 require "monk/auth"
 
 Monk::Auth.configure(
-  db_name: :main, secret: ENV.fetch("AUTH_SECRET"),
+  db_name: :primary, secret: ENV.fetch("AUTH_SECRET"),
   login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: ["/dashboard"],
+  deliver: AuthMailer::MAGIC_LINK, # sends the link: "Sending the magic link" below
 )
+```
 
-class App < Monk::Base
-  post("/auth/request") { json(token: Monk::Auth.request_login(params[:email])) } # send this token yourself -- see "Sending the magic link" below
-
-  get("/auth/callback/:token") do
-    session = Monk::Auth.redeem(params[:token])
-    halt(401) unless session
-    json(token: session[:token], expires_at: session[:expires_at])
+```ruby
+# app/routes/auth.rb, as `monk add auth` writes it (shortened)
+class App
+  post("/auth/request") do
+    email = params[:email].to_s.strip.downcase
+    halt(429) unless Monk::Auth.allow_login_request?(email) # "Rate-limiting login emails"
+    token = Monk::Auth.request_login(email)
+    Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(token), token: token)
+    render "auth/login" # "check your email"; the token goes only in the email
   end
 
-  get("/me") { json(subject: require_user!) } # halts 401 automatically if unauthenticated
+  get("/auth/callback/:token") do # the link in the email
+    session = Monk::Auth.redeem(params[:token]) || halt(401, "This link has expired or was already used.")
+    set_session_cookie(session)
+    redirect(session[:redirect_to] || "/")
+  end
+
+  get("/me") { json(email: require_user!) } # 401 unless logged in
 end
 ```
+
+Never send the token back in the response: whoever asked for it could
+then log in as any address they typed.
 
 Three Postgres tables back this — `login_tokens` (single-use, short-lived),
 `sessions` (multi-use, long-lived, indexed by `subject`) and
 `login_requests` (the [rate limit](#rate-limiting-login-emails)).
-`monk add auth` writes migrations for all three; otherwise create them yourself the same way persistence
-tables aren't generated either — schema in [`design/auth-sessions.md`](../design/auth-sessions.md).
+`monk add auth` writes migrations for all three; without it, create them
+yourself from the schema in [`design/auth-sessions.md`](../design/auth-sessions.md).
 
 Both an `Authorization: Bearer <token>` header and a `session_token`
 cookie work identically via `current_subject`/`require_user!`. For
@@ -57,10 +71,10 @@ no longer matches on the next signed-in request, a 403 from
 tries again. Keep `AUTH_SECRET` with your backups anyway: sessions survive
 without it, but nothing else signed with it does.
 `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
-sessions; `.sweep!` deletes expired rows ([Cleaning up](#cleaning-up-expired-rows)). Full design and phase-by-phase
-build: [`design/auth-sessions.md`](../design/auth-sessions.md) / `docs/history/plan-auth.md`.
+sessions; `.sweep!` deletes expired rows ([Cleaning up](#cleaning-up-expired-rows)).
+The design: [`design/auth-sessions.md`](../design/auth-sessions.md).
 
-### Sending the magic link
+## Sending the magic link
 
 `Monk::Auth.request_login` returns a raw token and nothing else. Monk
 doesn't define the callback route, but it knows its path:
@@ -81,7 +95,7 @@ end
 `login_link` starts from a configured origin, `Monk::Settings[:public_url]`,
 declared in `config/settings.rb` (every `monk new` app has this, with or
 without auth — `Monk::Live`'s `live_ws_url` and the WebSocket's allowed
-origins read the same setting, see `docs/guides/live.md`). Outside
+origins read the same setting, see [`live.md`](live.md)). Outside
 development and test, boot refuses it on `http://` or a placeholder host
 like `example.com`, and refuses a placeholder or short `AUTH_SECRET`
 ([`settings.md`](settings.md#values-refused-at-boot)). If you build a link yourself,
@@ -100,10 +114,10 @@ typed in.
    [`mail.md`](mail.md#with-monkauth)), or any other channel such as SMS.
    Like a route block, it has to be `Ractor.shareable?`, so build
    it as a module constant (`AuthMailer::MAGIC_LINK = ->(email:, link:, token:)
-   { ... }`, in `app/mailers/app_mailer.rb`), not inline in
+   { ... }`, in `app/mailers/auth_mailer.rb`), not inline in
    `config/auth.rb` — self at a script's top level isn't shareable, the
    same rule `Monk::Live.authorize` blocks follow. `config/auth.rb`
-   requires that file itself (`require_relative "../app/mailers/app_mailer"`),
+   requires that file itself (`require_relative "../app/mailers/auth_mailer"`),
    since `configure` checks `deliver:` right away, before
    `config/load.rb` loads `app/`.
 2. **`Monk::Auth.log_dev_link`**, only if no `deliver:` is configured and
@@ -115,7 +129,7 @@ typed in.
    forgot to configure `deliver:` finds out the first time someone requests
    a login, not later from a user who never got their email.
 
-### Sending the magic link from a job
+## Sending the magic link from a job
 
 With [background jobs](jobs.md), the login request doesn't have to wait
 for the email to go out. Move the whole request into a job, not just the
@@ -159,7 +173,7 @@ the job. Subclass it to change the queue or the retries.
 The reasoning, and the options rejected, are in
 [`docs/adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md`](../adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md).
 
-### Rate-limiting login emails
+## Rate-limiting login emails
 
 Without a limit, anyone can make the app send login emails to any address,
 as often as they like. `Monk::Auth.allow_login_request?(email)` allows one
@@ -196,7 +210,7 @@ end
   or a second test asking for a link for the same address gets a 429. It
   refuses to run unless `MONK_ENV=test`.
 
-### Cleaning up expired rows
+## Cleaning up expired rows
 
 Expired sessions and login tokens stay in their tables until something
 deletes them: roughly one session a month per active person.
@@ -220,7 +234,7 @@ statement so no lock lasts long, and returns how many of each:
   show when someone was last seen, say), don't schedule `Sweep` and prune
   them yourself.
 
-### Secure cookies
+## Secure cookies
 
 Both cookies carry the `Secure` flag by default, so browsers only send them
 over HTTPS. Over plain `http://` (a dev server, a second device on the LAN)

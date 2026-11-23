@@ -207,7 +207,7 @@ Monk::Mail.deliver_later(to: order[:email], subject: "Your receipt",
   stay in the queue until retried or discarded ([`jobs.md`](jobs.md),
   "When a job fails"), so after fixing a bad `MAIL_URL`,
   `Monk::Jobs.retry_failed(id)` resends.
-- **The `mailers` queue.** Mail jobs run on it, and `monk new` sets
+- **The `mailers` queue.** Mail jobs run on it, and `monk add jobs` sets
   `JOBS_QUEUES=mailers,push,default` so they're served before other
   work. Once the app has slow jobs, run a separate `bin/jobs` just for
   `mailers` (`JOBS_QUEUES=mailers`), so an email never waits behind them.
@@ -227,7 +227,7 @@ configured; point it at `Monk::Mail`, built as a module constant so it's
 it lives in `app/mailers/` with the app's other emails:
 
 ```ruby
-# app/mailers/app_mailer.rb
+# app/mailers/auth_mailer.rb
 module AuthMailer
   MAGIC_LINK = lambda do |email:, link:, token:|
     Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
@@ -239,15 +239,15 @@ end
 
 ```ruby
 # config/auth.rb
-require_relative "../app/mailers/app_mailer" # configure checks deliver: right away
+require_relative "../app/mailers/auth_mailer" # configure checks deliver: right away
 
 Monk::Auth.configure(..., deliver: AuthMailer::MAGIC_LINK)
 ```
 
-Require `config/mail.rb` from `config/load.rb`, not from `config/auth.rb`:
-`bin/websocket_server` loads `config/auth.rb` too, never sends mail, and
-shouldn't need `MAIL_URL` to boot. That's why the mailer touches
-`Monk::Mail` only inside the lambda.
+`config/load.rb` loads `config/mail.rb`; `config/auth.rb` doesn't
+require it: `bin/websocket_server` loads `config/auth.rb` on its own,
+never sends mail, and shouldn't need `MAIL_URL` to boot. That's why the
+mailer touches `Monk::Mail` only inside the lambda.
 
 **Don't point `deliver:` at `deliver_later`.** The job would store the
 login link, a working token included, in the queue until it's sent. That

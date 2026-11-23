@@ -210,3 +210,68 @@ state", "Static assets") under the guide's own. Anchors don't change.
 `monk add deploy`'s stack) or a CDN".
 
 **Round 2 done:** C1–C7 applied; links and anchors checked by script.
+
+## Round 3: data and identity
+
+Read: persistence, migrations, auth, mail. Checked against the code and
+the templates: `config/persistence.rb`, postgres's `.env` values, the
+Model calls, `bin/migrate`, `config/auth.rb`, `auth_mailer.rb`,
+`config/mail.rb`, `JOBS_QUEUES`, `net-smtp`. Pools, dropped connections,
+`MAIL_URL`, `Mail.check`, `deliver_later`, the rate limit and the sweep
+match the code.
+
+**D1. auth.md's first example hands the login token back in the
+response:** `post("/auth/request") { json(token: Monk::Auth.request_login(params[:email])) }`.
+Copied as it is, anyone can log in as anyone: ask for a token for their
+address, redeem it. The comment says "send this token yourself", but
+it's the first code a reader sees.
+- Change: the first example is the scaffold's shape: the rate limit,
+  `request_login` + `deliver_link` (or `SendLoginLink`), a callback that
+  sets the cookie and redirects, `require_user!`.
+
+**D2. The mailer's file is `app/mailers/app_mailer.rb` in auth.md and
+mail.md**, and `config/auth.rb`'s `require_relative
+"../app/mailers/app_mailer"`; the scaffold has `auth_mailer.rb` (as
+scaffolding.md says).
+- Change: `auth_mailer.rb` in both guides.
+
+**D3. persistence.md's "Per-environment database names" is from before
+`monk add postgres`.** It says to export `DB_NAME` yourself and that
+Render/Fly secrets set it. Now `monk add postgres` writes
+`DB_NAME=<app>_development` to `.env` and `<app>_test` to `.env.test`
+(which the test helper loads), and `monk add deploy` sets `DB_NAME=<app>`.
+Its third bullet, Monk's own `MONK_TEST_PG_DATABASE`, is about this
+repo, and isn't in `docs/development.md`.
+- Change: a short paragraph on what postgres writes, and that `MONK_ENV`
+  doesn't pick the database; the `MONK_TEST_PG_DATABASE` line moves to
+  `docs/development.md`.
+
+**D4. `:main` in persistence.md, migrations.md and auth.md**, where the
+scaffold, `bin/migrate` and the pool's `db:` default are `:primary`.
+- Change: `:primary` throughout.
+
+**D5. migrations.md ends on `docs/history/plan-migrations.md` "for the
+full design and phase-by-phase plan"**, and doesn't say that `monk add
+postgres` writes `bin/migrate` and `bin/setup_db`.
+- Change: say what the scaffold gives (`bin/migrate`, `bin/migrate
+  rollback`, `bin/setup_db`, migrations from modules timestamped when
+  added); drop the history pointer.
+
+**D6. mail.md: "`monk new` sets `JOBS_QUEUES=mailers,push,default`"**:
+`monk add jobs` does.
+
+**D7. mail.md, "With `Monk::Auth`": "Require `config/mail.rb` from
+`config/load.rb`, not from `config/auth.rb`"**: `config/load.rb` already
+loads every config; the point that stays is that `config/auth.rb` doesn't
+require it, because `bin/websocket_server` loads `config/auth.rb` alone.
+- Change: say that.
+
+**D8. auth.md structure:** its sections are `###` straight under the
+title (no `##`); the intro ends on `docs/history/plan-auth.md`'s
+"phase-by-phase build"; two unwrapped lines (38–39, 60–61).
+- Change: `##`, drop the history pointer, rewrap.
+
+**Round 3 done:** D1–D8 applied. `MONK_TEST_PG_DATABASE` was already in
+`docs/development.md`'s services table, so nothing moved there.
+`bin/setup_db` migrates but doesn't create the database; migrations.md
+says so.
