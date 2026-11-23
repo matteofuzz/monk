@@ -47,12 +47,14 @@ They differ only in how they subscribe, publish and frame the envelope.
 seven-line class (a message plus `suggestion:`).
 - Change: one, and the other an alias or subclass.
 - Saves: about 7 lines. Risk: low.
+- **Done 2026-11-23:** `CLI::Error` is `Generator::Run::UsageError`.
 
 **L3. `Mail.deliver` and `Mail.deliver_later` build the message twice.**
 `mail.rb:49` and `mail/deliver_later.rb:44`: the same default `from:`,
 the same error when it's missing, the same `Message.new(...)`.
 - Change: one private `message_for(...)`.
 - Saves: about 6 lines. Risk: low.
+- **Done 2026-11-23:** a private `Mail.message_for`.
 
 **L4. The same network error list, four times.** `Net::SMTPError, IOError,
 SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError` in
@@ -60,6 +62,9 @@ SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError` in
 `storage/backends/s3.rb:184` and `push/delivery.rb:77`.
 - Change: a constant per module, or one shared list for HTTP.
 - Saves: few lines, mainly one place to update. Risk: low.
+- **Done 2026-11-23, SMTP only:** the rescue moved into `SMTP#session`,
+  so no constant (net-smtp loads late). The HTTP list stays in push and
+  S3: a shared constant would need a file loading net/http for both.
 
 **L5. Comments are 28% of `lib/` (3,256 lines against 8,537 of code).**
 Most explain why something must be the way it is for Ractors, which is
@@ -110,6 +115,9 @@ the same assignments in `reset!`.
   keeps the Ractor rule the comments ask for.
 - Saves: about 3–5 lines per module, across `Live`, `Push`, `Presence`,
   `Storage` and others (to count). Risk: low.
+- **Done 2026-11-23:** `reset!` in the body of `Live`, `Pwa`, `Views`,
+  `Assets` and `Log`. `Push` keeps its one line; the other modules
+  don't repeat their state.
 
 ## `lib/`: best practice
 
