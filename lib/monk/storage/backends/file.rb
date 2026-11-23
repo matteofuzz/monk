@@ -74,8 +74,6 @@ module Monk
           ::FileUtils.rm_f(meta)
           ::FileUtils.rm_f(object)
           nil
-        rescue SystemCallError, IOError => e
-          raise RequestError, "file storage delete #{key} failed: #{e.class}: #{e.message}"
         end
 
         # Returns to. A missing from raises NotFoundError.

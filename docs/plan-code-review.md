@@ -184,7 +184,7 @@ one-line fixes.
   two `check`s; the rest are a nice-to-have.
 - **Done 2026-11-23:** 11 tests, everything above but the Jobs
   supervisor logging. Found on the way: `Backends::File#delete`'s rescue
-  can't run (`FileUtils.rm_f` swallows errors), so it could go.
+  can't run (`FileUtils.rm_f` swallows errors): removed.
 
 **T3. One test is a quarter of the suite.**
 `GeneratorsCombinationsTest#test_every_combination_works` takes 54 s of
