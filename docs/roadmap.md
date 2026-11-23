@@ -190,6 +190,10 @@ before they become features.
   to 0.21's layout means bringing each part over by hand. Options range from
   upgrade notes per release in the `CHANGELOG` to a `monk upgrade` command.
   `bin/migrate status` already shows a module's new migrations.
+- **`DATABASE_URL` in the scaffold.** `config/persistence.rb` reads five
+  `DB_*` vars, but some hosts hand over a `DATABASE_URL` instead (Fly's
+  `fly postgres attach`). Reading it too, with `URI.parse`, would be a
+  small change.
 
 ## Other work
 

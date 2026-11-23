@@ -16,6 +16,10 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.27
 
+In the `Gemfile`, `gem "monkrb", "~> 0.27", require: "monk"` (what a new
+app gets; `"~> 0.26"` would also install 0.27, but not require it), then
+`bundle update monkrb`.
+
 Boot now refuses some settings that are present but wrong
 ([`settings.md`](settings.md#values-refused-at-boot)). Check them before
 deploying, and in CI if it boots the app as staging or production:
