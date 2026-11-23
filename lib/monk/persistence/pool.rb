@@ -1,9 +1,8 @@
 module Monk
   module Persistence
-    # Named connection pools for short-lived Ractors
-    # (docs/history/plan-pg-pool.md). A PG::Connection can't be moved or
-    # shared across Ractors, so a pool lends nothing: a few worker Ractors
-    # own connections, and other Ractors send them calls to run.
+    # Named connection pools for short-lived Ractors. A PG::Connection can't
+    # be moved or shared across Ractors, so a pool lends nothing: a few worker
+    # Ractors own connections, and other Ractors send them calls to run.
     #
     #   caller --[:call, receiver, method, args, kwargs, reply, deadline]--> dispatcher's inbox
     #   dispatcher --> an idle worker (or the queue, until one is idle)

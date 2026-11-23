@@ -13,9 +13,8 @@ module Monk
       Example = Data.define(:tag, :todo)
       Production = Data.define(:key, :note, :placeholder)
 
-      # What a role means when the file already exists with other content:
-      # a wiring file stops the whole command, anything else is skipped
-      # (docs/history/plan-scaffold.md decision 26).
+      # What a role means when the file already exists with other content: a
+      # wiring file stops the whole command, anything else is skipped.
       ROLES = %i[wiring example test view demo].freeze
 
       # Which .env file each env group appends to.
@@ -73,12 +72,11 @@ module Monk
       end
 
       # A file copied verbatim from templates/<module>/<path>, or from
-      # `from:`, a template path or a block taking the options. `if:`, a
-      # block taking the options, decides whether it's copied at all.
+      # `from:`, a template path or a block taking the options. `if:`, a block
+      # taking the options, decides whether it's copied at all.
       # `app_name: true` replaces {{app}} with the app's name, in the file
       # written and in `monk help MODULE --file` (pwa's manifest); opt-in, so
-      # every other file stays byte for byte (docs/history/plan-pwa-push.md
-      # decision 3).
+      # every other file stays byte for byte.
       def copy(*paths, role:, from: nil, executable: false, if: nil, app_name: false)
         raise ArgumentError, "unknown role #{role.inspect}, one of #{ROLES.inspect}" unless ROLES.include?(role)
         raise ArgumentError, "from: needs a single path" if from && paths.size > 1

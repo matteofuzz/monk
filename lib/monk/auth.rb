@@ -21,10 +21,10 @@ module Monk
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
     MIN_SECRET_LENGTH = 32
 
-    # The login-email rate limit (docs/history/plan-auth-housekeeping.md decision
-    # 5): records a request unless one was recorded for the address less
-    # than $2 seconds ago. One statement, so racing requests for one
-    # address let exactly one through; a refused request changes nothing.
+    # The login-email rate limit: records a request unless one was recorded
+    # for the address less than $2 seconds ago. One statement, so racing
+    # requests for one address let exactly one through; a refused request
+    # changes nothing.
     LOGIN_REQUEST_SQL = <<~SQL.freeze
       INSERT INTO login_requests (email) VALUES ($1)
       ON CONFLICT (email) DO UPDATE SET requested_at = now()
@@ -50,10 +50,10 @@ module Monk
     SQL
 
     class << self
-      # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes
-      # the value, not the module -- Monk::Auth is always Ractor.shareable?
+      # Called from Base#freeze! (Seam B), via Monk.freeze_hooks. Freezes the
+      # value, not the module -- Monk::Auth is always Ractor.shareable?
       # regardless of its ivars, so freezing the module itself would do
-      # nothing (docs/design/persistence-ractor-connections.md "Phase 4/5 finding").
+      # nothing.
       def freeze_registry!
         begin
           @config = Ractor.make_shareable(@config)
@@ -196,16 +196,15 @@ module Monk
         end
       end
 
-      # Convenience for an app's own login-request handler: prints a
-      # magic link to the dev console (and log/development.log via
-      # Monk::Log.info), plus a scannable QR code beneath it if the
-      # optional `rqrcode` gem is in the app's own Gemfile -- makes
-      # testing the login flow from a second device (another browser, a
-      # phone) trivial without a mailer. A no-op outside development,
-      # same posture as every other dev-only escape hatch in this
-      # framework (docs/history/secure-cookie-dev-http.md). #deliver_link
-      # above is what an app should call day to day; this is its
-      # development-only fallback and is still fine to call directly.
+      # Convenience for an app's own login-request handler: prints a magic
+      # link to the dev console (and log/development.log via Monk::Log.info),
+      # plus a scannable QR code beneath it if the optional `rqrcode` gem is
+      # in the app's own Gemfile -- makes testing the login flow from a second
+      # device (another browser, a phone) trivial without a mailer. A no-op
+      # outside development, same posture as every other dev-only escape hatch
+      # in this framework. #deliver_link above is what an app should call day
+      # to day; this is its development-only fallback and is still fine to
+      # call directly.
       #
       # subject: is optional context for the printed line only (e.g. the
       # email being logged in) -- useful once more than one login is in
@@ -289,11 +288,11 @@ module Monk
 
       # Deletes expired login tokens and sessions, and login requests older
       # than login_request_interval; returns how many of each. At most
-      # batch_size rows per statement, so a large backlog (the first sweep
-      # of an app that never swept) holds no lock for long. Run nightly by
-      # Monk::Auth::Sweep (docs/history/plan-auth-housekeeping.md decision 3).
-      # Deliberately not grown onto Model: a `<` comparison is real
-      # query-DSL scope for a hygiene task (docs/design/auth-sessions.md).
+      # batch_size rows per statement, so a large backlog (the first sweep of
+      # an app that never swept) holds no lock for long. Run nightly by
+      # Monk::Auth::Sweep. Deliberately not grown onto Model: a `<` comparison
+      # is real query-DSL scope for a hygiene task
+      # (docs/design/auth-sessions.md).
       def sweep!(batch_size: SWEEP_BATCH_SIZE)
         ensure_configured!
         unless batch_size.is_a?(Integer) && batch_size.positive?

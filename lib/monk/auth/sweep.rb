@@ -6,8 +6,7 @@ module Monk
   module Auth
     # Monk::Auth.sweep! as a job: deletes expired login tokens and sessions
     # and old login requests. config/recurring.rb (monk add jobs) runs it
-    # nightly when auth is installed (docs/history/plan-auth-housekeeping.md
-    # decision 1):
+    # nightly when auth is installed:
     #
     #   Monk::Jobs.recurring "monk_auth_sweep", Monk::Auth::Sweep, cron: "17 3 * * *" if defined?(Monk::Auth::Sweep)
     class Sweep < Monk::Job

@@ -3,10 +3,9 @@ require "fileutils"
 module Monk
   module Generator
     # One `monk add`: works out every module to add (dependencies first,
-    # options inferred or missing), checks every file against the app,
-    # and only then writes -- or writes nothing, on a usage error, a missing
-    # choice, a conflict on a wiring file, or a dry run
-    # (docs/history/plan-scaffold.md decisions 2-5, 25-28).
+    # options inferred or missing), checks every file against the app, and
+    # only then writes -- or writes nothing, on a usage error, a missing
+    # choice, a conflict on a wiring file, or a dry run.
     class Run
       # A choice the user has to make before anything can be planned.
       MissingChoice = Class.new(StandardError) do
@@ -80,9 +79,9 @@ module Monk
       end
 
       # [definition, options] for every module to add, dependencies first.
-      # Options are inferred from the modules installed or being added in
-      # this same command (decision 13), so `--with jobs,live` picks
-      # Postgres for websocket's transport.
+      # Options are inferred from the modules installed or being added in this
+      # same command, so `--with jobs,live` picks Postgres for websocket's
+      # transport.
       def resolve
         available = (@installed + static_closure).map(&:to_s)
         plan = []

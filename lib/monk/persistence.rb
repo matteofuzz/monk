@@ -56,11 +56,10 @@ module Monk
         entry(name).conn
       end
 
-      # With options, declares a named pool (docs/history/plan-pg-pool.md):
-      # `size` worker Ractors, each with its own connection to the
-      # registered database `db`, that run calls sent from any other
-      # Ractor. Nothing connects until #start_pools! runs, in the process
-      # that uses it. Every process loads the declarations
+      # With options, declares a named pool: `size` worker Ractors, each with
+      # its own connection to the registered database `db`, that run calls
+      # sent from any other Ractor. Nothing connects until #start_pools! runs,
+      # in the process that uses it. Every process loads the declarations
       # (config/persistence.rb), next to #register.
       #
       # Without options, returns the started pool, from any Ractor.

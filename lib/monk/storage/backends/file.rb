@@ -94,8 +94,8 @@ module Monk
         end
 
         # A signed download link, the same for every call within one
-        # cache_window, so the browser's cache works: valid until the end
-        # of the window plus expires_in (docs/history/plan-storage.md decision 9).
+        # cache_window, so the browser's cache works: valid until the end of
+        # the window plus expires_in.
         def url(key, expires_in:, cache_window:, now: Time.now.to_i)
           Key.validate!(key)
           Input.link_times!(expires_in: expires_in, cache_window: cache_window)

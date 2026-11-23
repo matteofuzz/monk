@@ -2,12 +2,12 @@ require "json"
 
 module Monk
   module Live
-    # The server -> client wire shape (docs/history/plan-live.md "Wire protocol"): a
-    # `patch` (one DOM operation: a CSS target, a mode, some html) or a
-    # `batch` of them. Built as frozen Hashes and encoded to one frozen JSON
-    # String, so a publisher can hand the same object to every subscriber
-    # (ADR 0010). No `seq` here: it is per connection, so it can only be
-    # stamped at the edge, where the connection writes the frame.
+    # The server -> client wire shape: a `patch` (one DOM operation: a CSS
+    # target, a mode, some html) or a `batch` of them. Built as frozen Hashes
+    # and encoded to one frozen JSON String, so a publisher can hand the same
+    # object to every subscriber (ADR 0010). No `seq` here: it is per
+    # connection, so it can only be stamped at the edge, where the connection
+    # writes the frame.
     module Envelope
       MODES = %i[morph replace append prepend remove].freeze
 

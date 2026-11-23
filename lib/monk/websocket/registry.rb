@@ -6,11 +6,10 @@ module Monk
     CloseRequest = Data.define(:code, :reason)
 
     # A dedicated Ractor holding the live set of connection handles keyed by
-    # an app-assigned channel/subject -- mirrors StateRactor's shape
-    # (docs/design/ractor.md): the mutable Hash stays hidden inside this one
-    # Ractor, and every call is a synchronous "ask" answered on the
-    # caller's reply port, so registration/broadcast can never race each
-    # other.
+    # an app-assigned channel/subject (docs/design/ractor.md): the mutable
+    # Hash stays hidden inside this one Ractor, and every call is a
+    # synchronous "ask" answered on the caller's reply port, so
+    # registration/broadcast can never race each other.
     class Registry
       def initialize
         @ractor = Ractor.new do
@@ -88,7 +87,7 @@ module Monk
       end
 
       # register for each of keys, in one ask: one message and one reply
-      # instead of one each (docs/plan-ws-connect-ceiling.md, item 5).
+      # instead of one each.
       def register_many(keys, port)
         ask(:register_many, keys, port)
       end
@@ -101,9 +100,7 @@ module Monk
         ask(:broadcast, key, payload)
       end
 
-      # Not part of Phase 4's own plan bullets, but needed to actually
-      # observe step 17's "a crashed handler never leaks a stale registry
-      # entry" claim from outside the registry, rather than trusting it.
+      # How many connections are registered under key.
       def count(key)
         ask(:count, key, nil)
       end

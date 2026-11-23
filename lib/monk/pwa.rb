@@ -3,10 +3,10 @@ require_relative "pwa/errors"
 require_relative "pwa/manifest"
 require_relative "pwa/helpers"
 
-# Opt-in: require "monk/pwa" explicitly; `require "monk"` alone doesn't
-# load it. Makes the app installable (docs/history/plan-pwa-push.md, part A): the
-# app's own public/manifest.webmanifest, icons and public/sw.js, checked
-# at boot and linked from every page by <%= monk_head %>.
+# Opt-in: require "monk/pwa" explicitly; `require "monk"` alone doesn't load
+# it. Makes the app installable: the app's own public/manifest.webmanifest,
+# icons and public/sw.js, checked at boot and linked from every page by <%=
+# monk_head %>.
 module Monk
   Context.include(Pwa::Helpers)
 

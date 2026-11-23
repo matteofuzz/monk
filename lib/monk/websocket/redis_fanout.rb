@@ -5,9 +5,8 @@ require_relative "fanout"
 module Monk
   module WebSocket
     # Cross-process fan-out for Registry, opt-in: require
-    # "monk/websocket/redis_fanout" explicitly -- "monk/websocket" alone
-    # does not load this (docs/history/plan-websocket.md Phase 6, chosen over Postgres
-    # LISTEN/NOTIFY per docs/design/websocket.md Open Question 3).
+    # "monk/websocket/redis_fanout" explicitly -- "monk/websocket" alone does
+    # not load this.
     #
     # Wraps a Registry with the same public interface (#register,
     # #unregister, #count, #broadcast, #listen!), so an app swaps which object it
@@ -123,13 +122,11 @@ module Monk
 
         # No live connection lives on this object -- #listen! runs its
         # subscriber in a Ractor of its own, and #publisher below opens one
-        # client per Ractor, lazily -- so there's nothing left unshareable
-        # and this instance can freeze itself the same way Registry does.
-        # That matters for real use: an app holds this behind a module
-        # constant (e.g. ChatServer::REGISTRY, mirroring Registry's own
-        # existing usage) read from every connection's own Ractor, which
-        # raises Ractor::IsolationError unless the constant's value is
-        # shareable.
+        # client per Ractor, lazily -- so there's nothing left unshareable and
+        # this instance can freeze itself the same way Registry does. That
+        # matters for real use: an app holds this behind a module constant
+        # read from every connection's own Ractor, which raises
+        # Ractor::IsolationError unless the constant's value is shareable.
         freeze
       end
 
@@ -142,12 +139,11 @@ module Monk
 
       def subscriber_target = @redis_url
 
-      # A single shared Redis client called concurrently from every
-      # connection Ractor's #broadcast wouldn't be safe -- redis-rb clients
-      # aren't documented safe for concurrent commands from multiple
-      # threads, let alone Ractors. One client per calling Ractor, opened
-      # on first use and cached there, mirrors
-      # Monk::Persistence::Registry's #ractor_local/#entry exactly.
+      # A single shared Redis client called concurrently from every connection
+      # Ractor's #broadcast wouldn't be safe -- redis-rb clients aren't
+      # documented safe for concurrent commands from multiple threads, let
+      # alone Ractors. One client per calling Ractor, opened on first use and
+      # cached there.
       def publisher
         Ractor.current[:monk_redis_fanout_publisher] ||= Redis.new(url: @redis_url)
       end

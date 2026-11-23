@@ -3,11 +3,10 @@ require "openssl"
 
 module Monk
   module Storage
-    # The file backend's signed links: /_monk/storage/<token> stands in
-    # for a bucket's signed URL. A token is base64url(JSON payload) + "." +
-    # base64url(HMAC-SHA256 of that first part), the payload
-    # {m: "GET"|"PUT", k: key, e: expires_at, l: length, t: type}, l and t
-    # for uploads only (docs/history/plan-storage.md decision 8).
+    # The file backend's signed links: /_monk/storage/<token> stands in for a
+    # bucket's signed URL. A token is base64url(JSON payload) + "." +
+    # base64url(HMAC-SHA256 of that first part), the payload {m: "GET"|"PUT",
+    # k: key, e: expires_at, l: length, t: type}, l and t for uploads only.
     module Token
       module_function
 

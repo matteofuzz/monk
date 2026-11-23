@@ -2,10 +2,9 @@ require "timeout"
 
 module Monk
   module Jobs
-    # One worker Ractor's loop (docs/history/plan-jobs.md Phase 6): claim
-    # from the queues in order, run the job, finish or fail it, and wait
-    # poll_interval when there's nothing to claim. Plain module methods,
-    # not blocks, so they're callable from any Ractor.
+    # One worker Ractor's loop: claim from the queues in order, run the job,
+    # finish or fail it, and wait poll_interval when there's nothing to claim.
+    # Plain module methods, not blocks, so they're callable from any Ractor.
     module Worker
       # Failures that retrying can't fix.
       NEVER_RETRY = [UnknownJobError, NotImplementedError].freeze
@@ -75,7 +74,7 @@ module Monk
 
       # job is nil when its class couldn't be found (UnknownJobError).
       def self.record_failure(adapter, process_id, claim, error, job)
-        # Phase 0.3: the interrupted query is still running on the server,
+        # A timeout: the interrupted query is still running on the server,
         # and this connection's next query would wait for it.
         adapter.reset_connection if error.is_a?(Timeout::Error)
 

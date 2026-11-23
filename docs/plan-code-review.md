@@ -86,6 +86,12 @@ worth keeping. But some are history or cross-references:
 - Saves: maybe 300–500 lines. Risk: none to behaviour; it's judgment on
   every paragraph.
 - **Decided 2026-11-21: done together, file by file, as the last item.**
+- **Done 2026-11-23:** `server.rb` reviewed alone, then the other 51 files
+  in one pass: every pointer to a plan, phase, step, decision, gap or
+  item, every "mirrors X" and "found by", and two wrong comments in
+  `pg_fanout.rb`. ADR, design-doc and guide references kept. 94 lines
+  fewer: far under the estimate, since most of those comments explain a
+  why and stay.
 
 **L6. `Monk::Auth::RateLimiter` (46 lines, plus a 42-line test).** Nothing
 in `lib/` uses it since 0.22: the login-email limit moved to the database

@@ -80,12 +80,12 @@ module Monk
             end
           end
 
-          # One round trip, positionally matched to `ids` -- same length,
-          # same order, a `nil` in place of any id that doesn't exist
-          # (mirrors `find`'s single-row "nil means missing" rather than
-          # silently dropping the position, which would desync a caller
-          # zipping the result back against `ids`). A duplicate id in the
-          # input appears at every one of its positions in the output.
+          # One round trip, positionally matched to `ids` -- same length, same
+          # order, a `nil` in place of any id that doesn't exist (as `find`'s
+          # single-row "nil means missing", rather than silently dropping the
+          # position, which would desync a caller zipping the result back
+          # against `ids`). A duplicate id in the input appears at every one
+          # of its positions in the output.
           def find_all(ids)
             return [] if ids.empty?
 

@@ -47,17 +47,14 @@ module Monk
       attr_accessor :root, :layout
       attr_reader :registry
 
-      # Escapes unless the value is already Raw, and returns Raw either
-      # way -- so an explicit `<%= h(x) %>` isn't escaped twice by the
-      # implicit escape the compiler wraps every `<%= %>` in.
-      # ERB::Escape.html_escape, not ERB::Util.html_escape, though they
-      # produce byte-identical output: ERB::Util's is not flagged
-      # Ractor-safe, so a worker calling it raises Ractor::UnsafeError
-      # ("ractor unsafe method called from not main ractor"). Found by
-      # test/ractor_integration_test.rb, in a real worker, not by reading
-      # either implementation. ERB::Escape's is, and unlike
-      # CGI.escapeHTML it returns its argument when there's nothing to
-      # escape instead of a copy.
+      # Escapes unless the value is already Raw, and returns Raw either way --
+      # so an explicit `<%= h(x) %>` isn't escaped twice by the implicit
+      # escape the compiler wraps every `<%= %>` in. ERB::Escape.html_escape,
+      # not ERB::Util.html_escape, though they produce byte-identical output:
+      # ERB::Util's is not flagged Ractor-safe, so a worker calling it raises
+      # Ractor::UnsafeError ("ractor unsafe method called from not main
+      # ractor"). ERB::Escape's is, and unlike CGI.escapeHTML it returns its
+      # argument when there's nothing to escape instead of a copy.
       def h(value)
         return value if value.is_a?(Raw)
 

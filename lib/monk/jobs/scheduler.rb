@@ -3,12 +3,11 @@ require_relative "../log"
 
 module Monk
   module Jobs
-    # The supervisor's per-tick step for recurring tasks
-    # (docs/history/plan-scheduled-jobs.md decisions 5-7): asks the database about
-    # each task's most recent occurrence, which enqueues it at most once
-    # across every job process. Lives in the supervisor and isn't shared:
-    # the occurrence each task last handled is this process's own memory,
-    # so a tick reaches the database once per occurrence, not once a second.
+    # The supervisor's per-tick step for recurring tasks: asks the database
+    # about each task's most recent occurrence, which enqueues it at most once
+    # across every job process. Lives in the supervisor and isn't shared: the
+    # occurrence each task last handled is this process's own memory, so a
+    # tick reaches the database once per occurrence, not once a second.
     class Scheduler
       # Past this many, a catch-up log line stops counting.
       MAX_SKIPPED_COUNT = 10_000
@@ -62,7 +61,7 @@ module Monk
         report_catch_up(task, occurrence, firing, prefix)
       end
 
-      # Decision 6: after downtime only the latest occurrence fires.
+      # After downtime only the latest occurrence fires.
       def report_catch_up(task, occurrence, firing, prefix)
         return unless %i[enqueued skipped_pending].include?(firing.result) && firing.previous_checkpoint
 

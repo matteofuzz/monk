@@ -2,9 +2,9 @@ require "json"
 
 module Monk
   module Generator
-    # What one `monk add` did, or would do: printed as text for a person
-    # (decision 25), as one JSON object with --json (decision 27), and
-    # turned into the exit code (decision 28) -- all from the same data.
+    # What one `monk add` did, or would do: printed as text for a person, as
+    # one JSON object with --json, and turned into the exit code -- all from
+    # the same data.
     class Result
       EXIT_CODES = { ok: 0, usage_error: 1, missing_choice: 2, conflict: 3 }.freeze
 

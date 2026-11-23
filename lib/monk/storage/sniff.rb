@@ -1,11 +1,10 @@
 module Monk
   module Storage
     # A file's type from its first bytes, since the Content-Type a client
-    # sends can't be trusted. Defence in depth: the type a signed link
-    # serves is the one the app signed into presigned_put from its allowed
-    # list, and this catches a file whose bytes don't match it
-    # (docs/history/plan-storage.md decision 12). At confirm, read only these
-    # bytes:
+    # sends can't be trusted. Defence in depth: the type a signed link serves
+    # is the one the app signed into presigned_put from its allowed list, and
+    # this catches a file whose bytes don't match it. At confirm, read only
+    # these bytes:
     #
     #   head = Monk::Storage.get(key, range: Monk::Storage::Sniff::RANGE)
     #   Monk::Storage::Sniff.refuse_svg!(head)

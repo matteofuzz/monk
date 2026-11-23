@@ -33,7 +33,7 @@ module Monk
           RETURNING job_id
         SQL
 
-        # Decision 2: the claim rewrites only the narrow monk_jobs row. args
+        # The claim rewrites only the narrow monk_jobs row (ADR 0013). args
         # comes back as text and is parsed here rather than by the
         # connection's result type map, so it decodes the same whichever
         # connection runs it.
@@ -119,11 +119,11 @@ module Monk
 
         # Deletes processes whose heartbeat is older than $1 seconds, and
         # releases their running jobs back to available with their attempt
-        # still counted (Decision 4). Also releases running jobs with no
-        # process row at all once they've been running that long -- a
-        # drain! that crashed mid-job, or rows left by a bug. The NOT EXISTS
-        # sees the rows as they were before the DELETE, so a pruned
-        # process's jobs are caught by the first condition.
+        # still counted. Also releases running jobs with no process row at all
+        # once they've been running that long -- a drain! that crashed
+        # mid-job, or rows left by a bug. The NOT EXISTS sees the rows as they
+        # were before the DELETE, so a pruned process's jobs are caught by the
+        # first condition.
         PRUNE_SQL = <<~SQL.freeze
           WITH dead AS (
             DELETE FROM monk_processes
@@ -153,16 +153,15 @@ module Monk
           WHERE id = $1 AND state = 'running' AND locked_by = $2
         SQL
 
-        # The scheduler's one statement per occurrence (docs/history/plan-scheduled-jobs.md
-        # decisions 5-8). ins, reinit and advance touch the task's row in
-        # mutually exclusive cases; advance is a compare-and-set on the
-        # checkpoint, so of several processes firing the same occurrence
-        # exactly one moves it and enqueues. The job's id is drawn from the
-        # sequence first, so the same UPDATE records it as last_job_id;
-        # that burns an id on calls that don't enqueue, harmless on a
-        # BIGINT. The pending check sits inside advance, so READ
-        # COMMITTED's recheck sees the row a racing UPDATE left. $10 stands
-        # in for now() under Monk::Jobs.run_scheduler!(at:).
+        # The scheduler's one statement per occurrence. ins, reinit and
+        # advance touch the task's row in mutually exclusive cases; advance is
+        # a compare-and-set on the checkpoint, so of several processes firing
+        # the same occurrence exactly one moves it and enqueues. The job's id
+        # is drawn from the sequence first, so the same UPDATE records it as
+        # last_job_id; that burns an id on calls that don't enqueue, harmless
+        # on a BIGINT. The pending check sits inside advance, so READ
+        # COMMITTED's recheck sees the row a racing UPDATE left. $10 stands in
+        # for now() under Monk::Jobs.run_scheduler!(at:).
         FIRE_RECURRING_SQL = <<~SQL.freeze
           WITH gate AS (
             SELECT $3::timestamptz <= COALESCE($10::timestamptz, now()) AS due
@@ -279,7 +278,7 @@ module Monk
         end
 
         # Whether monk_recurring_tasks exists, checked once when bin/jobs
-        # starts (docs/history/plan-scheduled-jobs.md decision 9).
+        # starts.
         def recurring_table?
           with_connection { |c| !c.exec("SELECT to_regclass('monk_recurring_tasks')::text").getvalue(0, 0).nil? }
         end
@@ -331,11 +330,11 @@ module Monk
         end
 
         # After a job timed out mid-query: cancels whatever the calling
-        # Ractor's connection is still running on the server, then
-        # reconnects, so the worker's next query doesn't wait for the
-        # abandoned one (Phase 0.3) or land inside its open transaction.
-        # The cancel stays here: that connection is alive, just busy, so
-        # checkout's own probe wouldn't reset it.
+        # Ractor's connection is still running on the server, then reconnects,
+        # so the worker's next query doesn't wait for the abandoned one or
+        # land inside its open transaction. The cancel stays here: that
+        # connection is alive, just busy, so checkout's own probe wouldn't
+        # reset it.
         def reset_connection
           conn = Monk::Persistence::Pg[@db_name]
           conn.cancel

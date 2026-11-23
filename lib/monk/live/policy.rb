@@ -8,13 +8,12 @@ module Monk
     # `topic == "contacts:#{subject}"` would otherwise let a nil subject
     # in through "contacts:". A block that raises fails closed.
     #
-    # A rule with db_pool: runs its block in that Monk::Persistence::Pg
-    # pool (docs/history/plan-pg-pool.md), not in the socket's own Ractor,
-    # so a rule that queries the database doesn't open a connection per
-    # open page. The block crosses to the pool as it is: rules are
-    # shareable procs already. If the pool itself fails (not started in
-    # this process, timed out, full), the rule denies and the reason is
-    # logged.
+    # A rule with db_pool: runs its block in that Monk::Persistence::Pg pool,
+    # not in the socket's own Ractor, so a rule that queries the database
+    # doesn't open a connection per open page. The block crosses to the pool
+    # as it is: rules are shareable procs already. If the pool itself fails
+    # (not started in this process, timed out, full), the rule denies and the
+    # reason is logged.
     module Policy
       Rule = Data.define(:pattern, :anonymous, :check, :db_pool) do
         def matches?(topic)

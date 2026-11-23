@@ -6,8 +6,8 @@ require_relative "scheduler"
 module Monk
   module Jobs
     # A job process (bin/jobs): the supervisor in the calling Ractor and N
-    # worker Ractors (docs/history/plan-jobs.md Phase 6). Opt-in on its own,
-    # require "monk/jobs/runtime" -- the web process only enqueues.
+    # worker Ractors. Opt-in on its own, require "monk/jobs/runtime" -- the
+    # web process only enqueues.
     #
     #   Monk::Jobs::Runtime.new(queues: %w[mailers default], workers: 5).run
     #
@@ -134,9 +134,8 @@ module Monk
         last_heartbeat
       end
 
-      # Recurring tasks (docs/history/plan-scheduled-jobs.md decision 1). An
-      # occurrence that errors isn't marked handled, so the next tick asks
-      # again.
+      # Recurring tasks. An occurrence that errors isn't marked handled, so
+      # the next tick asks again.
       def schedule
         @scheduler.run
       rescue StandardError => e
@@ -144,8 +143,8 @@ module Monk
         reconnect
       end
 
-      # Decision 9: a missing table is a deploy mistake, said once here
-      # rather than every second by the scheduler.
+      # A missing table is a deploy mistake, said once here rather than every
+      # second by the scheduler.
       def check_recurring_table!(tasks)
         return if tasks.empty? || @adapter.recurring_table?
 
@@ -192,7 +191,7 @@ module Monk
       end
 
       # One port per worker: Ractor#monitor's message is a bare :exited or
-      # :aborted that doesn't say which Ractor (Phase 0.4).
+      # :aborted that doesn't say which Ractor.
       def worker_exited(port)
         index, ractor = @monitors.delete(port)
         @controls.delete(index)

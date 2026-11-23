@@ -19,9 +19,8 @@ module Monk
     # 4.0 a GC runs whenever new connection Ractors have used up the free
     # pages of the smallest heap (each takes one, however little it
     # allocates), and every GC stops and marks every open socket: at 15K
-    # sockets held, these run 6-30x fewer GCs, for ~30% more memory
-    # (docs/plan-ws-connect-ceiling.md, "After items 1-5"). Measured to
-    # change nothing on 4.1, whose Ractors have heaps of their own.
+    # sockets held, these run 6-30x fewer GCs, for ~30% more memory. Measured
+    # to change nothing on 4.1, whose Ractors have heaps of their own.
     WEBSOCKET_GC_ENV = {
       "RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO" => "0.6",
       "RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO" => "0.8",

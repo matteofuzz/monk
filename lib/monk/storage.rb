@@ -25,8 +25,8 @@ module Monk
     # STORAGE_SECRET is unset. Fixed, so a link built by bin/jobs also
     # works in the web process.
     DEVELOPMENT_SECRET = "monk-storage-development-secret".freeze
-    # url's defaults: links valid for at least an hour, the same URL for
-    # a whole hour (docs/history/plan-storage.md decision 9).
+    # url's defaults: links valid for at least an hour, the same URL for a
+    # whole hour.
     CACHE_WINDOW = 3600
     EXPIRES_IN = 3600
     # presigned_put's default: an upload starts within minutes of asking.
@@ -62,8 +62,8 @@ module Monk
         Key.generate(prefix: prefix)
       end
 
-      # The API, the same on every backend (docs/history/plan-storage.md decision 3),
-      # each call logged as one line without URLs or secrets.
+      # The API, the same on every backend, each call logged as one line
+      # without URLs or secrets.
 
       # Returns the key. body is a String, or an IO that responds to size,
       # read and rewind.

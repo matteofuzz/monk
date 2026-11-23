@@ -142,9 +142,8 @@ module Monk
       end
     end
 
-    # Secure everywhere but development, where the app is served over
-    # plain http and Safari would drop a Secure cookie
-    # (docs/history/secure-cookie-dev-http.md).
+    # Secure everywhere but development, where the app is served over plain
+    # http and Safari would drop a Secure cookie.
     def add_cookie(name, value, max_age:, http_only: true, secure: !Monk.env.development?)
       flags = ["Path=/", "SameSite=Lax", "Max-Age=#{max_age}"]
       flags << "Secure" if secure
