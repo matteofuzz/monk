@@ -33,7 +33,9 @@ class AuthSecretTest < Minitest::Test
 
   def test_development_and_test_keep_their_placeholders
     configure("development", "change-me-dev-secret")
+    assert_equal "change-me-dev-secret", Monk::Auth.config[:secret]
     configure("test", "s")
+    assert_equal "s", Monk::Auth.config[:secret]
   end
 
   private

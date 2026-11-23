@@ -75,6 +75,8 @@ class PwaTest < Minitest::Test
     remote_icon = { "src" => "https://cdn.example/i.png", "sizes" => "48x48" }
     remote = MANIFEST.merge("icons" => MANIFEST["icons"] + [remote_icon])
     with_public(manifest: remote) { |root| Monk::Pwa.configure(root: root) }
+
+    assert_includes Monk::Pwa.manifest["icons"], remote_icon
   end
 
   def test_an_app_without_assets_cant_use_it

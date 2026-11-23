@@ -93,8 +93,8 @@ class JobsCronTest < Minitest::Test
   end
 
   def test_february_29_and_day_31_are_accepted
-    Cron.parse("0 0 29 2 *")
-    Cron.parse("0 0 31 * *")
+    assert_equal Time.utc(2028, 2, 29), Cron.parse("0 0 29 2 *").next_after(Time.utc(2027, 1, 1))
+    assert_equal Time.utc(2027, 3, 31), Cron.parse("0 0 31 * *").next_after(Time.utc(2027, 2, 1))
   end
 
   # -- previous / next_after -------------------------------------------------

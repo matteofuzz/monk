@@ -254,7 +254,7 @@ class StorageS3BackendTest < Minitest::Test
   def test_check_accepts_the_older_top_level_prefix
     serve(ALLOWED, lifecycle("<Prefix>tmp/</Prefix><Status>Enabled</Status><Expiration><Days>1</Days></Expiration>"))
 
-    backend.check(origin: "https://app.monkrb.org")
+    assert_includes backend.check(origin: "https://app.monkrb.org"), "Nothing was written."
   end
 
   def test_check_names_a_disabled_rule_or_another_prefix

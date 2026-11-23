@@ -100,7 +100,7 @@ class SettingsTest < Minitest::Test
   def test_public_url_accepts_real_hosts_localhost_and_ips_in_production
     %w[https://app.monkrb.org https://localhost https://localhost:8443 https://192.0.2.10 https://example.community
        https://notexample.com].each do |url|
-      boot("production", public_url: url)
+      assert boot("production", public_url: url), url
     end
   end
 
@@ -115,7 +115,7 @@ class SettingsTest < Minitest::Test
   end
 
   def test_apps_without_public_url_or_live_ws_url_boot_as_before
-    boot("production")
+    assert boot("production")
   end
 
   private
@@ -130,6 +130,7 @@ class SettingsTest < Minitest::Test
               optional :live_ws_url, default: "ws://localhost:9293" if live_ws_url
             end
             Monk::Settings.freeze_registry!
+            Monk::Settings.booted?
           end
         end
       end
