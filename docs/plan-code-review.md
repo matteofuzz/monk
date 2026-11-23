@@ -255,6 +255,13 @@ sign a bucket request with SigV4.
   less flaky on a slow machine.
 - Change: look at the ones of 1 s or more first. Risk: low; a wrong
   condition shows up as a failure, not a silent pass.
+- **Done 2026-11-23:** most of the long ones check that nothing happens
+  (no reconnect while offline, hidden or stopped), so no condition can
+  replace them. `fast_backoff!` (`live_browser_helpers.rb`) starts the
+  backoff at 50 ms, so those waits are 0.3 to 0.6 s instead of 1.2 to 4 s;
+  each still fails on a client with its guard removed (checked).
+  "An answering socket stays open" waits for six pings instead. Left:
+  the resync-coalescing wait and the jobs rerun check.
 
 **T8. 21 tests have no assertion of their own.**
 - Some wait in a helper that fails on timeout, which is fine.
