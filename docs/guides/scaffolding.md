@@ -35,7 +35,7 @@ modules it needs, first:
 | `postgres` | Postgres persistence and migrations ([`persistence.md`](persistence.md), [`migrations.md`](migrations.md)) | — |
 | `redis` | the app's Redis: a cache, rate limits, or WebSocket's transport | — |
 | `mail` | email over SMTP; printed to the console in development ([`mail.md`](mail.md)) | — |
-| `auth` | passwordless login by email link ([`auth.md`](auth.md)) | `postgres`, `mail` |
+| `auth` | passwordless login by email link or code ([`auth.md`](auth.md)) | `postgres`, `mail` |
 | `jobs` | background jobs on Postgres, run by `bin/jobs` ([`jobs.md`](jobs.md)) | `postgres` |
 | `websocket` | the WebSocket server process ([`websocket.md`](websocket.md)) | `postgres` or `redis` |
 | `live` | HTML pushed to open pages ([`live.md`](live.md)) | `websocket` |
@@ -92,13 +92,15 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
   `mail-welcome` example and its route; `MAIL_URL=log://` for tests; a test
   that delivers to `log/test.log`.
 - **auth:** `config/auth.rb`, `app/mailers/auth_mailer.rb` (sends the login
-  link), the tables' migrations (with `login_requests`, for the rate limit),
-  a login page, and the `auth-routes` example: request a link (one per
-  address a minute, `Monk::Auth.allow_login_request?`), the callback,
-  logout, a page for logged-in users. The routes stay commented until
-  you've looked at the rate limit and the redirects; `AGENTS.md` says why.
-  A test sends a link and redeems it. With jobs, `config/recurring.rb`
-  sweeps expired sessions and tokens nightly (`monk_auth_sweep`).
+  link and code), the tables' migrations (with `login_requests`, for the
+  rate limit), a login page that then asks for the code, and the
+  `auth-routes` example: request a link (one per address a minute,
+  `Monk::Auth.allow_login_request?`), the callback, the code, the
+  installed iPhone app's own session, logout, a page for logged-in users.
+  The routes stay commented until you've looked at the rate limit and the
+  redirects; `AGENTS.md` says why. A test sends a link and code and
+  redeems each. With jobs, `config/recurring.rb` sweeps expired tokens and
+  old sessions nightly (`monk_auth_sweep`).
 - **jobs:** `config/jobs.rb`, `bin/jobs`, the queue's migration and the
   recurring tasks' one, the demo `HelloJob`, the `jobs-enqueue` example,
   and `config/recurring.rb` with the `jobs-recurring` example (the demo
@@ -138,7 +140,7 @@ out where that code goes (below). **A test** in `test/` proves the wiring:
 Each example is a block of commented code, tagged:
 
 ```ruby
-# monk:example auth-routes -- log in by email link, log out, a page for logged-in users.
+# monk:example auth-routes -- log in by email link or code, log out, a page for logged-in users.
 # # Before going live: keep the rate limit ...
 # class App
 #   post("/auth/request") do

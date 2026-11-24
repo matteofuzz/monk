@@ -1,6 +1,6 @@
 # Passwordless authentication & sessions
 
-> **Status: implemented** as `Monk::Auth` (usage: [`guides/auth.md`](../guides/auth.md)). The text below is the original design record, so phrases like "no code yet", "proposed API" and the working-branch note are out of date.
+> **Status: implemented** as `Monk::Auth` (usage: [`guides/auth.md`](../guides/auth.md)). The text below is the original design record, so phrases like "no code yet", "proposed API" and the working-branch note are out of date. Since then, 0.28 added a 6-digit sign-in code redeeming the same login token (`request_login` now returns `{ token:, code: }`), sessions renewed by use, `split` for the installed iPhone app, `redirect_allowlist` patterns, and `expired_retention` before expired sessions are swept (`docs/plan-onboarding.md`).
 
 Status: design finalized across all three transports, 2026-09-01 — no code
 yet. Implementation plan: `docs/history/plan-auth.md`. Working branch:
