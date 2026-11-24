@@ -65,6 +65,13 @@ module Monk
           THEN login_requests.code_failures_since ELSE now() END
     SQL
 
+    # Renewal by use: only while the row still ends before $3 (now plus
+    # half the TTL), so two requests arriving together write once.
+    RENEW_SESSION_SQL = <<~SQL.freeze
+      UPDATE sessions SET expires_at = $2 WHERE id = $1 AND expires_at < $3 AND revoked_at IS NULL
+      RETURNING expires_at
+    SQL
+
     SWEEP_BATCH_SIZE = 10_000
 
     # sweep!'s statements, one batch each. Tokens and sessions expire by
@@ -106,15 +113,18 @@ module Monk
       # route, but builds links to it: login_link below, and so
       # Monk::Auth::SendLoginLink. login_request_interval: is the seconds
       # allow_login_request? makes an address wait between login emails.
+      # session_max_age: caps a session's whole life, in seconds from its
+      # creation, however much it's used (nil: no cap).
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
+        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60, session_max_age: nil
       )
         config = {
           db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
           redirect_allowlist: checked_redirect_allowlist(redirect_allowlist), secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
+          session_max_age: checked_session_max_age(session_max_age),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -351,16 +361,29 @@ module Monk
       # As #verify, with when the session expires: {subject:, expires_at:},
       # or nil. The helpers use it to reissue a CSRF cookie that lives as
       # long as its session.
-      def verified_session(raw)
+      #
+      # renew: true (the helpers, on every HTTP request) also renews a
+      # session in use: once less than half of session_ttl is left, its
+      # expires_at moves to now + session_ttl (never past session_max_age
+      # from its creation), and the result says renewed: true so the
+      # caller reissues its cookies. One UPDATE per session per half TTL,
+      # never per request. #verify (the WebSocket's check) never writes.
+      def verified_session(raw, renew: false)
         ensure_configured!
         return nil if raw.nil? || raw.empty?
 
         row = Session.where(token_hash: hash_token(raw)).first
         return nil unless row
         return nil if row[:revoked_at]
-        return nil if row[:expires_at] <= Time.now
 
-        { subject: row[:subject], expires_at: row[:expires_at] }
+        now = Time.now
+        return nil if row[:expires_at] <= now
+
+        ends_at = config[:session_max_age] && (row[:created_at] + config[:session_max_age])
+        return nil if ends_at && ends_at <= now
+
+        session = { subject: row[:subject], expires_at: row[:expires_at] }
+        renew ? renewed(row, session, now, ends_at) : session
       end
 
       def revoke(raw)
@@ -462,6 +485,21 @@ module Monk
         { token: session_raw, subject: row[:email], expires_at: expires_at, redirect_to: row[:redirect_to] }
       end
 
+      # session with expires_at moved and renewed: true, when it was due
+      # and this request got there first; session as it was otherwise.
+      def renewed(row, session, now, ends_at)
+        ttl = config[:session_ttl]
+        return session if row[:expires_at] >= now + (ttl / 2.0)
+
+        new_expires_at = [now + ttl, ends_at].compact.min
+        return session if new_expires_at <= row[:expires_at]
+
+        updated = Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(RENEW_SESSION_SQL, [row[:id], new_expires_at, now + (ttl / 2.0)]).ntuples.positive?
+        end
+        updated ? session.merge(expires_at: new_expires_at, renewed: true) : session
+      end
+
       def code_locked?(email)
         Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
           conn.exec_params(CODE_LOCKED_SQL, [email, MAX_CODE_FAILURES_PER_HOUR]).ntuples.positive?
@@ -536,6 +574,14 @@ module Monk
           total += deleted
           return total if deleted < batch_size
         end
+      end
+
+      def checked_session_max_age(seconds)
+        return nil if seconds.nil?
+        return seconds if seconds.is_a?(Integer) && seconds.positive?
+
+        raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(session_max_age:) must be nil (no cap) or a " \
+                                            "positive Integer of seconds, got #{seconds.inspect}"
       end
 
       def checked_login_request_interval(seconds)

@@ -7,19 +7,28 @@ module Monk
     # memoizing current_subject on it is exempt from the app's
     # shareability constraints -- nothing here needs Ractor.make_shareable.
     module Helpers
-      # With a session cookie, also mends the csrf_token cookie when it
-      # doesn't match the session: after AUTH_SECRET changes (a restored
-      # backup, a rotated secret) the session still verifies, since it's
-      # stored as a plain hash, but the cookie was signed with the old
-      # secret, and every require_csrf! route, logout included, would be
-      # a 403 until the browser's cookies were cleared.
+      # Renews a session in use (Monk::Auth.verified_session's renew:),
+      # and with a session cookie reissues both cookies when it did.
+      # Otherwise it still mends the csrf_token cookie when it doesn't
+      # match the session: after AUTH_SECRET changes (a restored backup, a
+      # rotated secret) the session still verifies, since it's stored as a
+      # plain hash, but the cookie was signed with the old secret, and
+      # every require_csrf! route, logout included, would be a 403 until
+      # the browser's cookies were cleared.
       def current_subject
         return @current_subject if defined?(@current_subject)
-        return @current_subject = Monk::Auth.verify(bearer_token) if bearer_token
+
+        if bearer_token
+          return @current_subject = Monk::Auth.verified_session(bearer_token, renew: true)&.fetch(:subject)
+        end
 
         token = session_cookie_token
-        session = Monk::Auth.verified_session(token)
-        reissue_csrf_cookie(token, session[:expires_at]) if session
+        session = Monk::Auth.verified_session(token, renew: true)
+        if session&.dig(:renewed)
+          set_session_cookie(token: token, expires_at: session[:expires_at])
+        elsif session
+          reissue_csrf_cookie(token, session[:expires_at])
+        end
         @current_subject = session&.fetch(:subject)
       end
 
