@@ -148,7 +148,14 @@ gets its own design doc and plan when work on it starts.
    agents, redacted bug-report output, and a `LISTEN` check through
    PgBouncer (Monk's deploy stack has none).
 
-7. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+7. **0.28: A smoother first sign-in.** From monk_talk's onboarding
+   walk (2026-11-24): a 6-digit code beside the magic link, sessions
+   renewed by use, the installed iPhone app's own session, push that
+   outlives an idle session, `redirect_allowlist` patterns, and a helper
+   to install the app. Plan:
+   `docs/plan-onboarding.md`.
+
+8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.
