@@ -10,6 +10,11 @@ class PwaBrowserTest < Minitest::Test
   include GeneratorTestHelpers
   include PersistenceTestHelpers
 
+  IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) " \
+           "Version/26.6 Mobile/15E148 Safari/604.1".freeze
+  ANDROID = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 " \
+            "Mobile Safari/537.36".freeze
+
   # Its own Chrome, not the Live tests' one: Ferrum opens every page in a
   # new browser context, which Chrome treats as incognito, and in incognito
   # getInstallabilityErrors stops at "in-incognito" without checking the
@@ -174,6 +179,69 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # register.js tells the page where it runs, and <%= monk_install %>'s
+  # banner follows (docs/plan-onboarding.md, decisions 11-12).
+  def test_on_a_desktop_the_page_learns_it_and_the_banner_stays_hidden
+    with_install_probe do |origin|
+      @page.go_to("#{origin}/install-probe")
+      wait_until { root_data("pwaPlatform") }
+
+      assert_equal "other", root_data("pwaPlatform")
+      assert_equal "false", root_data("pwaStandalone")
+      assert_nil root_data("pwaInApp")
+      assert @page.evaluate("document.querySelector('[data-monk-install-banner]').hidden")
+    end
+  end
+
+  def test_on_an_iphone_the_banner_shows_and_its_button_opens_the_sheet
+    with_install_probe do |origin|
+      user_agent(IPHONE)
+      @page.go_to("#{origin}/install-probe")
+      wait_until { root_data("pwaPlatform") == "ios" }
+
+      refute @page.evaluate("document.querySelector('[data-monk-install-banner]').hidden")
+      @page.evaluate("document.querySelector('[data-monk-install]').click()")
+      assert @page.evaluate("document.querySelector('[data-monk-install-sheet]').open")
+    end
+  end
+
+  def test_a_social_apps_built_in_browser_is_marked
+    with_install_probe do |origin|
+      user_agent("#{IPHONE} Instagram 380.0.0.0.0")
+      @page.go_to("#{origin}/install-probe")
+      wait_until { root_data("pwaPlatform") }
+
+      assert_equal "", root_data("pwaInApp")
+    end
+  end
+
+  # Chrome's prompt, as a page gets it: the test fires the event, and a
+  # script run before the page's own gives it a stand-in prompt().
+  def test_on_android_the_browsers_prompt_shows_the_banner_and_its_button_opens_it
+    with_install_probe do |origin|
+      user_agent(ANDROID)
+      @page.command("Page.addScriptToEvaluateOnNewDocument", source: <<~JS)
+        addEventListener("beforeinstallprompt", (event) => {
+          event.prompt = () => { window.prompted = true; };
+        });
+      JS
+      @page.go_to("#{origin}/install-probe")
+      wait_until { root_data("pwaPlatform") == "android" }
+
+      @page.execute(<<~JS)
+        document.addEventListener("monk-pwa:installable", () => { window.installableSeen = true; });
+        window.dispatchEvent(new Event("beforeinstallprompt", { cancelable: true }));
+      JS
+
+      assert_equal "", root_data("pwaInstallable")
+      assert @page.evaluate("window.installableSeen")
+      refute @page.evaluate("document.querySelector('[data-monk-install-banner]').hidden")
+      @page.evaluate("document.querySelector('[data-monk-install]').click()")
+      assert @page.evaluate("window.prompted")
+      refute @page.evaluate("document.querySelector('[data-monk-install-sheet]').open")
+    end
+  end
+
   # push.js in a generated push app (monk add push): the page learns its
   # state at once, even with notifications allowed and a push service that
   # never answers -- headless Chrome reaches none, so subscribing itself is
@@ -227,6 +295,30 @@ class PwaBrowserTest < Minitest::Test
       with_server(dest) { |port| yield "http://127.0.0.1:#{port}", calls, dest }
     end
   end
+
+  # A pwa app with a page holding <%= monk_install %>. Chrome's own install
+  # events (it may offer, or think the app installed, from an earlier test
+  # in this profile) are kept from the page: only the test's own reach it.
+  def with_install_probe
+    @page.command("Page.addScriptToEvaluateOnNewDocument", source: <<~JS)
+      for (const name of ["beforeinstallprompt", "appinstalled"]) {
+        addEventListener(name, (event) => { if (event.isTrusted) event.stopImmediatePropagation(); }, true);
+      }
+    JS
+    with_new_app(:pwa) do |dest|
+      File.write(File.join(dest, "app/views/install_probe.erb"), "<%= monk_install %>\n")
+      File.write(File.join(dest, "app/routes/install_probe.rb"), <<~RUBY)
+        class App
+          get("/install-probe") { render "install_probe" }
+        end
+      RUBY
+      with_server(dest) { |port| yield "http://127.0.0.1:#{port}" }
+    end
+  end
+
+  def user_agent(value) = @page.command("Emulation.setUserAgentOverride", userAgent: value)
+
+  def root_data(name) = @page.evaluate("document.documentElement.dataset.#{name} ?? null")
 
   def pretend_standalone
     @page.command("Page.addScriptToEvaluateOnNewDocument",
