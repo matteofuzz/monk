@@ -204,6 +204,9 @@ before they become features.
   `DB_*` vars, but some hosts hand over a `DATABASE_URL` instead (Fly's
   `fly postgres attach`). Reading it too, with `URI.parse`, would be a
   small change.
+- **App stats, for agents and for humans.** Which numbers about a
+  running app are worth collecting (candidates to pick from), and how to
+  expose them: an API for agents, and a dashboard or a CLI for humans.
 
 ## Other work
 
