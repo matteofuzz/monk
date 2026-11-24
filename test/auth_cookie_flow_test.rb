@@ -15,7 +15,7 @@ class AuthCookieFlowTest < Minitest::Test
   def build_app
     Class.new(Monk::Base) do
       post("/auth/request") do |ctx|
-        token = Monk::Auth.request_login(ctx.params[:email], redirect_to: ctx.params[:redirect_to])
+        token = Monk::Auth.request_login(ctx.params[:email], redirect_to: ctx.params[:redirect_to])[:token]
         ctx.json(token: token) # test-only: a real app emails this, never echoes it
       end
 

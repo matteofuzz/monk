@@ -17,8 +17,10 @@ Monk::Auth.configure(
   db_name: :primary,
   secret: ENV.fetch("AUTH_SECRET"),
   login_ttl: 600,          # seconds a login token stays redeemable
-  session_ttl: 1_209_600,  # seconds a session stays valid (14 days)
-  redirect_allowlist: [],  # paths request_login(redirect_to:) is allowed to target
+  session_ttl: 1_209_600,  # seconds a session stays valid unused (14 days); renewed while it's used
+  session_max_age: nil,    # seconds a session can last however much it's used (nil: no cap)
+  expired_retention: 7_776_000, # seconds an expired session is kept (90 days): push still reaches it
+  redirect_allowlist: [],  # paths (Strings) and patterns (Regexps, matched whole) a login may return to
   callback_path: "/auth/callback", # your route redeeming a token: GET "#{callback_path}/:token"
   login_request_interval: 60, # seconds an address waits between login emails (allow_login_request?)
   secure: !Monk.env.development?, # Secure cookie flag; off in dev so plain-http testing works (Safari drops it)

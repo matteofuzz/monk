@@ -229,10 +229,12 @@ it lives in `app/mailers/` with the app's other emails:
 ```ruby
 # app/mailers/auth_mailer.rb
 module AuthMailer
-  MAGIC_LINK = lambda do |email:, link:, token:|
+  # Called with email:, link:, token:, redirect_to: and code:; ** takes the rest.
+  MAGIC_LINK = lambda do |email:, link:, code:, **|
     Monk::Auth.log_dev_link(link, subject: email) # development only: console line + QR code
-    Monk::Mail.deliver(to: email, subject: "Your login link",
-      text: "Log in: #{link}", html: Monk::Mail.render("mail/magic_link", link: link))
+    Monk::Mail.deliver(to: email, subject: "#{code} is your shop code",
+      text: "Your login code: #{code}\n\nOr log in: #{link}",
+      html: Monk::Mail.render("mail/magic_link", link: link, code: code))
   end
 end
 ```

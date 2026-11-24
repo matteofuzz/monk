@@ -9,8 +9,12 @@ JSON with `name`, `short_name`, `start_url`, an installable `display`, a
 `icons/apple-touch-icon.png`; otherwise the boot fails with
 `Monk::Pwa::InvalidManifestError`. `<%= monk_head %>` links the manifest
 and the icon, and loads `/_monk/pwa/register.js`, which registers `/sw.js`
-and reports `monk-pwa:registered`, `monk-pwa:unsupported` or
-`monk-pwa:failed` on `document`.
+and reports `monk-pwa:registered`, `monk-pwa:unsupported`,
+`monk-pwa:failed`, `monk-pwa:installable` and `monk-pwa:installed` on
+`document`. It also sets `data-pwa-standalone`, `data-pwa-platform`
+(`ios`/`android`/`other`), `data-pwa-installable` and `data-pwa-in-app`
+on `<html>`, for CSS. `<%= monk_install %>` renders an install banner
+(hidden until it applies; BEM classes, no styles).
 
 **Test:** `test/pwa_test.rb` requests the manifest, its icons and
 `sw.js`, and checks a page links them.

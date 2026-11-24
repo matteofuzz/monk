@@ -148,7 +148,15 @@ gets its own design doc and plan when work on it starts.
    agents, redacted bug-report output, and a `LISTEN` check through
    PgBouncer (Monk's deploy stack has none).
 
-7. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+7. **0.28: A smoother first sign-in.** Built (2026-11-24), not yet
+   released. From walking a real app's invitation and sign-up flows on
+   phones: a 6-digit code beside the magic link, sessions renewed by use,
+   the installed iPhone app's own session, push that outlives an idle
+   session, `redirect_allowlist` patterns, and a helper to install the
+   app. Left: the checks on devices, in the "Open checks" of
+   `docs/plan-onboarding.md`.
+
+8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.
@@ -196,6 +204,9 @@ before they become features.
   `DB_*` vars, but some hosts hand over a `DATABASE_URL` instead (Fly's
   `fly postgres attach`). Reading it too, with `URI.parse`, would be a
   small change.
+- **App stats, for agents and for humans.** Which numbers about a
+  running app are worth collecting (candidates to pick from), and how to
+  expose them: an API for agents, and a dashboard or a CLI for humans.
 
 ## Other work
 

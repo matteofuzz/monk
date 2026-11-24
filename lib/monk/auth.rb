@@ -20,6 +20,11 @@ module Monk
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
     MIN_SECRET_LENGTH = 32
+    EXPIRED_RETENTION = 90 * 86_400
+
+    # The scaffold's route giving the installed iPhone app its own session
+    # (own_session!), named to register.js by monk_head.
+    OWN_PATH = "/auth/own".freeze
 
     # The login-email rate limit: records a request unless one was recorded
     # for the address less than $2 seconds ago. One statement, so racing
@@ -32,11 +37,59 @@ module Monk
       RETURNING 1
     SQL
 
+    # The sign-in code (redeem_code): wrong guesses at one token before it
+    # is used up, and at one address, across its tokens, per hour.
+    MAX_CODE_ATTEMPTS = 5
+    MAX_CODE_FAILURES_PER_HOUR = 10
+    CODE_FORMAT = /\A\d{6}\z/
+
+    CODE_LOCKED_SQL = <<~SQL.freeze
+      SELECT 1 FROM login_requests
+      WHERE email = $1 AND code_failures >= $2 AND code_failures_since > now() - interval '1 hour'
+    SQL
+
+    # A wrong code: one more attempt at the token, which the
+    # MAX_CODE_ATTEMPTS-th uses up. Only while it's unused, so a guess
+    # racing a successful redeem changes nothing.
+    CODE_MISS_SQL = <<~SQL.freeze
+      UPDATE login_tokens SET code_attempts = code_attempts + 1,
+        used_at = CASE WHEN code_attempts + 1 >= $2 THEN $3::timestamptz ELSE used_at END
+      WHERE id = $1 AND used_at IS NULL
+    SQL
+
+    # And one more failure for the address, in a window that starts at its
+    # first failure and lasts an hour. A new row's requested_at is
+    # -infinity: counting a failure doesn't hold back the next login email.
+    CODE_FAILURE_SQL = <<~SQL.freeze
+      INSERT INTO login_requests (email, requested_at, code_failures, code_failures_since)
+      VALUES ($1, '-infinity', 1, now())
+      ON CONFLICT (email) DO UPDATE SET
+        code_failures = CASE WHEN login_requests.code_failures_since > now() - interval '1 hour'
+          THEN login_requests.code_failures + 1 ELSE 1 END,
+        code_failures_since = CASE WHEN login_requests.code_failures_since > now() - interval '1 hour'
+          THEN login_requests.code_failures_since ELSE now() END
+    SQL
+
+    # Renewal by use: only while the row still ends before $3 (now plus
+    # half the TTL), so two requests arriving together write once.
+    RENEW_SESSION_SQL = <<~SQL.freeze
+      UPDATE sessions SET expires_at = $2 WHERE id = $1 AND expires_at < $3 AND revoked_at IS NULL
+      RETURNING expires_at
+    SQL
+
+    # split: the new session copies the old one's life exactly.
+    SPLIT_SESSION_SQL = <<~SQL.freeze
+      INSERT INTO sessions (subject, token_hash, expires_at, created_at)
+      SELECT subject, $2, expires_at, created_at FROM sessions WHERE token_hash = $1
+      RETURNING subject, expires_at
+    SQL
+
     SWEEP_BATCH_SIZE = 10_000
 
     # sweep!'s statements, one batch each. Tokens and sessions expire by
     # the app's clock, as redeem and verify check them; login requests by
-    # the database's, as allow_login_request? does.
+    # the database's, as allow_login_request? does. Sessions go only once
+    # expired for longer than expired_retention.
     SWEEP_LOGIN_TOKENS_SQL = <<~SQL.freeze
       DELETE FROM login_tokens WHERE id IN (SELECT id FROM login_tokens WHERE expires_at < $1 LIMIT $2)
     SQL
@@ -45,7 +98,8 @@ module Monk
     SQL
     SWEEP_LOGIN_REQUESTS_SQL = <<~SQL.freeze
       DELETE FROM login_requests WHERE email IN (
-        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second' LIMIT $2
+        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second'
+          AND (code_failures_since IS NULL OR code_failures_since < now() - interval '1 hour') LIMIT $2
       )
     SQL
 
@@ -72,15 +126,22 @@ module Monk
       # route, but builds links to it: login_link below, and so
       # Monk::Auth::SendLoginLink. login_request_interval: is the seconds
       # allow_login_request? makes an address wait between login emails.
+      # session_max_age: caps a session's whole life, in seconds from its
+      # creation, however much it's used (nil: no cap). expired_retention:
+      # is the seconds an expired session is kept before sweep! deletes it
+      # (90 days): Monk::Push still notifies through it until then.
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60
+        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60, session_max_age: nil,
+        expired_retention: EXPIRED_RETENTION
       )
         config = {
           db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
-          redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
+          redirect_allowlist: checked_redirect_allowlist(redirect_allowlist), secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
+          session_max_age: checked_session_max_age(session_max_age),
+          expired_retention: checked_expired_retention(expired_retention),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -103,22 +164,60 @@ module Monk
         @config = nil
       end
 
+      # A login token for `email` (stripped and downcased), redeemable once
+      # within login_ttl, by its link (redeem) or its code (redeem_code):
+      # { token:, code: }. Only hashes are stored: send both right away.
       def request_login(email, redirect_to: nil)
         ensure_configured!
-        if redirect_to && !config[:redirect_allowlist].include?(redirect_to)
+        email = normalized_email(email)
+        if redirect_to && !allowed_redirect?(redirect_to)
           raise Monk::InvalidRedirectError, "#{redirect_to.inspect} is not in Monk::Auth's redirect_allowlist"
         end
 
         raw = SecureRandom.urlsafe_base64(32)
+        code = format("%06d", SecureRandom.random_number(1_000_000))
 
         LoginToken.create(
           email: email,
           token_hash: hash_token(raw),
+          code_hash: hash_code(code),
           redirect_to: redirect_to,
           expires_at: Time.now + config[:login_ttl],
         )
 
-        raw
+        { token: raw, code: code }
+      end
+
+      # Whether request_login(redirect_to:) accepts `path`: it starts with
+      # a single "/" (never "//" or "/\", which a browser reads as another
+      # host), and the part before any "?" is a String entry of
+      # redirect_allowlist, or matched whole by a Regexp entry. A route
+      # checks it before enqueueing SendLoginLink, where an
+      # InvalidRedirectError would fail unseen in the job.
+      #
+      #   halt(422) if redirect_to && !Monk::Auth.allowed_redirect?(redirect_to)
+      def allowed_redirect?(path)
+        ensure_configured!
+        return false unless path.is_a?(String) && path.start_with?("/")
+        return false if path.start_with?("//", "/\\")
+
+        path_only = path.split("?", 2).first
+        config[:redirect_allowlist].any? do |entry|
+          entry.is_a?(Regexp) ? entry.match?(path_only) : entry == path_only
+        end
+      end
+
+      # Where a login token was going (its redirect_to), whether or not it
+      # has expired or been used; nil for an unknown token or one with no
+      # redirect_to. Only whoever holds the token learns it: a callback
+      # sends an expired link back to its page instead of a dead end.
+      #
+      #   redirect("#{Monk::Auth.redirect_for(params[:token]) || "/"}?expired=1")
+      def redirect_for(raw)
+        ensure_configured!
+        return nil if raw.nil? || raw.empty?
+
+        LoginToken.where(token_hash: hash_token(raw)).first&.fetch(:redirect_to)
       end
 
       # The login-email rate limit, for the login route to check before it
@@ -179,12 +278,15 @@ module Monk
       # `link` is usually login_link(token), above. An app may build its
       # own instead, from a trusted origin, never from request headers.
       # `token` is passed through for a deliver: that wants it (an SMS
-      # body instead of a link, say); most won't need it.
-      def deliver_link(email:, link:, token: nil)
+      # body instead of a link, say); most won't need it. `redirect_to`
+      # (where the link returns, e.g. an invitation) and `code` (the
+      # sign-in code) let the mail say more; deliver: is always called with
+      # all five keywords.
+      def deliver_link(email:, link:, token: nil, redirect_to: nil, code: nil)
         ensure_configured!
 
         if config[:deliver]
-          config[:deliver].call(email: email, link: link, token: token)
+          config[:deliver].call(email: email, link: link, token: token, redirect_to: redirect_to, code: code)
         elsif Monk.env.development?
           log_dev_link(link, subject: email)
         else
@@ -240,14 +342,33 @@ module Monk
         return nil unless row
         return nil if row[:expires_at] <= Time.now
 
-        claimed = LoginToken.claim({ id: row[:id], used_at: nil }, used_at: Time.now)
-        return nil unless claimed
+        start_session(row)
+      end
 
-        session_raw = SecureRandom.urlsafe_base64(32)
-        expires_at = Time.now + config[:session_ttl]
-        Session.create(subject: row[:email], token_hash: hash_token(session_raw), expires_at: expires_at)
+      # As redeem, for the 6-digit code sent beside the link: a session,
+      # or nil. Only the address's newest token counts, so asking for a new
+      # code retires the previous one. A wrong code counts against the
+      # token (the MAX_CODE_ATTEMPTS-th uses it up) and against the
+      # address: past MAX_CODE_FAILURES_PER_HOUR, every code for it is
+      # refused until the hour is up, so asking for new codes doesn't buy
+      # more guesses. The link keeps working.
+      def redeem_code(email, code)
+        ensure_configured!
+        return nil unless email.is_a?(String) && code.is_a?(String) && code.match?(CODE_FORMAT)
 
-        { token: session_raw, subject: row[:email], expires_at: expires_at, redirect_to: row[:redirect_to] }
+        email = normalized_email(email)
+        return nil if email.empty?
+
+        row = LoginToken.where({ email: email }, order: { created_at: :desc, id: :desc }, limit: 1).first
+        return nil unless row && row[:used_at].nil? && row[:expires_at] > Time.now && row[:code_hash]
+        return nil if code_locked?(email)
+
+        unless OpenSSL.secure_compare(hash_code(code), row[:code_hash])
+          count_code_failure(row[:id], email)
+          return nil
+        end
+
+        start_session(row)
       end
 
       def verify(raw)
@@ -257,16 +378,45 @@ module Monk
       # As #verify, with when the session expires: {subject:, expires_at:},
       # or nil. The helpers use it to reissue a CSRF cookie that lives as
       # long as its session.
-      def verified_session(raw)
+      #
+      # renew: true (the helpers, on every HTTP request) also renews a
+      # session in use: once less than half of session_ttl is left, its
+      # expires_at moves to now + session_ttl (never past session_max_age
+      # from its creation), and the result says renewed: true so the
+      # caller reissues its cookies. One UPDATE per session per half TTL,
+      # never per request. #verify (the WebSocket's check) never writes.
+      def verified_session(raw, renew: false)
         ensure_configured!
         return nil if raw.nil? || raw.empty?
 
         row = Session.where(token_hash: hash_token(raw)).first
         return nil unless row
         return nil if row[:revoked_at]
-        return nil if row[:expires_at] <= Time.now
 
-        { subject: row[:subject], expires_at: row[:expires_at] }
+        now = Time.now
+        return nil if row[:expires_at] <= now
+
+        ends_at = config[:session_max_age] && (row[:created_at] + config[:session_max_age])
+        return nil if ends_at && ends_at <= now
+
+        session = { subject: row[:subject], expires_at: row[:expires_at] }
+        renew ? renewed(row, session, now, ends_at) : session
+      end
+
+      # A second session for a valid session's subject, with the same
+      # created_at and expires_at (so it never outlives session_max_age):
+      # {token:, subject:, expires_at:}, or nil. The installed iPhone app
+      # starts with Safari's session, copied once at Add to Home Screen;
+      # after a split, logging out in one no longer ends the other.
+      def split(raw)
+        ensure_configured!
+        return nil unless verified_session(raw)
+
+        token = SecureRandom.urlsafe_base64(32)
+        row = Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(SPLIT_SESSION_SQL, [hash_token(raw), hash_token(token)]).first
+        end
+        { token: token, subject: row["subject"], expires_at: row["expires_at"] }
       end
 
       def revoke(raw)
@@ -286,8 +436,9 @@ module Monk
         rows.size
       end
 
-      # Deletes expired login tokens and sessions, and login requests older
-      # than login_request_interval; returns how many of each. At most
+      # Deletes expired login tokens, sessions expired for longer than
+      # expired_retention, and login requests older than
+      # login_request_interval; returns how many of each. At most
       # batch_size rows per statement, so a large backlog (the first sweep of
       # an app that never swept) holds no lock for long. Run nightly by
       # Monk::Auth::Sweep. Deliberately not grown onto Model: a `<` comparison
@@ -303,7 +454,7 @@ module Monk
           now = Time.now
           {
             login_tokens: delete_in_batches(conn, SWEEP_LOGIN_TOKENS_SQL, [now], batch_size),
-            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now], batch_size),
+            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now - config[:expired_retention]], batch_size),
             login_requests: delete_in_batches(
               conn, SWEEP_LOGIN_REQUESTS_SQL, [config[:login_request_interval]], batch_size,
             ),
@@ -355,6 +506,54 @@ module Monk
         end.join("\n")
       end
 
+      # Uses up a login token (link or code) and opens a session for its
+      # address; nil if the other way, or another request, got there first.
+      def start_session(row)
+        claimed = LoginToken.claim({ id: row[:id], used_at: nil }, used_at: Time.now)
+        return nil unless claimed
+
+        session_raw = SecureRandom.urlsafe_base64(32)
+        expires_at = Time.now + config[:session_ttl]
+        Session.create(subject: row[:email], token_hash: hash_token(session_raw), expires_at: expires_at)
+
+        { token: session_raw, subject: row[:email], expires_at: expires_at, redirect_to: row[:redirect_to] }
+      end
+
+      # session with expires_at moved and renewed: true, when it was due
+      # and this request got there first; session as it was otherwise.
+      def renewed(row, session, now, ends_at)
+        ttl = config[:session_ttl]
+        return session if row[:expires_at] >= now + (ttl / 2.0)
+
+        new_expires_at = [now + ttl, ends_at].compact.min
+        return session if new_expires_at <= row[:expires_at]
+
+        updated = Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(RENEW_SESSION_SQL, [row[:id], new_expires_at, now + (ttl / 2.0)]).ntuples.positive?
+        end
+        updated ? session.merge(expires_at: new_expires_at, renewed: true) : session
+      end
+
+      def code_locked?(email)
+        Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(CODE_LOCKED_SQL, [email, MAX_CODE_FAILURES_PER_HOUR]).ntuples.positive?
+        end
+      end
+
+      def count_code_failure(token_id, email)
+        Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(CODE_MISS_SQL, [token_id, MAX_CODE_ATTEMPTS, Time.now])
+          conn.exec_params(CODE_FAILURE_SQL, [email])
+        end
+      end
+
+      # The same normalization as allow_login_request?'s.
+      def normalized_email(email) = email.strip.downcase
+
+      # Keyed by the auth secret: six digits are trivial to try offline
+      # against a plain hash.
+      def hash_code(code) = OpenSSL::HMAC.hexdigest("SHA256", config[:secret], code)
+
       def ensure_configured!
         return if @config
 
@@ -378,6 +577,19 @@ module Monk
         secret
       end
 
+      # Strings (exact paths) and Regexps. Each Regexp is anchored here,
+      # \A(?:...)\z, so it must match the whole path: one written without
+      # \z would otherwise let "/invite/x/../admin" through.
+      def checked_redirect_allowlist(entries)
+        unless entries.is_a?(Array) && entries.all? { |entry| entry.is_a?(String) || entry.is_a?(Regexp) }
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(redirect_allowlist:) is an Array of paths (Strings) and patterns (Regexps), " \
+            "got #{entries.inspect}"
+        end
+
+        entries.map { |entry| entry.is_a?(Regexp) ? /\A(?:#{entry})\z/ : entry }
+      end
+
       def checked_callback_path(path)
         unless path.is_a?(String) && path.start_with?("/")
           raise Monk::InvalidAuthConfigError,
@@ -396,6 +608,21 @@ module Monk
           total += deleted
           return total if deleted < batch_size
         end
+      end
+
+      def checked_expired_retention(seconds)
+        return seconds if seconds.is_a?(Integer) && !seconds.negative?
+
+        raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(expired_retention:) must be an Integer of " \
+                                            "seconds, 0 or more, got #{seconds.inspect}"
+      end
+
+      def checked_session_max_age(seconds)
+        return nil if seconds.nil?
+        return seconds if seconds.is_a?(Integer) && seconds.positive?
+
+        raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(session_max_age:) must be nil (no cap) or a " \
+                                            "positive Integer of seconds, got #{seconds.inspect}"
       end
 
       def checked_login_request_interval(seconds)

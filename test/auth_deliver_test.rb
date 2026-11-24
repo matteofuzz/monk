@@ -16,7 +16,7 @@ class AuthDeliverTest < Minitest::Test
     calls = []
     Monk::Auth.configure(
       db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
-      deliver: ->(email:, link:, token:) { calls << { email: email, link: link, token: token } },
+      deliver: ->(email:, link:, token:, **) { calls << { email: email, link: link, token: token } },
     )
 
     Monk::Auth.deliver_link(email: "a@b.com", link: "https://app.example/auth/callback/abc", token: "abc")
@@ -30,7 +30,7 @@ class AuthDeliverTest < Minitest::Test
       with_monk_env("development") do
         Monk::Auth.configure(
           db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
-          deliver: ->(email:, link:, token:) { calls << { email: email, link: link, token: token } },
+          deliver: ->(email:, link:, token:, **) { calls << { email: email, link: link, token: token } },
         )
 
         out, = capture_io { Monk::Auth.deliver_link(email: "a@b.com", link: "http://x/y", token: "t") }

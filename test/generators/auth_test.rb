@@ -20,9 +20,12 @@ class GeneratorsAuthTest < Minitest::Test
     with_new_app(:auth) do |dest|
       assert_includes generated(dest, "config/auth.rb"), %(require_relative "../app/mailers/auth_mailer")
       assert_includes generated(dest, "app/mailers/auth_mailer.rb"), "module AuthMailer"
+      assert_includes generated(dest, "app/mailers/auth_mailer.rb"),
+        %(subject: "\#{code} is your #{File.basename(dest)} code")
       assert_includes generated(dest, "app/mailers/app_mailer.rb"), "module AppMailer"
       assert_equal %w[20261008143000_create_auth_tables.down.sql 20261008143000_create_auth_tables.up.sql
-                      20261008143001_create_login_requests.down.sql 20261008143001_create_login_requests.up.sql],
+                      20261008143001_create_login_requests.down.sql 20261008143001_create_login_requests.up.sql
+                      20261008143002_add_login_codes.down.sql 20261008143002_add_login_codes.up.sql],
         Dir.children(File.join(dest, "db/migrate")).grep(/\.sql\z/).sort
     end
   end

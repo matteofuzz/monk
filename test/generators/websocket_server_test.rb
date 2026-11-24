@@ -64,7 +64,7 @@ class GeneratorsWebSocketServerTest < Minitest::Test
   def test_ws_processes_runs_that_many_servers_on_one_port
     skip_unless_redis_available
     setup_auth_tables(:primary)
-    token = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))[:token]
+    token = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])[:token]
 
     with_new_app(:auth, :websocket, options: { transport: "redis" }) do |dest|
       uncomment_examples(dest)
@@ -102,7 +102,7 @@ class GeneratorsWebSocketServerTest < Minitest::Test
   def assert_connections_stay_fixed(*modules, transport:, extra:)
     skip_unless_redis_available
     setup_auth_tables(:primary)
-    token = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))[:token]
+    token = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])[:token]
 
     with_new_app(*modules, options: { transport: transport }) do |dest|
       uncomment_examples(dest) # the chat handler, for an app without live

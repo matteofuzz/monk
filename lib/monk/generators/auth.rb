@@ -4,12 +4,14 @@ Monk::Generator.define(:auth) do
   installed_if "config/auth.rb"
   depends_on :postgres, :mail
 
-  copy "config/auth.rb", "app/mailers/auth_mailer.rb", role: :wiring
+  copy "config/auth.rb", role: :wiring
+  copy "app/mailers/auth_mailer.rb", role: :wiring, app_name: true
   copy "app/views/mail/magic_link.erb", "app/views/auth/login.erb", role: :view
   copy "app/routes/auth.rb", role: :example
   copy "test/auth_test.rb", role: :test
   migration "create_auth_tables"
   migration "create_login_requests"
+  migration "add_login_codes"
 
   env :development, { "AUTH_SECRET" => "change-me-dev-secret" }
   env :test, { "AUTH_SECRET" => "change-me-test-secret" }

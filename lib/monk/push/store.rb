@@ -5,8 +5,11 @@ module Monk
   module Push
     # Push's statements on push_subscriptions (and, read-only, auth's
     # sessions). A subscription counts -- gets notifications, makes its
-    # subject subscribed -- only while its session is neither revoked nor
-    # expired, and while the browser's own expirationTime hasn't passed.
+    # subject subscribed -- until its session is revoked, or expired for
+    # longer than Monk::Auth's expired_retention (the $2 of each statement
+    # using LIVE), and while the browser's own expirationTime hasn't
+    # passed: logging out stops it at once, an idle person keeps being
+    # notified.
     # Module functions over a db_name, each reaching Postgres through
     # Monk::Persistence::Pg in whatever Ractor calls it, as the job workers
     # do.
@@ -14,7 +17,8 @@ module Monk
       ARRAY = Ractor.make_shareable(PG::TextEncoder::Array.new)
 
       LIVE = <<~SQL.freeze
-        s.revoked_at IS NULL AND s.expires_at > now() AND (p.expires_at IS NULL OR p.expires_at > now())
+        s.revoked_at IS NULL AND s.expires_at > now() - $2::int * interval '1 second'
+        AND (p.expires_at IS NULL OR p.expires_at > now())
       SQL
 
       # Only for a valid session: no row when the cookie's session is
@@ -51,9 +55,10 @@ module Monk
       DELETE_SQL = "DELETE FROM push_subscriptions WHERE id = $1".freeze
       SUCCEEDED_SQL = "UPDATE push_subscriptions SET last_success_at = now() WHERE id = $1".freeze
 
-      # What no longer counts: a revoked session's rows, an expired
-      # session's (if Monk::Auth.sweep! hasn't taken the session yet), and
-      # those past the browser's expirationTime. $1 is the batch size.
+      # What no longer counts: a revoked session's rows, one expired past
+      # expired_retention (if Monk::Auth.sweep! hasn't taken the session
+      # yet), and those past the browser's expirationTime. $1 is the batch
+      # size.
       SWEEP_SQL = <<~SQL.freeze
         DELETE FROM push_subscriptions WHERE id IN (
           SELECT p.id FROM push_subscriptions p JOIN sessions s ON s.id = p.session_id
@@ -76,18 +81,18 @@ module Monk
       end
 
       def for_subject(db_name, subject)
-        checkout(db_name) { |conn| conn.exec_params(FOR_SUBJECT_SQL, [subject]).map { |row| record(row) } }
+        checkout(db_name) { |conn| conn.exec_params(FOR_SUBJECT_SQL, [subject, retention]).map { |row| record(row) } }
       end
 
       def find(db_name, id)
-        checkout(db_name) { |conn| conn.exec_params(BY_ID_SQL, [id]).map { |row| record(row) }.first }
+        checkout(db_name) { |conn| conn.exec_params(BY_ID_SQL, [id, retention]).map { |row| record(row) }.first }
       end
 
       # { subject => true/false } for every subject given.
       def subscribed(db_name, subjects)
         subjects = subjects.map(&:to_s).uniq
         found = checkout(db_name) do |conn|
-          conn.exec_params(SUBSCRIBED_SQL, [ARRAY.encode(subjects)]).map { |row| row["subject"] }
+          conn.exec_params(SUBSCRIBED_SQL, [ARRAY.encode(subjects), retention]).map { |row| row["subject"] }
         end
         subjects.to_h { |subject| [subject, found.include?(subject)] }
       end
@@ -105,7 +110,7 @@ module Monk
         checkout(db_name) do |conn|
           total = 0
           loop do
-            deleted = conn.exec_params(SWEEP_SQL, [batch_size]).cmd_tuples
+            deleted = conn.exec_params(SWEEP_SQL, [batch_size, retention]).cmd_tuples
             total += deleted
             break total if deleted < batch_size
           end
@@ -118,6 +123,8 @@ module Monk
       end
 
       def checkout(db_name, &) = Monk::Persistence::Pg.checkout(db_name, &)
+
+      def retention = Monk::Auth.config.fetch(:expired_retention)
     end
   end
 end

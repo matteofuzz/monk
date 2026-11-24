@@ -103,12 +103,16 @@ of their devices.
 ## Subscriptions belong to sessions
 
 A subscription is stored for the auth session it was made in, and counts
-only while that session does:
+until that session is revoked, or expired for longer than
+`Monk::Auth.configure(expired_retention:)` (90 days by default):
 
 - logging out, or `Monk::Auth.revoke`/`revoke_all`, stops that session's
   notifications at once;
-- an expired session's rows go with it when `Monk::Auth.sweep!` deletes
-  it;
+- someone who doesn't open the app for a while keeps being notified after
+  their session expires (it's renewed while they use the app, see
+  [`auth.md`](auth.md#sessions-renewed-by-use)). Notifications carry no
+  secret: the app decides what they say. Past `expired_retention`, the
+  session's rows go with it when `Monk::Auth.sweep!` deletes it;
 - a shared device that someone else signs in to moves to them on its next
   page load;
 - `Monk::Push::Sweep` (nightly) deletes the rows that no longer count,
@@ -158,10 +162,13 @@ wouldn't send (answer 422).
 - **iPhone and iPad:** iOS 16.4 and later, only in an app added to the
   Home Screen ([`pwa.md`](pwa.md)). In a Safari tab the state is
   `needs-install`. Adding the app copies Safari's login into it, so sign
-  in in Safari first. Apple keeps accepting messages (201) for an app
+  in in Safari first; on its first launch the app then gets a session of
+  its own ([`auth.md`](auth.md#the-installed-iphone-apps-own-session)),
+  so logging out in Safari doesn't end its notifications. Apple keeps accepting messages (201) for an app
   that was deleted, or whose notifications were blocked in Settings
   (checked for half an hour): its row goes when its session ends
-  (logout, expiry), or, when blocked, on the app's next page load.
+  (logout, or `expired_retention` after expiry), or, when blocked, on the
+  app's next page load.
 - **Android, desktop Chrome, Edge, Firefox, macOS Safari:** in the
   browser, no install needed. macOS Safari shows notifications even
   while Safari is quit. Notifications blocked in its website settings

@@ -109,6 +109,52 @@ class PwaTest < Minitest::Test
     end
   end
 
+  # --- monk_install ---
+
+  # Hidden until register.js shows it (iOS, or once installable), with BEM
+  # classes and no styles: the app styles it.
+  def test_monk_install_renders_a_hidden_banner_its_button_and_the_ios_sheet
+    with_public do |root|
+      Monk::Pwa.configure(root: root)
+      html = Monk::Context.new({}).monk_install.to_s
+
+      assert_match(/\A<div class="monk-install" data-monk-install-banner hidden>/, html)
+      assert_includes html, %(<p class="monk-install__text">Install Shop on your device.</p>)
+      assert_includes html, %(<button type="button" class="monk-install__button" data-monk-install>Install</button>)
+      assert_includes html, %(<dialog class="monk-install__sheet" data-monk-install-sheet>)
+      assert_includes html, "Add to Home Screen"
+      assert_equal 2, html.scan("<svg").size, "the Share and Add to Home Screen icons"
+      assert_includes html, %(<form method="dialog"><button class="monk-install__close">OK</button></form>)
+      refute_includes html, "style="
+    end
+  end
+
+  def test_monk_install_text_is_overridable_and_escaped
+    with_public do |root|
+      Monk::Pwa.configure(root: root)
+      html = Monk::Context.new({}).monk_install(
+        text: "Installa <Shop>", button: "Installa", share: "Tocca Condividi", add: "poi Aggiungi a Home",
+        close: "Chiudi",
+      ).to_s
+
+      assert_includes html, "Installa &lt;Shop&gt;"
+      assert_includes html, ">Installa</button>"
+      assert_includes html, "Tocca Condividi"
+      assert_includes html, "poi Aggiungi a Home"
+      assert_includes html, ">Chiudi</button>"
+    end
+  end
+
+  # Rendered in the server's worker Ractors.
+  def test_monk_install_icons_are_shareable
+    assert Ractor.shareable?(Monk::Pwa::Helpers::SHARE_ICON)
+    assert Ractor.shareable?(Monk::Pwa::Helpers::ADD_ICON)
+  end
+
+  def test_monk_install_is_empty_until_configured
+    assert_equal "", Monk::Context.new({}).monk_install.to_s
+  end
+
   # --- serving ---
 
   def test_the_manifest_is_served_as_a_web_app_manifest

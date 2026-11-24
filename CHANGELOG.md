@@ -4,6 +4,61 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.28.0 - 2026-11-24
+
+A smoother first sign-in, from walking a real app's invitation and
+sign-up flows on phones. Upgrading an app with auth takes a few steps:
+[`upgrading.md`](docs/guides/upgrading.md#028).
+
+### Added
+
+- **A 6-digit sign-in code beside the magic link**, for where a link
+  can't work: the installed app on an iPhone (Mail opens links in
+  Safari), or a page opened in a chat app's built-in browser.
+  `Monk::Auth.redeem_code(email, code)` redeems the same login token as
+  the link; five wrong codes use it up, and ten for one address in an
+  hour lock that address's codes until the hour is up. The scaffold's
+  login page becomes the code form, with `POST /auth/code`, and the
+  mail's subject starts with the code
+  ([`auth.md`](docs/guides/auth.md#signing-in-with-a-code)).
+- **Sessions renewed by use**: once less than half of `session_ttl` is
+  left, a request moves it to now + `session_ttl` and reissues the
+  cookies, one write per session per half TTL. `session_max_age:` caps a
+  session's whole life
+  ([`auth.md`](docs/guides/auth.md#sessions-renewed-by-use)).
+- **The installed iPhone app's own session.** Add to Home Screen copies
+  Safari's session into the app, so logging out in one ended both.
+  `register.js` now asks `POST /auth/own` once, on the app's first
+  launch, and `own_session!` (`Monk::Auth.split`) gives it a session of
+  its own ([`auth.md`](docs/guides/auth.md#the-installed-iphone-apps-own-session)).
+- **`redirect_allowlist` takes Regexps**, matched against the whole
+  path, and an allowed path may carry a query string.
+  `Monk::Auth.allowed_redirect?(path)` makes the same check for a route,
+  and `Monk::Auth.redirect_for(token)` says where an expired or used
+  link was going ([`auth.md`](docs/guides/auth.md#where-a-login-returns)).
+- **Helping people install the app.** `register.js` sets
+  `data-pwa-standalone`, `data-pwa-platform`, `data-pwa-installable` and
+  `data-pwa-in-app` on `<html>`, and emits `monk-pwa:installable` and
+  `monk-pwa:installed`. `<%= monk_install %>` renders an install banner
+  with an iOS sheet (Share, then Add to Home Screen), unstyled, every
+  text overridable. `pwa.md` shows how an app can add an "Open in your
+  browser" button for chat apps' built-in browsers
+  ([`pwa.md`](docs/guides/pwa.md#helping-people-install)).
+
+### Changed
+
+- **`Monk::Auth.request_login` returns `{ token:, code: }`**, not the
+  token alone, and strips and downcases the address.
+- **`deliver:` is always called with `redirect_to:` and `code:`** too,
+  beside `email:, link:, token:`.
+- **Web push outlives an idle session.** A subscription counts until its
+  session is revoked, or expired for longer than
+  `Monk::Auth.configure(expired_retention:)` (90 days by default), and
+  `Monk::Auth.sweep!` keeps expired sessions that long. Logging out still
+  stops notifications at once
+  ([`push.md`](docs/guides/push.md#subscriptions-belong-to-sessions)).
+- New migration `add_login_codes` for auth.
+
 ## 0.27.0 - 2026-11-23
 
 ### Added

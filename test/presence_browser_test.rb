@@ -154,7 +154,7 @@ class PresenceBrowserTest < Minitest::Test
   private
 
   def sign_in(email)
-    session = Monk::Auth.redeem(Monk::Auth.request_login(email))
+    session = Monk::Auth.redeem(Monk::Auth.request_login(email)[:token])
     @page.cookies.set(name: "session_token", value: session[:token], domain: "127.0.0.1", path: "/")
     session[:subject]
   end

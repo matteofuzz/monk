@@ -68,6 +68,12 @@ class GeneratorsExamplesTest < Minitest::Test
         logged_in = { "HTTP_COOKIE" => cookies.map { |name, value| "\#{name}=\#{value}" }.join("; ") }
         assert_equal [200, %({"email":"\#{email}"})], request("GET", "/me", nil, logged_in).first(2)
 
+        own = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
+        status, _body, own_headers = request("POST", "/auth/own", nil, own)
+        assert_equal 200, status
+        assert Array(own_headers["set-cookie"]).any? { |cookie| cookie.start_with?("session_token=") }
+        assert_equal 403, request("POST", "/auth/own", nil, "HTTP_X_CSRF_TOKEN" => "x").first, "no session, no CSRF"
+
         csrf = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
         status, _body, headers = request("POST", "/auth/logout", nil, csrf)
         assert_equal 302, status
@@ -86,7 +92,16 @@ class GeneratorsExamplesTest < Minitest::Test
                  "rack.input" => StringIO.new("email=form-\#{email}") }
         status, body = request("POST", "/auth/request", nil, form)
         assert_equal 200, status
-        assert_includes body, "Check your email"
+        assert_includes body, %(action="/auth/code")
+
+        code = File.read(File.expand_path("../log/test.log", __dir__)).scan(/(\\d{6}) is your \\S+ code/).last.first
+        wrong = format("%06d", (code.to_i + 1) % 1_000_000)
+        status, body = request("POST", "/auth/code", email: "form-\#{email}", code: wrong)
+        assert_equal 422, status
+        assert_includes body, "That code is wrong"
+        status, _body, headers = request("POST", "/auth/code", email: "form-\#{email}", code: code)
+        assert_equal 302, status
+        assert Array(headers["set-cookie"]).any? { |cookie| cookie.start_with?("session_token=") }
       ensure
         Monk::Auth.clear_login_requests!
       end
@@ -124,7 +139,7 @@ class GeneratorsExamplesTest < Minitest::Test
         speaker, cookie = "guest", nil
         if defined?(Monk::Auth) && Monk::Auth.config
           speaker = "chat@example.test"
-          cookie = "session_token=\#{Monk::Auth.redeem(Monk::Auth.request_login(speaker))[:token]}"
+          cookie = "session_token=\#{Monk::Auth.redeem(Monk::Auth.request_login(speaker)[:token])[:token]}"
         end
         port = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
         pid = Process.spawn({ "WS_PORT" => port.to_s }, RbConfig.ruby, "-W0", "bin/websocket_server",
@@ -314,7 +329,7 @@ class GeneratorsExamplesTest < Minitest::Test
     # A signed-in session, and the env a page's request carries with it:
     # the session and CSRF cookies, and the X-CSRF-Token header.
     def push_session
-      session = Monk::Auth.redeem(Monk::Auth.request_login("push-#{rand(1_000_000)}@example.test"))
+      session = Monk::Auth.redeem(Monk::Auth.request_login("push-#{rand(1_000_000)}@example.test")[:token])
       csrf = Monk::Auth.csrf_token_for(session[:token])
       [session, { "HTTP_COOKIE" => "session_token=#{session[:token]}; csrf_token=#{csrf}", "HTTP_X_CSRF_TOKEN" => csrf }]
     end

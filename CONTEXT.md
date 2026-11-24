@@ -141,7 +141,7 @@ The period (an hour by default) `url` rounds its signing time down to, so every 
 _Avoid_: TTL, expiry (that's `expires_in`)
 
 **Push subscription**:
-One browser's permission to be sent notifications: an endpoint at its vendor's push service, and two keys (`p256dh`, `auth`) to encrypt for it. Stored as a row of `push_subscriptions` tied to the auth session it was made in, and counts only while that session is neither revoked nor expired (ADR 0020). The endpoint is a secret: whoever knows it can send to that browser.
+One browser's permission to be sent notifications: an endpoint at its vendor's push service, and two keys (`p256dh`, `auth`) to encrypt for it. Stored as a row of `push_subscriptions` tied to the auth session it was made in, and counts until that session is revoked, or expired for longer than `Monk::Auth`'s `expired_retention` (ADR 0020, amended in 0.28). The endpoint is a secret: whoever knows it can send to that browser.
 _Avoid_: Device token, registration, push token
 
 **VAPID keys**:

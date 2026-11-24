@@ -21,7 +21,7 @@ bin/server           # -> http://localhost:9292/hello
 monk add --list      # the modules you can add: postgres, auth, jobs, live...
 ```
 
-`monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", "~> 0.27", require: "monk"`.
+`monk new` scaffolds the app's own `Gemfile` with `gem "monkrb", "~> 0.28", require: "monk"`.
 
 `monk new` writes a working app: an HTML home page, a `/hello` route and a `/api/hello` JSON route, `public/`, its tests, a `SETUP.md`, and an `AGENTS.md` for coding agents. The app's own code goes under `app/`: `app/app.rb` and `app/routes/` for routes, `app/views/`, and one directory per role (`models/`, `presenters/`, `helpers/`, `mailers/`, `broadcasts/`, `jobs/`).
 
@@ -63,14 +63,14 @@ Everything beyond the core is opt-in (`require "monk"` alone loads none of it).
 | Logging | request log per environment, `Monk::Log.debug`/`info`/`warn`/`error` | — | [`logging.md`](docs/guides/logging.md) |
 | Persistence | `Monk::Persistence::Pg`: raw `pg`, per-Ractor connections, hash-based `Model` | `require "monk/persistence/pg"` (+ `.../pg/model`); needs the `pg` gem | [`persistence.md`](docs/guides/persistence.md) |
 | Migrations | plain `.sql` up/down pairs, `Migrator` | `require "monk/persistence/pg/migrator"`; needs the `pg` gem | [`migrations.md`](docs/guides/migrations.md) |
-| Auth and sessions | `Monk::Auth`: passwordless tokens, Bearer or cookie + CSRF, a per-address login-email rate limit, nightly cleanup with jobs | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
+| Auth and sessions | `Monk::Auth`: passwordless login by email link or 6-digit code, sessions renewed by use, Bearer or cookie + CSRF, a per-address login-email rate limit, nightly cleanup with jobs | `require "monk/auth"`; needs the `pg` gem and a registered Postgres connection | [`auth.md`](docs/guides/auth.md) |
 | Email | `Monk::Mail`: text/HTML email over SMTP or a local relay, one `MAIL_URL`, sent from any worker Ractor, or from a background job with `deliver_later` | `require "monk/mail"`; `deliver_later` is there once `monk/jobs` is loaded too; SMTP needs the `net-smtp` gem | [`mail.md`](docs/guides/mail.md) |
 | Background jobs | `Monk::Jobs`: a queue in Postgres, run by `bin/jobs` on worker Ractors; retries with backoff, scheduled jobs, recurring jobs on a cron schedule (UTC), enqueue inside the app's own transaction, `drain!` for tests | `require "monk/jobs"` (+ `require "monk/jobs/runtime"` in the job process); needs the `pg` gem and a registered Postgres connection | [`jobs.md`](docs/guides/jobs.md) |
 | WebSocket | `Monk::WebSocket`: RFC 6455 server as its own process, Redis or Postgres fan-out | `require "monk/websocket"`; fan-out: `require "monk/websocket/redis_fanout"` (+ the `redis` gem) or `require "monk/websocket/pg_fanout"` (+ the `pg` gem) | [`websocket.md`](docs/guides/websocket.md) |
 | Live updates | `Monk::Live`: server-rendered HTML patches pushed to open tabs | `require "monk/live"`; needs the WebSocket server and, across processes, Redis or Postgres | [`live.md`](docs/guides/live.md) |
 | Presence | `Monk::Presence`: whether a signed-in person has a page open and visible (online), only hidden ones (away), or none (offline, with when they were last seen), across tabs, devices and WebSocket processes; an `on_change` hook in `bin/server` | `require "monk/presence"`; needs auth, the WebSocket server and Postgres; away needs Live | [`presence.md`](docs/guides/presence.md) |
 | File storage | `Monk::Storage`: files by key in any S3-compatible bucket (Hetzner, R2, B2, AWS), local files in development and test; browser uploads and downloads through signed links, never through a worker Ractor | `require "monk/storage"`; no gem needed | [`storage.md`](docs/guides/storage.md) |
-| Installable app | `Monk::Pwa`: a web app manifest, icons and a service worker (`/sw.js`), checked at boot and linked by `<%= monk_head %>`, so the app installs on a Home Screen or as a desktop app | `require "monk/pwa"`; no gem needed | [`pwa.md`](docs/guides/pwa.md) |
+| Installable app | `Monk::Pwa`: a web app manifest, icons and a service worker (`/sw.js`), checked at boot and linked by `<%= monk_head %>`, so the app installs on a Home Screen or as a desktop app; `<%= monk_install %>` invites people to | `require "monk/pwa"`; no gem needed | [`pwa.md`](docs/guides/pwa.md) |
 | Web push | `Monk::Push`: notifications to the devices where a signed-in person turned them on, encrypted and signed by Monk itself (RFC 8291, VAPID), one job per device; subscriptions tied to auth sessions | `require "monk/push"`; needs auth, jobs and Postgres, and pwa's service worker | [`push.md`](docs/guides/push.md) |
 | Scaffolding | `monk new` and `monk add`: one generator per module, for a new app or an existing one; text or `--json` output; `monk add deploy` for Docker Compose and Caddy on one host | — (the `monk` command: `monk new NAME --with ...`, `monk add MODULE`, `monk add --list`) | [`scaffolding.md`](docs/guides/scaffolding.md) |
 

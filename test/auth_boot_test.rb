@@ -52,7 +52,7 @@ class AuthBootTest < Minitest::Test
   def test_an_unshareable_deliver_proc_raises_at_boot
     Monk::Auth.configure(
       db_name: :some_db, secret: "s3cr3t", login_ttl: 600, session_ttl: 1_209_600,
-      deliver: ->(email:, link:, token:) { "#{email} #{link} #{token}" },
+      deliver: ->(email:, link:, token:, **) { "#{email} #{link} #{token}" },
     )
 
     app = Class.new(Monk::Base) do
@@ -65,5 +65,5 @@ class AuthBootTest < Minitest::Test
 end
 
 module AuthBootTestMailer
-  DELIVER = ->(email:, link:, token:) { "#{email} #{link} #{token}" }
+  DELIVER = ->(email:, link:, token:, **) { "#{email} #{link} #{token}" }
 end

@@ -12,8 +12,9 @@ device and returns how many; `Monk::Push.subscribed(subjects)` gives
 `subscribed?(subject)` for one.
 
 **How it works:** a subscription belongs to the auth session it was made
-in: logging out, a revoked session or an expired one stops its
-notifications. A device that has gone (the push service answers 404/410)
+in: logging out or a revoked session stops its notifications at once. An
+expired session's keep coming for `expired_retention:` (config/auth.rb,
+90 days), so an idle person is still notified. A device that has gone (the push service answers 404/410)
 is deleted by its job. `Monk::Push::Sweep` clears the rest nightly
 (`config/recurring.rb`).
 

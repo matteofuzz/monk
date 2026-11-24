@@ -50,7 +50,7 @@ class GeneratorsPresenceTest < Minitest::Test
     with_new_app(:presence, options: { transport: "postgres" }) do |dest|
       assert_includes generated(dest, "config/presence.rb"), "Monk::Presence.configure(db_name: :primary, grace: 20)"
       assert_includes generated(dest, "app/views/presence/_dot.erb"), %(data-presence="<%= locals[:subject] %>")
-      assert_includes Dir.children(File.join(dest, "db/migrate")), "20261008143002_create_presence_tables.up.sql"
+      assert_includes Dir.children(File.join(dest, "db/migrate")), "20261008143003_create_presence_tables.up.sql"
       assert_includes generated(dest, "config/load.rb"), "live presence storage"
       assert_includes generated(dest, "config.ru"), "Monk::Presence.start_reactor!"
     end
@@ -75,7 +75,7 @@ class GeneratorsPresenceTest < Minitest::Test
     setup_presence_tables(:primary)
     Monk::Presence.configure(db_name: :primary)
     email = "presence-#{SecureRandom.hex(4)}@example.test"
-    token = Monk::Auth.redeem(Monk::Auth.request_login(email))[:token]
+    token = Monk::Auth.redeem(Monk::Auth.request_login(email)[:token])[:token]
 
     with_new_app(:auth, :live, :presence, options: { transport: "postgres" }) do |dest|
       with_server(dest) do |port|
@@ -101,7 +101,7 @@ class GeneratorsPresenceTest < Minitest::Test
     setup_presence_tables(:primary)
     Monk::Presence.configure(db_name: :primary)
     email = "presence-#{SecureRandom.hex(4)}@example.test"
-    token = Monk::Auth.redeem(Monk::Auth.request_login(email))[:token]
+    token = Monk::Auth.redeem(Monk::Auth.request_login(email)[:token])[:token]
 
     with_new_app(:auth, :live, :presence, options: { transport: "postgres" }) do |dest|
       first = start_server(dest)

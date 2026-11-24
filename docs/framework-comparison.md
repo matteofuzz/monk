@@ -1,14 +1,15 @@
 # Monk vs. Sinatra vs. Rails
 
-Complexity and weight comparison, based on the codebase at 0.27 (LOC recomputed for it: settings, secrets and WebSocket origins refused at boot when they're wrong, `Monk::Mail.check` and `Monk::Storage.check`, and a code and test review that made both shorter). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
+Complexity and weight comparison, based on the codebase at 0.28 (LOC recomputed for it: a sign-in code beside the magic link, sessions renewed by use, the installed iPhone app's own session, push that outlives an idle session, and an install banner). LOC is `wc -l` of every `.rb` file under `lib/` except the scaffold templates, and test LOC is `wc -l` of every `.rb` file under `test/`, the same method as earlier versions of this page.
 
 ## Footprint
 
-- **Monk**: 13,433 lines of Ruby across 122 files (`lib/monk.rb` plus `lib/monk`, excluding the
+- **Monk**: 13,743 lines of Ruby across 122 files (`lib/monk.rb` plus `lib/monk`, excluding the
   scaffold templates) — routing, context, plain HTML forms (form params,
   cross-site refusal, flash, security headers), ERB views/layouts,
   a boot-time static-asset manifest, settings/env tiers, auth
-  (sessions/tokens/cookies/CSRF/rate-limiting), Postgres persistence + model +
+  (sessions renewed by use, magic links and sign-in codes, cookies, CSRF,
+  rate-limiting), Postgres persistence + model +
   migrator + connection pools for Ractors, a full WebSocket stack (handshake, frames, connection
   registry, server, and cross-process broadcast fan-out over either Redis
   pub/sub or Postgres `LISTEN`/`NOTIFY`), email (`Monk::Mail`: its own MIME
@@ -27,7 +28,7 @@ Complexity and weight comparison, based on the codebase at 0.27 (LOC recomputed 
   (`monk new`, `monk add`).
   Runtime dependencies: `rack` and `base64` only; `pg`, `redis`, `rqrcode`,
   `net-smtp` and `dotenv` are opt-in per app (dev-only for Monk itself), and `kino` is only in the
-  repo's `Gemfile` for the demo app. 24,022 lines of tests.
+  repo's `Gemfile` for the demo app. 24,893 lines of tests.
 - **Sinatra**: core is comparable in size (~2,000 lines), but ships as a
   thin routing DSL only — everything else (sessions/CSRF protection,
   persistence, websockets, live updates, presence, email, background
@@ -48,25 +49,25 @@ that covers each module.
 
 | Module | Files | LOC | Test LOC | What it holds |
 |---|---|---|---|---|
-| Scaffolding (`monk new`, `monk add`) | 20 | 1,815 | 3,336 (incl. `exe/monk`, and real `bin/websocket_server` processes counting presence) | the generator engine: plan every module and option, check every file, then write, incl. the sections modules add to SETUP.md, AGENTS.md and deploy's files (477); its result as text, JSON and an exit code (279); the CLI (303); the module DSL (163); the `bin/` scripts' error explanations and process spawning; one generator of ~20 lines per module |
+| Scaffolding (`monk new`, `monk add`) | 20 | 1,817 | 3,354 (incl. `exe/monk`, and real `bin/websocket_server` processes counting presence) | the generator engine: plan every module and option, check every file, then write, incl. the sections modules add to SETUP.md, AGENTS.md and deploy's files (477); its result as text, JSON and an exit code (279); the CLI (303); the module DSL (163); the `bin/` scripts' error explanations and process spawning; one generator of ~20 lines per module |
 | WebSocket | 11 | 1,765 | 2,591 (incl. one contract run on both fan-outs) | handshake, frames, connection incl. a heartbeat that closes a peer silent for two ping intervals and runs a per-connection check after each ping, server incl. `authenticate: :optional`, `db_pool:`, `presence:`, a cap on handshakes in flight and a handshake deadline, `SO_REUSEPORT`, stop on `TERM` and `allowed_origins:` checked at boot, registry incl. `close_all`, what both fan-outs share (`listen!` and registering), Redis fan-out, Postgres fan-out incl. pooled publishing, listeners that reconnect, a socket's connections closed when it ends |
 | Jobs | 12 | 1,548 | 2,797 (incl. child job processes) | Postgres adapter incl. the scheduler's one statement per occurrence (361), runtime/supervisor (274), configure/enqueue/registry/`drain!`/`recurring`/`run_scheduler!`, cron parser (179), scheduler (90), `Monk::Job` and its settings, worker loop, argument check, errors, claim, firing and recurring-task values |
 | Persistence | 8 | 1,483 | 1,743 | connection pools for Ractors (540: dispatcher, workers, errors that keep their class across Ractors), registry and checkout with the dropped-connection probe and pool lifecycle, Postgres model, migrator, Postgres backend incl. a `json`/`jsonb` decoder |
 | Storage | 13 | 1,349 | 1,924 (incl. a fake S3 server, and one contract run on both backends and against floci) | S3 backend over `Net::HTTP` incl. `check` of a bucket's CORS and lifecycle rules (248), file backend that behaves like a bucket (247), configure and the API (193), `STORAGE_URL` parsing (126), SigV4 signer (123), the `/_monk/storage` routes (109), input checks, `Sniff`, HMAC tokens, keys, errors |
-| Core | 11 | 1,270 | 3,049 (core + shared helpers) | `Monk::Base` routing/dispatch incl. route blocks defined as methods at `freeze!`, form and JSON bodies with a 1 MB cap, `_method`, the cross-site check and security headers (470); nested `params` (81); settings incl. `PUBLIC_URL` and `LIVE_WS_URL` refused at boot when wrong, logging, context incl. `monk_head`, `redirect` to this app only and `flash`, environment, errors, `StateRactor`, freeze hooks |
-| Push | 11 | 816 | 780 (incl. a push service on loopback that decrypts each message as a browser would) | configure and the API incl. the boot check of the key pair and contact (190), the subscriptions' SQL, tied to auth sessions (123), delivery and the push service's answers (119), keys, `aes128gcm` encryption, the VAPID token, subscription parsing, `notify` and its job (loaded with jobs) |
+| Core | 11 | 1,270 | 3,053 (core + shared helpers) | `Monk::Base` routing/dispatch incl. route blocks defined as methods at `freeze!`, form and JSON bodies with a 1 MB cap, `_method`, the cross-site check and security headers (470); nested `params` (81); settings incl. `PUBLIC_URL` and `LIVE_WS_URL` refused at boot when wrong, logging, context incl. `monk_head`, `redirect` to this app only and `flash`, environment, errors, `StateRactor`, freeze hooks |
+| Push | 11 | 824 | 801 (incl. a push service on loopback that decrypts each message as a browser would) | configure and the API incl. the boot check of the key pair and contact (191), the subscriptions' SQL, tied to auth sessions and counting through expired_retention (130), delivery and the push service's answers (119), keys, `aes128gcm` encryption, the VAPID token, subscription parsing, `notify` and its job (loaded with jobs) |
 | Presence | 5 | 759 | 1,164 (incl. the reactor as a child process, and a real browser) | the store's SQL: rows per process, transitions settled once under an advisory lock, `NOTIFY` in batches, expiry of a dead process's rows (274); configure, `status`/`online?` and `on_change` (130); the reactor in `bin/server`, elected by an advisory lock, that `LISTEN`s and calls `on_change` (126); the per-process counts Ractor (118) and the tracker thread that writes them once a second (111) |
-| Auth | 8 | 726 | 1,729 | sessions, tokens, cookies, CSRF incl. `csrf_field` and a stale cookie reissued, a placeholder or short secret refused at boot, the login-email rate limit, batched `sweep!` and its job, per-process rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
+| Auth | 8 | 988 | 2,330 | sessions incl. renewal by use, `session_max_age:` and `split` for the installed iPhone app, tokens and the 6-digit code beside them with its per-token and per-address limits, `redirect_allowlist` patterns, cookies, CSRF incl. `csrf_field` and a stale cookie reissued, a placeholder or short secret refused at boot, the login-email rate limit, batched `sweep!` and its job, per-process rate limiter, link delivery and `login_link`, `SendLoginLink`, helpers incl. `log_out!` |
 | Mail | 9 | 675 | 1,396 (incl. a fake SMTP server) | MIME builder, configure/deliver/render, `check` of `MAIL_URL`'s login without sending, SMTP and log transports, `MAIL_URL` parsing, message value, `deliver_later` and its job (loaded with jobs), address handling |
 | Live | 8 | 633 | 2,438 (incl. one contract run on both fan-outs) | publisher, session incl. the client's ping and `hidden` messages and whether its page is visible, policy incl. pooled rules, renderer, envelope, `live_topic` and its `<head>` tags, `listen!`, the client served from the gem |
 | Assets | 1 | 230 | 293 | boot-time static-asset manifest, plus modules' own files mounted under `/_monk/` |
 | Views | 1 | 203 | 366 | ERB views/layouts/partials |
-| Pwa | 4 | 161 | 416 (incl. real headless Chrome) | the manifest checked the way Chrome does (74), configure, `monk_head`'s tags, errors |
-| **Total** | **122** | **13,433** | **24,022** | |
+| Pwa | 4 | 199 | 643 (incl. real headless Chrome) | the manifest checked the way Chrome does (74), configure, `monk_head`'s tags, `monk_install`'s banner, errors |
+| **Total** | **122** | **13,743** | **24,893** | |
 
 Not counted above: the browser code, Live's runtime (`monk_live.js` 365,
 `protocol.js` 129, vendored minified idiomorph), push's (`push.js` 132,
-`state.js` 65) and pwa's `register.js` (47), the app's `sw.js` template,
+`state.js` 65) and pwa's (`register.js` 140, `platform.js` 21), the app's `sw.js` template,
 and the JS tests under `test/js`.
 
 Live has the highest test-to-code ratio (about 4:1) because it is covered
