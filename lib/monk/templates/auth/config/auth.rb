@@ -18,7 +18,7 @@ Monk::Auth.configure(
   secret: ENV.fetch("AUTH_SECRET"),
   login_ttl: 600,          # seconds a login token stays redeemable
   session_ttl: 1_209_600,  # seconds a session stays valid (14 days)
-  redirect_allowlist: [],  # paths request_login(redirect_to:) is allowed to target
+  redirect_allowlist: [],  # paths (Strings) and patterns (Regexps, matched whole) a login may return to
   callback_path: "/auth/callback", # your route redeeming a token: GET "#{callback_path}/:token"
   login_request_interval: 60, # seconds an address waits between login emails (allow_login_request?)
   secure: !Monk.env.development?, # Secure cookie flag; off in dev so plain-http testing works (Safari drops it)

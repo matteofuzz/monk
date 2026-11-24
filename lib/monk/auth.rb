@@ -78,7 +78,7 @@ module Monk
       )
         config = {
           db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
-          redirect_allowlist: redirect_allowlist, secure: secure, deliver: deliver,
+          redirect_allowlist: checked_redirect_allowlist(redirect_allowlist), secure: secure, deliver: deliver,
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
         }
@@ -105,7 +105,7 @@ module Monk
 
       def request_login(email, redirect_to: nil)
         ensure_configured!
-        if redirect_to && !config[:redirect_allowlist].include?(redirect_to)
+        if redirect_to && !allowed_redirect?(redirect_to)
           raise Monk::InvalidRedirectError, "#{redirect_to.inspect} is not in Monk::Auth's redirect_allowlist"
         end
 
@@ -119,6 +119,38 @@ module Monk
         )
 
         raw
+      end
+
+      # Whether request_login(redirect_to:) accepts `path`: it starts with
+      # a single "/" (never "//" or "/\", which a browser reads as another
+      # host), and the part before any "?" is a String entry of
+      # redirect_allowlist, or matched whole by a Regexp entry. A route
+      # checks it before enqueueing SendLoginLink, where an
+      # InvalidRedirectError would fail unseen in the job.
+      #
+      #   halt(422) if redirect_to && !Monk::Auth.allowed_redirect?(redirect_to)
+      def allowed_redirect?(path)
+        ensure_configured!
+        return false unless path.is_a?(String) && path.start_with?("/")
+        return false if path.start_with?("//", "/\\")
+
+        path_only = path.split("?", 2).first
+        config[:redirect_allowlist].any? do |entry|
+          entry.is_a?(Regexp) ? entry.match?(path_only) : entry == path_only
+        end
+      end
+
+      # Where a login token was going (its redirect_to), whether or not it
+      # has expired or been used; nil for an unknown token or one with no
+      # redirect_to. Only whoever holds the token learns it: a callback
+      # sends an expired link back to its page instead of a dead end.
+      #
+      #   redirect("#{Monk::Auth.redirect_for(params[:token]) || "/"}?expired=1")
+      def redirect_for(raw)
+        ensure_configured!
+        return nil if raw.nil? || raw.empty?
+
+        LoginToken.where(token_hash: hash_token(raw)).first&.fetch(:redirect_to)
       end
 
       # The login-email rate limit, for the login route to check before it
@@ -179,12 +211,15 @@ module Monk
       # `link` is usually login_link(token), above. An app may build its
       # own instead, from a trusted origin, never from request headers.
       # `token` is passed through for a deliver: that wants it (an SMS
-      # body instead of a link, say); most won't need it.
-      def deliver_link(email:, link:, token: nil)
+      # body instead of a link, say); most won't need it. `redirect_to`
+      # (where the link returns, e.g. an invitation) and `code` (the
+      # sign-in code) let the mail say more; deliver: is always called with
+      # all five keywords.
+      def deliver_link(email:, link:, token: nil, redirect_to: nil, code: nil)
         ensure_configured!
 
         if config[:deliver]
-          config[:deliver].call(email: email, link: link, token: token)
+          config[:deliver].call(email: email, link: link, token: token, redirect_to: redirect_to, code: code)
         elsif Monk.env.development?
           log_dev_link(link, subject: email)
         else
@@ -376,6 +411,19 @@ module Monk
             "characters (MONK_ENV=#{Monk.env}): set it to `openssl rand -hex 32`. Changing it signs everybody out."
         end
         secret
+      end
+
+      # Strings (exact paths) and Regexps. Each Regexp is anchored here,
+      # \A(?:...)\z, so it must match the whole path: one written without
+      # \z would otherwise let "/invite/x/../admin" through.
+      def checked_redirect_allowlist(entries)
+        unless entries.is_a?(Array) && entries.all? { |entry| entry.is_a?(String) || entry.is_a?(Regexp) }
+          raise Monk::InvalidAuthConfigError,
+            "Monk::Auth.configure(redirect_allowlist:) is an Array of paths (Strings) and patterns (Regexps), " \
+            "got #{entries.inspect}"
+        end
+
+        entries.map { |entry| entry.is_a?(Regexp) ? /\A(?:#{entry})\z/ : entry }
       end
 
       def checked_callback_path(path)

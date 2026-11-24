@@ -29,7 +29,8 @@ module Monk
 
       def self.perform(email, redirect_to = nil)
         token = Monk::Auth.request_login(email, redirect_to: redirect_to)
-        Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(token), token: token)
+        link = Monk::Auth.login_link(token)
+        Monk::Auth.deliver_link(email: email, link: link, token: token, redirect_to: redirect_to)
       end
     end
   end

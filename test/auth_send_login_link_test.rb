@@ -16,7 +16,9 @@ class AuthSendLoginLinkTest < Minitest::Test
   # deliver: has to be shareable (the job runs in its own Ractor), so it
   # reports the link through the log rather than into a local variable.
   module Deliver
-    TO_LOG = ->(email:, link:, token:) { Monk::Log.info("LINK #{email} #{link} #{token.length}") }
+    TO_LOG = lambda do |email:, link:, token:, redirect_to:, code:|
+      Monk::Log.info("LINK #{email} #{link} #{token.length} redirect_to=#{redirect_to} code=#{code}")
+    end
   end
 
   def setup
@@ -58,6 +60,16 @@ class AuthSendLoginLinkTest < Minitest::Test
       link = line.split[2]
       assert link.start_with?("https://app.example/login/verify/"), link
       assert_equal "ann@example.test", Monk::Auth.redeem(link.split("/").last)&.fetch(:subject)
+    end
+  end
+
+  def test_tells_deliver_where_the_link_returns
+    with_app(redirect_allowlist: [%r{/invite/\w+}]) do |log_dir|
+      Monk::Auth::SendLoginLink.enqueue("ann@example.test", "/invite/abc")
+
+      assert_equal 1, Monk::Jobs.drain!
+
+      assert_includes File.read(File.join(log_dir, "test.log")), "redirect_to=/invite/abc"
     end
   end
 
