@@ -98,11 +98,17 @@ rarely the one they started in:
    `Monk::Auth.split(raw)` does it. The PWA client calls it once, on
    the first launch with `navigator.standalone === true` (iOS only:
    Android's app shares Chrome's cookies), and remembers it in
-   `localStorage` only once it succeeded, so a first launch offline
-   tries again next time. The route checks `require_csrf!`. `push.js`
-   waits for it before subscribing, so the app's subscription belongs to
-   the app's session, not Safari's. A logout or expiry in one no longer
-   reaches the other.
+   `localStorage` only once the server answered, so a first launch
+   offline tries again next time. The route checks `require_csrf!`. A
+   logout or expiry in one no longer reaches the other. Decided while
+   building: when auth is configured, `monk_head` adds
+   `<meta name="monk-auth-own-url" content="/auth/own">`, and
+   `register.js` calls it when that meta is there. A public helper,
+   `own_session!`, splits the cookie's session and sets the cookies. The
+   new session keeps the old one's `created_at` and `expires_at`, so a
+   split never extends `session_max_age`. `push.js` doesn't wait for it:
+   it re-sends the subscription on every load, and the server moves an
+   endpoint to the session that sent it.
 
 ### Push that outlives an idle session
 

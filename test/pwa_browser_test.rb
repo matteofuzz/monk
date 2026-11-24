@@ -130,6 +130,50 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # The installed iPhone app asks once for its own session (decision 9 of
+  # docs/plan-onboarding.md). Headless Chrome is never standalone, so the
+  # page is told it is; the app's /auth/own is a probe recording each call.
+  def test_the_installed_iphone_app_asks_once_for_its_own_session
+    with_own_session_probe do |origin, calls|
+      pretend_standalone
+      @page.command("Network.setCookie", name: "csrf_token", value: "csrf-abc", url: origin)
+
+      @page.go_to("#{origin}/own-probe")
+      wait_until { calls.call.size == 1 }
+      assert_equal ["csrf-abc"], calls.call
+      wait_until { @page.evaluate("localStorage.getItem('monk-pwa:own-session')") == "1" }
+
+      @page.refresh
+      settle
+      assert_equal 1, calls.call.size, "remembered: not asked again"
+    end
+  end
+
+  def test_a_failed_ask_is_tried_again_on_the_next_launch
+    with_own_session_probe do |origin, calls, dest|
+      pretend_standalone
+      File.write(File.join(dest, "tmp/own_status"), "500")
+
+      @page.go_to("#{origin}/own-probe")
+      wait_until { calls.call.size == 1 }
+      settle
+      assert_nil @page.evaluate("localStorage.getItem('monk-pwa:own-session')")
+
+      File.delete(File.join(dest, "tmp/own_status"))
+      @page.refresh
+      wait_until { calls.call.size == 2 }
+    end
+  end
+
+  def test_a_browser_tab_never_asks
+    with_own_session_probe do |origin, calls|
+      @page.go_to("#{origin}/own-probe")
+      settle
+
+      assert_empty calls.call
+    end
+  end
+
   # push.js in a generated push app (monk add push): the page learns its
   # state at once, even with notifications allowed and a push service that
   # never answers -- headless Chrome reaches none, so subscribing itself is
@@ -156,6 +200,51 @@ class PwaBrowserTest < Minitest::Test
   end
 
   private
+
+  # A pwa app with a page carrying auth's meta, and a stand-in /auth/own
+  # that records the CSRF header of each call in tmp/own_calls, answering
+  # tmp/own_status's status (200 without it).
+  def with_own_session_probe
+    with_new_app(:pwa) do |dest|
+      FileUtils.mkdir_p(File.join(dest, "tmp"))
+      File.write(File.join(dest, "app/views/own_probe.erb"),
+        %(<meta name="monk-auth-own-url" content="/auth/own"><p>probe</p>\n),)
+      File.write(File.join(dest, "app/routes/own_probe.rb"), <<~RUBY)
+        class App
+          OWN_PROBE_DIR = File.expand_path("../../tmp", __dir__).freeze
+
+          get("/own-probe") { render "own_probe" }
+          post("/auth/own") do
+            File.write(File.join(OWN_PROBE_DIR, "own_calls"), "\#{header("x-csrf-token")}\\n", mode: "a")
+            status_file = File.join(OWN_PROBE_DIR, "own_status")
+            halt(Integer(File.read(status_file))) if File.exist?(status_file)
+            json(ok: true)
+          end
+        end
+      RUBY
+      log = File.join(dest, "tmp/own_calls")
+      calls = -> { File.exist?(log) ? File.read(log).lines(chomp: true) : [] }
+      with_server(dest) { |port| yield "http://127.0.0.1:#{port}", calls, dest }
+    end
+  end
+
+  def pretend_standalone
+    @page.command("Page.addScriptToEvaluateOnNewDocument",
+      source: "Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true })",)
+  end
+
+  # Long enough for register.js's fetch, had it made one.
+  def settle
+    @page.evaluate_async("navigator.serviceWorker.ready.then(() => setTimeout(() => arguments[0](true), 500))", 10)
+  end
+
+  def wait_until
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+    until yield
+      flunk "timed out" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      sleep 0.05
+    end
+  end
 
   def push_state(origin)
     @page.go_to("#{origin}/")

@@ -68,6 +68,12 @@ class GeneratorsExamplesTest < Minitest::Test
         logged_in = { "HTTP_COOKIE" => cookies.map { |name, value| "\#{name}=\#{value}" }.join("; ") }
         assert_equal [200, %({"email":"\#{email}"})], request("GET", "/me", nil, logged_in).first(2)
 
+        own = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
+        status, _body, own_headers = request("POST", "/auth/own", nil, own)
+        assert_equal 200, status
+        assert Array(own_headers["set-cookie"]).any? { |cookie| cookie.start_with?("session_token=") }
+        assert_equal 403, request("POST", "/auth/own", nil, "HTTP_X_CSRF_TOKEN" => "x").first, "no session, no CSRF"
+
         csrf = logged_in.merge("HTTP_X_CSRF_TOKEN" => cookies["csrf_token"])
         status, _body, headers = request("POST", "/auth/logout", nil, csrf)
         assert_equal 302, status

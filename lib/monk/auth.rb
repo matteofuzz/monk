@@ -21,6 +21,10 @@ module Monk
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
     MIN_SECRET_LENGTH = 32
 
+    # The scaffold's route giving the installed iPhone app its own session
+    # (own_session!), named to register.js by monk_head.
+    OWN_PATH = "/auth/own".freeze
+
     # The login-email rate limit: records a request unless one was recorded
     # for the address less than $2 seconds ago. One statement, so racing
     # requests for one address let exactly one through; a refused request
@@ -70,6 +74,13 @@ module Monk
     RENEW_SESSION_SQL = <<~SQL.freeze
       UPDATE sessions SET expires_at = $2 WHERE id = $1 AND expires_at < $3 AND revoked_at IS NULL
       RETURNING expires_at
+    SQL
+
+    # split: the new session copies the old one's life exactly.
+    SPLIT_SESSION_SQL = <<~SQL.freeze
+      INSERT INTO sessions (subject, token_hash, expires_at, created_at)
+      SELECT subject, $2, expires_at, created_at FROM sessions WHERE token_hash = $1
+      RETURNING subject, expires_at
     SQL
 
     SWEEP_BATCH_SIZE = 10_000
@@ -384,6 +395,22 @@ module Monk
 
         session = { subject: row[:subject], expires_at: row[:expires_at] }
         renew ? renewed(row, session, now, ends_at) : session
+      end
+
+      # A second session for a valid session's subject, with the same
+      # created_at and expires_at (so it never outlives session_max_age):
+      # {token:, subject:, expires_at:}, or nil. The installed iPhone app
+      # starts with Safari's session, copied once at Add to Home Screen;
+      # after a split, logging out in one no longer ends the other.
+      def split(raw)
+        ensure_configured!
+        return nil unless verified_session(raw)
+
+        token = SecureRandom.urlsafe_base64(32)
+        row = Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(SPLIT_SESSION_SQL, [hash_token(raw), hash_token(token)]).first
+        end
+        { token: token, subject: row["subject"], expires_at: row["expires_at"] }
       end
 
       def revoke(raw)

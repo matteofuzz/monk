@@ -66,6 +66,16 @@
 #     redirect "/login", flash: "You're logged out."
 #   end
 #
+#   # The installed app on an iPhone starts with Safari's session (Add to
+#   # Home Screen copies the cookies): register.js asks here once, on its
+#   # first launch, for a session of its own (monk_head names this path,
+#   # Monk::Auth::OWN_PATH), so logging out in one doesn't end the other.
+#   post("/auth/own") do
+#     require_csrf!
+#     own_session! || halt(401)
+#     json(ok: true)
+#   end
+#
 #   get("/me") { json(email: require_user!) }
 # end
 # monk:end

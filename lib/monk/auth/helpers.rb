@@ -92,6 +92,29 @@ module Monk
         nil
       end
 
+      # Gives this browser its own session: splits the cookie's session
+      # (Monk::Auth.split) and sets the cookies for the new one, leaving
+      # the old one to whoever else holds it. The subject, or nil without
+      # a valid session cookie. For the installed iPhone app, which
+      # register.js has call Monk::Auth::OWN_PATH once; call require_csrf!
+      # first:
+      #   post("/auth/own") { require_csrf!; own_session! || halt(401); json(ok: true) }
+      def own_session!
+        session = Monk::Auth.split(session_cookie_token)
+        return nil unless session
+
+        set_session_cookie(session)
+        @current_subject = session[:subject]
+      end
+
+      # For the layout's <%= monk_head %>: where register.js asks for the
+      # installed app's own session.
+      def head_tags
+        return super unless Monk::Auth.config
+
+        super + [%(<meta name="monk-auth-own-url" content="#{h(Monk::Auth::OWN_PATH)}">)]
+      end
+
       private
 
       def bearer_token
