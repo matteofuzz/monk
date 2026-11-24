@@ -5,5 +5,5 @@ module Monk
   # class of bug .freeze! guards against for routes/error handlers/models,
   # just on a top-level constant that every worker Ractor reads on boot
   # (found live under kino: GET /hello 500'd until this was frozen).
-  VERSION = "0.27.0".freeze
+  VERSION = "0.28.0".freeze
 end

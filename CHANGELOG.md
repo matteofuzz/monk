@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
-## 0.28.0 - unreleased
+## 0.28.0 - 2026-11-24
 
 A smoother first sign-in, from walking a real app's invitation and
 sign-up flows on phones. Upgrading an app with auth takes a few steps:
