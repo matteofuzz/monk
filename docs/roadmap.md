@@ -148,11 +148,12 @@ gets its own design doc and plan when work on it starts.
    agents, redacted bug-report output, and a `LISTEN` check through
    PgBouncer (Monk's deploy stack has none).
 
-7. **0.28: A smoother first sign-in.** From monk_talk's onboarding
-   walk (2026-11-24): a 6-digit code beside the magic link, sessions
-   renewed by use, the installed iPhone app's own session, push that
-   outlives an idle session, `redirect_allowlist` patterns, and a helper
-   to install the app. Plan:
+7. **0.28: A smoother first sign-in.** Built (2026-11-24), not yet
+   released. From walking a real app's invitation and sign-up flows on
+   phones: a 6-digit code beside the magic link, sessions renewed by use,
+   the installed iPhone app's own session, push that outlives an idle
+   session, `redirect_allowlist` patterns, and a helper to install the
+   app. Left: the checks on devices, in the "Open checks" of
    `docs/plan-onboarding.md`.
 
 8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The

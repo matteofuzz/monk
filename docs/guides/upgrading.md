@@ -14,6 +14,75 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.28
+
+In the `Gemfile`, `gem "monkrb", "~> 0.28", require: "monk"` (what a new
+app gets; `"~> 0.27"` would also install 0.28, but not require it), then
+`bundle update monkrb`. The steps below are for apps with auth, and one
+for apps with pwa.
+
+### `request_login` returns a Hash (apps with auth)
+
+`Monk::Auth.request_login` now returns `{ token:, code: }` instead of the
+token: the sign-in code is made beside the link
+([`auth.md`](auth.md#signing-in-with-a-code)). Wherever the app calls it,
+take the token with `[:token]`:
+
+```ruby
+login = Monk::Auth.request_login(email)
+Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(login[:token]), token: login[:token],
+  code: login[:code])
+```
+
+`Monk::Auth::SendLoginLink` already does. In tests,
+`Monk::Auth.redeem(Monk::Auth.request_login(email)[:token])`.
+
+### `deliver:` gets two more keywords (apps with auth)
+
+`deliver:` is now called with `redirect_to:` and `code:` too. A lambda
+taking only `email:, link:, token:` raises `ArgumentError`: add them, or
+`**` (`lambda do |email:, link:, **|`). To send the code, take the new
+`app/mailers/auth_mailer.rb` and `app/views/mail/magic_link.erb` (`monk
+help auth --file app/mailers/auth_mailer.rb`, run in the app, shows it
+with the app's name): the subject starts with the code.
+
+### The migration (apps with auth)
+
+Copy `db/migrate/x_add_login_codes.{up,down}.sql` (`monk help auth
+--file db/migrate/x_add_login_codes.up.sql`) under a new timestamp, and
+run `bin/migrate`. It adds the code's columns to `login_tokens` and
+`login_requests`, and an index on `login_tokens (email, created_at)`.
+
+### The login page and routes (apps with auth)
+
+To sign in with the code, take the new `app/views/auth/login.erb`, and
+from the `auth-routes` block of `app/routes/auth.rb` (`monk help auth
+--file app/routes/auth.rb`): the `/auth/request` route (it sets `@email`,
+which shows the code form), and the new `POST /auth/code` and
+`POST /auth/own` (the installed iPhone app's own session,
+[`auth.md`](auth.md#the-installed-iphone-apps-own-session)).
+
+### What changes by itself (apps with auth)
+
+- **Addresses are stripped and downcased** in `request_login`, so a
+  session's subject is too. Sessions made before keep their subject as it
+  was.
+- **Sessions are renewed by use**: a person who keeps using the app
+  stays signed in. `session_max_age:` caps a session's whole life, if
+  you want one.
+- **Expired sessions are kept 90 days** (`expired_retention:`) before
+  `Monk::Auth.sweep!` deletes them, and web push keeps reaching them
+  until then. `expired_retention: 0` deletes them when they expire, as
+  before.
+- **`redirect_allowlist` takes Regexps** too, and an allowed path may
+  carry a query string.
+
+### Helping people install (optional, apps with pwa)
+
+Add `<%= monk_install %>` to `app/views/layouts/app.erb` for an install
+banner, and style its `monk-install` classes
+([`pwa.md`](pwa.md#helping-people-install)).
+
 ## 0.27
 
 In the `Gemfile`, `gem "monkrb", "~> 0.27", require: "monk"` (what a new

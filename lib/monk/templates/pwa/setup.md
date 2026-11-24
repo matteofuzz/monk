@@ -16,6 +16,13 @@ reaches an app installed this way. Nothing to start: the files are in
   content inside the middle 80%, since Android crops it to a circle or a
   rounded square) and `apple-touch-icon.png` (180×180, iOS).
 
+### Helping people install
+
+Add `<%= monk_install %>` to `app/views/layouts/app.erb` (or a page): a
+banner, hidden until it applies, inviting people to install the app. On
+iOS its button shows how to Add to Home Screen; on Android it opens
+Chrome's prompt. It has no styles: style its `monk-install` classes.
+
 ### Before production
 
 Service workers need https (or localhost): a phone opening the dev server

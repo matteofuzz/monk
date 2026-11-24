@@ -17,8 +17,8 @@ require "monk/auth"
 
 Monk::Auth.configure(
   db_name: :primary, secret: ENV.fetch("AUTH_SECRET"),
-  login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: ["/dashboard"],
-  deliver: AuthMailer::MAGIC_LINK, # sends the link: "Sending the magic link" below
+  login_ttl: 600, session_ttl: 1_209_600, redirect_allowlist: ["/dashboard", %r{/invite/\w+}],
+  deliver: AuthMailer::MAGIC_LINK, # sends the link and the code: "Sending the magic link" below
 )
 ```
 
@@ -28,9 +28,11 @@ class App
   post("/auth/request") do
     email = params[:email].to_s.strip.downcase
     halt(429) unless Monk::Auth.allow_login_request?(email) # "Rate-limiting login emails"
-    token = Monk::Auth.request_login(email)
-    Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(token), token: token)
-    render "auth/login" # "check your email"; the token goes only in the email
+    login = Monk::Auth.request_login(email) # { token:, code: }
+    Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(login[:token]), token: login[:token],
+      code: login[:code])
+    @email = email
+    render "auth/login" # now asks for the code; the token and code go only in the email
   end
 
   get("/auth/callback/:token") do # the link in the email
@@ -39,12 +41,18 @@ class App
     redirect(session[:redirect_to] || "/")
   end
 
+  post("/auth/code") do # the code from the email, typed on the login page
+    session = Monk::Auth.redeem_code(params[:email].to_s, params[:code].to_s) || halt(422, render("auth/login"))
+    set_session_cookie(session)
+    redirect(session[:redirect_to] || "/")
+  end
+
   get("/me") { json(email: require_user!) } # 401 unless logged in
 end
 ```
 
-Never send the token back in the response: whoever asked for it could
-then log in as any address they typed.
+Never send the token or the code back in the response: whoever asked for
+them could then log in as any address they typed.
 
 Three Postgres tables back this — `login_tokens` (single-use, short-lived),
 `sessions` (multi-use, long-lived, indexed by `subject`) and
@@ -72,12 +80,16 @@ tries again. Keep `AUTH_SECRET` with your backups anyway: sessions survive
 without it, but nothing else signed with it does.
 `Monk::Auth.revoke(token)` / `.revoke_all(subject)` invalidate
 sessions; `.sweep!` deletes expired rows ([Cleaning up](#cleaning-up-expired-rows)).
+A session in use is renewed ([Sessions renewed by use](#sessions-renewed-by-use)).
 The design: [`design/auth-sessions.md`](../design/auth-sessions.md).
 
 ## Sending the magic link
 
-`Monk::Auth.request_login` returns a raw token and nothing else. Monk
-doesn't define the callback route, but it knows its path:
+`Monk::Auth.request_login(email, redirect_to:)` returns `{ token:, code: }`:
+a raw token for the link, and the 6-digit code beside it
+([Signing in with a code](#signing-in-with-a-code)). The address is
+stripped and downcased. Monk doesn't define the callback route, but it
+knows its path:
 `Monk::Auth.configure(callback_path:)`, `"/auth/callback"` by default, so
 your route is `get("/auth/callback/:token")`. `Monk::Auth.login_link(token)`
 builds the link from it. Sending is a separate concern, which `Monk::Mail`
@@ -86,8 +98,9 @@ token, to `Monk::Auth.deliver_link`:
 
 ```ruby
 post("/auth/request") do
-  token = Monk::Auth.request_login(params[:email], redirect_to: "/")
-  Monk::Auth.deliver_link(email: params[:email], link: Monk::Auth.login_link(token), token: token)
+  login = Monk::Auth.request_login(params[:email], redirect_to: "/")
+  Monk::Auth.deliver_link(email: params[:email], link: Monk::Auth.login_link(login[:token]),
+    token: login[:token], code: login[:code])
   json(ok: true)
 end
 ```
@@ -109,11 +122,14 @@ typed in.
 `deliver_link` picks, in order:
 
 1. **The configured `deliver:` callable**, if `Monk::Auth.configure` was
-   given one — `deliver.call(email:, link:, token:)`. This is where email
+   given one — `deliver.call(email:, link:, token:, redirect_to:, code:)`,
+   always with all five keywords (`redirect_to:` lets the mail say where
+   the link leads, an invitation, say; take what you don't use with
+   `**`). This is where email
    plugs in, usually a one-line call to `Monk::Mail.deliver` (example in
    [`mail.md`](mail.md#with-monkauth)), or any other channel such as SMS.
    Like a route block, it has to be `Ractor.shareable?`, so build
-   it as a module constant (`AuthMailer::MAGIC_LINK = ->(email:, link:, token:)
+   it as a module constant (`AuthMailer::MAGIC_LINK = ->(email:, link:, code:, **)
    { ... }`, in `app/mailers/auth_mailer.rb`), not inline in
    `config/auth.rb` — self at a script's top level isn't shareable, the
    same rule `Monk::Live.authorize` blocks follow. `config/auth.rb`
@@ -128,6 +144,98 @@ typed in.
 3. **Otherwise raises** `Monk::MissingAuthDeliveryError`. An app that
    forgot to configure `deliver:` finds out the first time someone requests
    a login, not later from a user who never got their email.
+
+## Signing in with a code
+
+A magic link leaves the page the person is on: to the mail app, then to
+whatever browser the mail app opens. On a phone that's often not the one
+they started in: a page opened in a chat app's built-in browser stays
+signed out, and the installed app on an iPhone can't receive a link at
+all (Mail opens it in Safari). So every login token also has a 6-digit
+code, sent beside the link, which the person types on the page that asked
+for it.
+
+- **One token, two ways to redeem it.** `Monk::Auth.redeem_code(email,
+  code)` returns a session like `redeem`, or nil. Redeeming the link or the
+  code uses the token: the other stops working. Same `login_ttl`.
+- **Only the address's newest token counts**, so "Send a new code"
+  retires the previous one.
+- **Guessing is limited.** A wrong code counts against the token, and the
+  fifth uses it up (`MAX_CODE_ATTEMPTS`); and against the address, across
+  its tokens: past 10 in an hour (`MAX_CODE_FAILURES_PER_HOUR`), every
+  code for it is refused until the hour is up, so asking for new codes
+  doesn't buy more guesses. The link keeps working. Limits per IP stay
+  the app's ([Rate-limiting](#rate-limiting-login-emails)).
+- **Only an HMAC is stored** (`login_tokens.code_hash`, keyed by
+  `AUTH_SECRET`): six digits are trivial to try offline against a plain
+  hash.
+- **The scaffold** turns the "check your email" page into the code form
+  (`inputmode="numeric"`, `autocomplete="one-time-code"`, "Send a new
+  code", "Wrong address?"), adds `POST /auth/code`, and starts the mail's
+  subject with the code (`"482913 is your shop code"`), so a phone's
+  notification shows it and Safari can offer it.
+
+## Where a login returns
+
+`request_login(redirect_to:)` (and `SendLoginLink.enqueue(email,
+redirect_to)`) only takes a path `redirect_allowlist` allows. An entry is
+a String, an exact path, or a Regexp, which must match the whole path
+(Monk anchors it: `%r{/invite/\w+}` doesn't let `/invite/x/../admin`
+through). The match is on the path only: a query string after an allowed
+path is kept. Whatever the list says, a redirect starts with a single
+`/`, never `//` or `/\`, which a browser reads as another host.
+
+- **`Monk::Auth.allowed_redirect?(path)`** is the same check, for a route
+  that enqueues `SendLoginLink`: in the job, an `InvalidRedirectError`
+  would fail where nobody sees it.
+- **`Monk::Auth.redirect_for(token)`** is where a token was going, even
+  expired or used (nil for an unknown one), so a callback can send an
+  expired link back to its page instead of a dead end:
+  ```ruby
+  get("/auth/callback/:token") do
+    session = Monk::Auth.redeem(params[:token])
+    redirect("#{Monk::Auth.redirect_for(params[:token]) || "/"}?expired=1") unless session
+    # ...
+  end
+  ```
+
+## Sessions renewed by use
+
+A session lasts `session_ttl` from its last use, not from sign-in. When a
+request's session has less than half of `session_ttl` left,
+`current_subject` moves its `expires_at` to now + `session_ttl`, and
+reissues both cookies: one `UPDATE` per session per half TTL, never per
+request (a conditional one, so two requests arriving together write once).
+A Bearer request renews the row too. The WebSocket's check never writes.
+
+`session_max_age:` (nil by default: no cap) caps a session's whole life,
+in seconds from its creation, however much it's used.
+
+## The installed iPhone app's own session
+
+Add to Home Screen copies Safari's cookies into the app once, so the
+installed app starts signed in, but with the very same session: logging
+out in either would log out both, and end the app's notifications. So on
+its first launch the app asks for a session of its own:
+
+- With auth configured, `<%= monk_head %>` adds `<meta
+  name="monk-auth-own-url" content="/auth/own">`. In the installed app on
+  iOS (`navigator.standalone`), Monk's `register.js` (with
+  [pwa](pwa.md)) POSTs there once, and remembers it in `localStorage` once
+  the server answered. Android's installed app shares Chrome's cookies,
+  so it has nothing to split.
+- The route, in the scaffold:
+  ```ruby
+  post("/auth/own") do
+    require_csrf!
+    own_session! || halt(401)
+    json(ok: true)
+  end
+  ```
+  `own_session!` splits the cookie's session (`Monk::Auth.split(token)`:
+  a second session for the same subject, with the same `created_at` and
+  `expires_at`) and sets the cookies for the new one. The old one is left
+  to Safari.
 
 ## Sending the magic link from a job
 
@@ -148,8 +256,8 @@ end
 
 It runs on the `mailers` queue with 3 attempts (a login email minutes late
 is worse than none), never retries an `InvalidRedirectError`, and sends
-`Monk::Auth.login_link(token)` through your `deliver:`, synchronously, in
-the job. Subclass it to change the queue or the retries.
+`Monk::Auth.login_link(token)` and the code through your `deliver:`,
+synchronously, in the job. Subclass it to change the queue or the retries.
 
 - **Why not `deliver:` calling `Monk::Mail.deliver_later`?** That would
   store the link, token included, in the job queue until it's sent. A
@@ -213,10 +321,11 @@ end
 ## Cleaning up expired rows
 
 Expired sessions and login tokens stay in their tables until something
-deletes them: roughly one session a month per active person.
-`Monk::Auth.sweep!` deletes expired login tokens and sessions, and login
-requests older than `login_request_interval`, at most 10,000 rows per
-statement so no lock lasts long, and returns how many of each:
+deletes them. `Monk::Auth.sweep!` deletes expired login tokens, sessions
+expired for longer than `expired_retention:` (90 days by default), and
+login requests older than `login_request_interval` (kept while their
+wrong-code count still matters), at most 10,000 rows per statement so no
+lock lasts long, and returns how many of each:
 `{ login_tokens: 3, sessions: 41, login_requests: 12 }`.
 
 - **With jobs**, `Monk::Auth::Sweep` runs it as a job, and the
@@ -230,9 +339,9 @@ statement so no lock lasts long, and returns how many of each:
 - **Without jobs**, call `Monk::Auth.sweep!` on a schedule of your own:
   an external cron running a script that loads `config/load` and calls
   it, for instance.
-- **Rows go when they expire.** To keep expired sessions for a while (to
-  show when someone was last seen, say), don't schedule `Sweep` and prune
-  them yourself.
+- **Expired sessions are kept for `expired_retention`**, because
+  [web push](push.md) keeps notifying an idle person through them until
+  then. `expired_retention: 0` deletes them when they expire.
 
 ## Secure cookies
 
