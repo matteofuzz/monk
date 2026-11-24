@@ -8,15 +8,19 @@ module AuthMailer
   # Monk::Auth.deliver_link. The HTML part is
   # app/views/mail/magic_link.erb. Swap the body for SMS or any other
   # channel; see docs/guides/auth.md.
-  MAGIC_LINK = lambda do |email:, link:, **|
+  #
+  # The subject starts with the code, so a phone's notification shows it
+  # and Safari can offer it on the login page.
+  MAGIC_LINK = lambda do |email:, link:, code:, **|
     # Development only (a no-op elsewhere): the link on the console, plus a
     # QR code for a phone if rqrcode is in the Gemfile.
     Monk::Auth.log_dev_link(link, subject: email)
     Monk::Mail.deliver(
       to: email,
-      subject: "Your login link",
-      text: "Here's your login link:\n\n#{link}\n\nIf you didn't ask for it, you can ignore this email.",
-      html: Monk::Mail.render("mail/magic_link", link: link),
+      subject: "#{code} is your {{app}} code",
+      text: "Your login code: #{code}\n\nOr log in with this link:\n\n#{link}\n\n" \
+            "If you didn't ask for it, you can ignore this email.",
+      html: Monk::Mail.render("mail/magic_link", link: link, code: code),
     )
   end
 end

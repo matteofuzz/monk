@@ -60,7 +60,8 @@ rarely the one they started in:
    its HMAC (`code_hash`, keyed by the auth secret: six digits are
    trivial to try offline) and a failed-attempts count. Redeeming the
    link or the code uses the token: the other stops working. Same
-   `login_ttl`.
+   `login_ttl`. `request_login` returns `{ token:, code: }` (decided
+   while building: explicit, one line in the upgrading guide).
 6. **`Monk::Auth.redeem_code(email, code)`** → a session, like
    `redeem`, or nil. It checks the newest live token for that address,
    in constant time. The address is stripped and downcased, here and in

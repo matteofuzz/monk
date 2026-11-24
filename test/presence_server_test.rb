@@ -47,7 +47,7 @@ class PresenceServerTest < Minitest::Test
   end
 
   def test_a_connection_is_counted_for_its_subject_until_it_closes
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, presence: @counts, ping_interval: 5, &HOLD_OPEN)
 
     socket = open_socket(server, session[:token])

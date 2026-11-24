@@ -59,7 +59,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_valid_bearer_token_is_accepted_with_no_origin_check
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -97,7 +97,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_valid_cookie_with_an_allowed_origin_is_accepted
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -113,7 +113,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_valid_cookie_with_a_disallowed_origin_gets_a_403_before_verify_even_runs
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -145,7 +145,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_a_bearer_connection_is_never_origin_checked_even_with_allowed_origins_configured
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, allowed_origins: ["https://example.com"], &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -195,7 +195,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_reverify_interval_closes_the_connection_once_the_session_is_revoked
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, reverify_interval: 0.05, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -211,7 +211,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_reverify_interval_leaves_a_still_valid_session_connected
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, reverify_interval: 0.05, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -245,7 +245,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_optional_gives_a_valid_bearer_connection_its_subject
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: :optional, &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -258,7 +258,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_optional_gives_a_valid_cookie_from_an_allowed_origin_its_subject
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -275,7 +275,7 @@ class WebSocketAuthTest < Minitest::Test
   # the page keeps its public updates, and the rules deny the private ones.
   def test_optional_treats_an_invalid_credential_as_anonymous
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     Monk::Auth.revoke(session[:token])
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
@@ -294,7 +294,7 @@ class WebSocketAuthTest < Minitest::Test
   # down) is a 503 and one line on stderr, not a dead Ractor and a backtrace.
   def test_a_verify_that_raises_gets_a_503_with_retry_after_and_one_log_line
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
 
@@ -317,7 +317,7 @@ class WebSocketAuthTest < Minitest::Test
   # Retry-After, so it gets none.
   def test_optional_answers_a_verify_that_raises_with_a_503_not_anonymous
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     Monk::Persistence::Pg.checkout(DB_NAME) { |conn| drop_auth_tables(conn) }
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
@@ -336,7 +336,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_optional_still_refuses_a_cookie_from_a_disallowed_origin
     setup_auth_tables(DB_NAME)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: :optional, allowed_origins: ["https://example.com"], &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -411,7 +411,7 @@ class WebSocketAuthTest < Minitest::Test
   # that mostly waits.
   def test_without_db_pool_a_closed_sockets_connection_is_closed
     setup_counted_auth
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, &ECHO_ONE_MESSAGE)
     GC.disable
 
@@ -437,7 +437,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_with_db_pool_open_sockets_share_the_pools_connections
     setup_pooled_auth(size: 2)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, db_pool: :auth, &WHO_AM_I)
 
     sockets = Array.new(20) do
@@ -466,7 +466,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_with_db_pool_optional_identifies_through_the_pool
     setup_pooled_auth(size: 1)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: :optional, db_pool: :auth, &WHO_AM_I)
 
     socket = TCPSocket.new("127.0.0.1", server.port)
@@ -480,7 +480,7 @@ class WebSocketAuthTest < Minitest::Test
 
   def test_with_db_pool_reverify_runs_through_the_pool
     setup_pooled_auth(size: 1)
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     server = start_server(authenticate: true, reverify_interval: 0.05, db_pool: :auth, &ECHO_ONE_MESSAGE)
 
     socket = TCPSocket.new("127.0.0.1", server.port)

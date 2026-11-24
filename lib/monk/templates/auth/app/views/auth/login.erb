@@ -1,14 +1,28 @@
 <h1>Log in</h1>
 
-<%# A plain form: POST /auth/request (app/routes/auth.rb) renders this page
-    again, with @sent once the link is on its way, or with @error and a
-    422 or 429. %>
-<% if @sent %>
-  <p>Check your email for the link.</p>
+<%# Plain forms. POST /auth/request (app/routes/auth.rb) renders this page
+    again with @email once the email is on its way, or with @error and a
+    422 or 429; POST /auth/code with @email and @error for a wrong code. %>
+<% if @email %>
+  <p>We sent a code and a link to <strong><%= @email %></strong>.</p>
+  <% if @error %><p role="alert"><%= @error %></p><% end %>
+  <form id="login-code" method="post" action="/auth/code">
+    <input type="hidden" name="email" value="<%= @email %>">
+    <label>Code
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"
+        required autofocus>
+    </label>
+    <button>Log in</button>
+  </form>
+  <form method="post" action="/auth/request">
+    <input type="hidden" name="email" value="<%= @email %>">
+    <button>Send a new code</button>
+  </form>
+  <p><a href="/login">Wrong address?</a></p>
 <% else %>
   <% if @error %><p role="alert"><%= @error %></p><% end %>
   <form id="login" method="post" action="/auth/request">
     <label>Email <input type="email" name="email" value="<%= params[:email] %>" required autocomplete="email"></label>
-    <button>Send me a login link</button>
+    <button>Send me a login code</button>
   </form>
 <% end %>

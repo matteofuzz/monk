@@ -4,8 +4,8 @@
 
 module Monk
   module Auth
-    # Sends a magic link from bin/jobs instead of the login request. The
-    # token is created here, right before it's sent, so the raw token is
+    # Sends a magic link, and its sign-in code, from bin/jobs instead of
+    # the login request. The token is created here, right before it's sent, so the raw token is
     # never stored anywhere -- not even in the job queue, which pointing
     # deliver: at Monk::Mail.deliver_later would do
     # (docs/adr/0014-mail-from-jobs-and-login-links-created-in-the-job.md).
@@ -28,9 +28,11 @@ module Monk
       never_retry Monk::InvalidRedirectError
 
       def self.perform(email, redirect_to = nil)
-        token = Monk::Auth.request_login(email, redirect_to: redirect_to)
-        link = Monk::Auth.login_link(token)
-        Monk::Auth.deliver_link(email: email, link: link, token: token, redirect_to: redirect_to)
+        login = Monk::Auth.request_login(email, redirect_to: redirect_to)
+        Monk::Auth.deliver_link(
+          email: email, link: Monk::Auth.login_link(login[:token]), token: login[:token],
+          redirect_to: redirect_to, code: login[:code],
+        )
       end
     end
   end

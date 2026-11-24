@@ -60,12 +60,48 @@ class AuthSchemaTest < Minitest::Test
     end
   end
 
-  # The housekeeping migration alone rolls back to auth's original schema.
-  def test_one_rollback_drops_login_requests_and_the_subject_index
+  # 0.28's sign-in code: the code's HMAC and wrong guesses per token, an
+  # address's newest token by index, and wrong guesses per address.
+  def test_login_codes_add_their_columns_and_index
+    skip_unless_postgres_available
+    migrator.migrate!
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      token = conn.exec(
+        "INSERT INTO login_tokens (email, token_hash, expires_at) VALUES ('a', 'h', now()) RETURNING *",
+      ).first
+      request = conn.exec("INSERT INTO login_requests (email) VALUES ('a') RETURNING *").first
+      indexdef = conn.exec(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'login_tokens_email_created_at'",
+      ).getvalue(0, 0)
+
+      assert_nil token["code_hash"]
+      assert_equal 0, token["code_attempts"].to_i
+      assert_equal 0, request["code_failures"].to_i
+      assert_nil request["code_failures_since"]
+      assert_match(/ON public\.login_tokens USING btree \(email, created_at\)\z/, indexdef)
+    end
+  end
+
+  def test_one_rollback_drops_the_login_code_columns
     skip_unless_postgres_available
     migrator.migrate!
 
     migrator.rollback!
+
+    Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
+      columns = conn.exec("SELECT column_name FROM information_schema.columns WHERE table_name IN " \
+                          "('login_tokens', 'login_requests')").map { |row| row["column_name"] }
+      assert_empty columns & %w[code_hash code_attempts code_failures code_failures_since]
+    end
+  end
+
+  # The housekeeping migration rolls back to auth's original schema.
+  def test_rolling_back_housekeeping_drops_login_requests_and_the_subject_index
+    skip_unless_postgres_available
+    migrator.migrate!
+
+    migrator.rollback!(steps: 2)
 
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       refute table_exists?(conn, "login_requests")
@@ -78,7 +114,7 @@ class AuthSchemaTest < Minitest::Test
     skip_unless_postgres_available
     migrator.migrate!
 
-    migrator.rollback!(steps: 2)
+    migrator.rollback!(steps: 3)
 
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
       TABLES.each { |table| refute table_exists?(conn, table), "expected #{table} to be dropped" }

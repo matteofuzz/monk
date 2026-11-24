@@ -1,15 +1,16 @@
-# Logging in by email link (monk add auth). Monk::Auth makes and checks the
+# Logging in by email link or code (monk add auth). Monk::Auth makes and checks the
 # tokens and sessions; these routes are the app's own, because they carry
 # its decisions: the rate limit, where to go after logging in, JSON or HTML.
 #
-# monk:example auth-routes -- log in by email link, log out, a page for logged-in users.
+# monk:example auth-routes -- log in by email link or code, log out, a page for logged-in users.
 # # Before going live: keep the rate limit (without one, anyone can make this
 # # app send mail to any address), and list your redirects in config/auth.rb.
 # class App
 #   get("/login") { @title = "Log in"; render "auth/login" }
 #
 #   # The form in app/views/auth/login.erb; a failed submit renders it
-#   # again with the error and its status.
+#   # again with the error and its status. Once sent, the page asks for
+#   # the code from the email ("Send a new code" posts here again).
 #   post("/auth/request") do
 #     @title = "Log in"
 #     email = params[:email].to_s.strip.downcase
@@ -24,13 +25,30 @@
 #       halt(429, render("auth/login"))
 #     end
 #
-#     # Sent here, in the request. With jobs, replace these two lines with
+#     # Sent here, in the request. With jobs, replace these lines with
 #     # Monk::Auth::SendLoginLink.enqueue(email): the token is then made and
 #     # sent in bin/jobs, and never stored.
-#     token = Monk::Auth.request_login(email)
-#     Monk::Auth.deliver_link(email: email, link: Monk::Auth.login_link(token), token: token)
-#     @sent = true
+#     login = Monk::Auth.request_login(email)
+#     Monk::Auth.deliver_link(
+#       email: email, link: Monk::Auth.login_link(login[:token]), token: login[:token], code: login[:code],
+#     )
+#     @email = email
 #     render "auth/login"
+#   end
+#
+#   # The code from the email, typed on the page that asked for it: works
+#   # where the link wouldn't, like the installed app on an iPhone or a
+#   # chat app's built-in browser.
+#   post("/auth/code") do
+#     @title = "Log in"
+#     @email = params[:email].to_s.strip.downcase
+#     session = Monk::Auth.redeem_code(@email, params[:code].to_s.strip)
+#     unless session
+#       @error = "That code is wrong or has expired."
+#       halt(422, render("auth/login"))
+#     end
+#     set_session_cookie(session)
+#     redirect(session[:redirect_to] || "/")
 #   end
 #
 #   # The link in the email: callback_path in config/auth.rb.

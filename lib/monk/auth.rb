@@ -32,6 +32,39 @@ module Monk
       RETURNING 1
     SQL
 
+    # The sign-in code (redeem_code): wrong guesses at one token before it
+    # is used up, and at one address, across its tokens, per hour.
+    MAX_CODE_ATTEMPTS = 5
+    MAX_CODE_FAILURES_PER_HOUR = 10
+    CODE_FORMAT = /\A\d{6}\z/
+
+    CODE_LOCKED_SQL = <<~SQL.freeze
+      SELECT 1 FROM login_requests
+      WHERE email = $1 AND code_failures >= $2 AND code_failures_since > now() - interval '1 hour'
+    SQL
+
+    # A wrong code: one more attempt at the token, which the
+    # MAX_CODE_ATTEMPTS-th uses up. Only while it's unused, so a guess
+    # racing a successful redeem changes nothing.
+    CODE_MISS_SQL = <<~SQL.freeze
+      UPDATE login_tokens SET code_attempts = code_attempts + 1,
+        used_at = CASE WHEN code_attempts + 1 >= $2 THEN $3::timestamptz ELSE used_at END
+      WHERE id = $1 AND used_at IS NULL
+    SQL
+
+    # And one more failure for the address, in a window that starts at its
+    # first failure and lasts an hour. A new row's requested_at is
+    # -infinity: counting a failure doesn't hold back the next login email.
+    CODE_FAILURE_SQL = <<~SQL.freeze
+      INSERT INTO login_requests (email, requested_at, code_failures, code_failures_since)
+      VALUES ($1, '-infinity', 1, now())
+      ON CONFLICT (email) DO UPDATE SET
+        code_failures = CASE WHEN login_requests.code_failures_since > now() - interval '1 hour'
+          THEN login_requests.code_failures + 1 ELSE 1 END,
+        code_failures_since = CASE WHEN login_requests.code_failures_since > now() - interval '1 hour'
+          THEN login_requests.code_failures_since ELSE now() END
+    SQL
+
     SWEEP_BATCH_SIZE = 10_000
 
     # sweep!'s statements, one batch each. Tokens and sessions expire by
@@ -45,7 +78,8 @@ module Monk
     SQL
     SWEEP_LOGIN_REQUESTS_SQL = <<~SQL.freeze
       DELETE FROM login_requests WHERE email IN (
-        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second' LIMIT $2
+        SELECT email FROM login_requests WHERE requested_at < now() - $1::int * interval '1 second'
+          AND (code_failures_since IS NULL OR code_failures_since < now() - interval '1 hour') LIMIT $2
       )
     SQL
 
@@ -103,22 +137,28 @@ module Monk
         @config = nil
       end
 
+      # A login token for `email` (stripped and downcased), redeemable once
+      # within login_ttl, by its link (redeem) or its code (redeem_code):
+      # { token:, code: }. Only hashes are stored: send both right away.
       def request_login(email, redirect_to: nil)
         ensure_configured!
+        email = normalized_email(email)
         if redirect_to && !allowed_redirect?(redirect_to)
           raise Monk::InvalidRedirectError, "#{redirect_to.inspect} is not in Monk::Auth's redirect_allowlist"
         end
 
         raw = SecureRandom.urlsafe_base64(32)
+        code = format("%06d", SecureRandom.random_number(1_000_000))
 
         LoginToken.create(
           email: email,
           token_hash: hash_token(raw),
+          code_hash: hash_code(code),
           redirect_to: redirect_to,
           expires_at: Time.now + config[:login_ttl],
         )
 
-        raw
+        { token: raw, code: code }
       end
 
       # Whether request_login(redirect_to:) accepts `path`: it starts with
@@ -275,14 +315,33 @@ module Monk
         return nil unless row
         return nil if row[:expires_at] <= Time.now
 
-        claimed = LoginToken.claim({ id: row[:id], used_at: nil }, used_at: Time.now)
-        return nil unless claimed
+        start_session(row)
+      end
 
-        session_raw = SecureRandom.urlsafe_base64(32)
-        expires_at = Time.now + config[:session_ttl]
-        Session.create(subject: row[:email], token_hash: hash_token(session_raw), expires_at: expires_at)
+      # As redeem, for the 6-digit code sent beside the link: a session,
+      # or nil. Only the address's newest token counts, so asking for a new
+      # code retires the previous one. A wrong code counts against the
+      # token (the MAX_CODE_ATTEMPTS-th uses it up) and against the
+      # address: past MAX_CODE_FAILURES_PER_HOUR, every code for it is
+      # refused until the hour is up, so asking for new codes doesn't buy
+      # more guesses. The link keeps working.
+      def redeem_code(email, code)
+        ensure_configured!
+        return nil unless email.is_a?(String) && code.is_a?(String) && code.match?(CODE_FORMAT)
 
-        { token: session_raw, subject: row[:email], expires_at: expires_at, redirect_to: row[:redirect_to] }
+        email = normalized_email(email)
+        return nil if email.empty?
+
+        row = LoginToken.where({ email: email }, order: { created_at: :desc, id: :desc }, limit: 1).first
+        return nil unless row && row[:used_at].nil? && row[:expires_at] > Time.now && row[:code_hash]
+        return nil if code_locked?(email)
+
+        unless OpenSSL.secure_compare(hash_code(code), row[:code_hash])
+          count_code_failure(row[:id], email)
+          return nil
+        end
+
+        start_session(row)
       end
 
       def verify(raw)
@@ -389,6 +448,39 @@ module Monk
           "\e[30;47m#{cells.join}\e[0m"
         end.join("\n")
       end
+
+      # Uses up a login token (link or code) and opens a session for its
+      # address; nil if the other way, or another request, got there first.
+      def start_session(row)
+        claimed = LoginToken.claim({ id: row[:id], used_at: nil }, used_at: Time.now)
+        return nil unless claimed
+
+        session_raw = SecureRandom.urlsafe_base64(32)
+        expires_at = Time.now + config[:session_ttl]
+        Session.create(subject: row[:email], token_hash: hash_token(session_raw), expires_at: expires_at)
+
+        { token: session_raw, subject: row[:email], expires_at: expires_at, redirect_to: row[:redirect_to] }
+      end
+
+      def code_locked?(email)
+        Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(CODE_LOCKED_SQL, [email, MAX_CODE_FAILURES_PER_HOUR]).ntuples.positive?
+        end
+      end
+
+      def count_code_failure(token_id, email)
+        Monk::Persistence::Pg.checkout(config[:db_name]) do |conn|
+          conn.exec_params(CODE_MISS_SQL, [token_id, MAX_CODE_ATTEMPTS, Time.now])
+          conn.exec_params(CODE_FAILURE_SQL, [email])
+        end
+      end
+
+      # The same normalization as allow_login_request?'s.
+      def normalized_email(email) = email.strip.downcase
+
+      # Keyed by the auth secret: six digits are trivial to try offline
+      # against a plain hash.
+      def hash_code(code) = OpenSSL::HMAC.hexdigest("SHA256", config[:secret], code)
 
       def ensure_configured!
         return if @config

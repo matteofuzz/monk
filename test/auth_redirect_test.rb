@@ -76,7 +76,7 @@ class AuthRedirectTest < Minitest::Test
     setup_auth_tables(DB_NAME)
     configure([%r{/invite/\w+}])
 
-    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/invite/abc")
+    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/invite/abc")[:token]
 
     assert_equal "/invite/abc", Monk::Auth.redirect_for(raw)
   end
@@ -91,7 +91,7 @@ class AuthRedirectTest < Minitest::Test
   def test_redirect_for_answers_for_an_expired_or_used_token_and_nil_for_an_unknown_one
     setup_auth_tables(DB_NAME)
     configure(["/dashboard"])
-    used = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")
+    used = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")[:token]
     Monk::Auth.redeem(used)
     expired = "expired-raw-token"
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|

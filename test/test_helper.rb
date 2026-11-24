@@ -530,7 +530,9 @@ module AuthTestHelpers
           redirect_to TEXT,
           expires_at TIMESTAMPTZ NOT NULL,
           used_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          code_hash TEXT,
+          code_attempts INTEGER NOT NULL DEFAULT 0
         )
       SQL
       conn.exec(<<~SQL)
@@ -543,12 +545,14 @@ module AuthTestHelpers
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       SQL
-      # As in create_login_requests (auth's template migrations;
+      # As in create_login_requests and add_login_codes (auth's template migrations;
       # test/auth_schema_test.rb checks those).
       conn.exec(<<~SQL)
         CREATE TABLE login_requests (
           email TEXT PRIMARY KEY,
-          requested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+          requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          code_failures INTEGER NOT NULL DEFAULT 0,
+          code_failures_since TIMESTAMPTZ
         )
       SQL
       conn.exec("CREATE INDEX sessions_subject ON sessions (subject)")
@@ -711,7 +715,7 @@ module PushTestHelpers
 
   # A signed-in session: { token:, subject: }, token being the cookie's.
   def sign_in(email)
-    Monk::Auth.redeem(Monk::Auth.request_login(email)).slice(:token, :subject)
+    Monk::Auth.redeem(Monk::Auth.request_login(email)[:token]).slice(:token, :subject)
   end
 
   # What the browser does with a push message (RFC 8291 section 3, RFC

@@ -22,7 +22,7 @@ class AuthRactorIntegrationTest < Minitest::Test
   end
 
   def test_n_real_ractors_redeeming_the_same_login_token_concurrently_exactly_one_wins
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
     ractor_count = 8
 
     results = Array.new(ractor_count) do
@@ -39,7 +39,7 @@ class AuthRactorIntegrationTest < Minitest::Test
 
   def test_n_real_ractors_verifying_distinct_session_tokens_concurrently_all_succeed_independently
     ractor_count = 8
-    sessions = (1..ractor_count).map { |i| Monk::Auth.redeem(Monk::Auth.request_login("user#{i}@b.com")) }
+    sessions = (1..ractor_count).map { |i| Monk::Auth.redeem(Monk::Auth.request_login("user#{i}@b.com")[:token]) }
 
     results = sessions.map do |session|
       Ractor.new(Monk::Auth, session[:token]) { |auth, token| auth.verify(token) }
@@ -51,7 +51,7 @@ class AuthRactorIntegrationTest < Minitest::Test
   def test_full_magic_link_round_trip_from_inside_a_real_worker_ractor
     app = Class.new(Monk::Base) do
       post("/auth/request/:email") do |ctx|
-        token = Monk::Auth.request_login(ctx.params[:email])
+        token = Monk::Auth.request_login(ctx.params[:email])[:token]
         ctx.json(token: token)
       end
 
@@ -102,7 +102,7 @@ class AuthRactorIntegrationTest < Minitest::Test
         with_monk_env("development") do
           app = Class.new(Monk::Base) do
             post("/auth/request/:email") do |ctx|
-              token = Monk::Auth.request_login(ctx.params[:email])
+              token = Monk::Auth.request_login(ctx.params[:email])[:token]
               Monk::Auth.log_dev_link("http://x/auth/callback/#{token}", subject: ctx.params[:email])
               ctx.json(ok: true)
             end

@@ -31,7 +31,7 @@ class AuthTest < Minitest::Test
   def test_request_login_inserts_a_login_tokens_row_storing_only_the_hash
     setup_auth_tables(DB_NAME)
 
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
 
     row = fetch_login_token(email: "a@b.com")
     assert_equal Digest::SHA256.hexdigest(raw), row["token_hash"]
@@ -41,7 +41,7 @@ class AuthTest < Minitest::Test
   def test_request_login_with_an_allowlisted_redirect_to_stores_it_on_the_row
     setup_auth_tables(DB_NAME)
 
-    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")
+    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")[:token]
 
     row = fetch_login_token(email: "a@b.com")
     assert_equal "/dashboard", row["redirect_to"]
@@ -73,7 +73,7 @@ class AuthTest < Minitest::Test
 
   def test_redeem_on_a_fresh_token_returns_a_session_and_marks_the_login_token_used
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
 
     session = Monk::Auth.redeem(raw)
 
@@ -92,7 +92,7 @@ class AuthTest < Minitest::Test
 
   def test_redeem_includes_redirect_to_from_the_login_token_when_present
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")
+    raw = Monk::Auth.request_login("a@b.com", redirect_to: "/dashboard")[:token]
 
     session = Monk::Auth.redeem(raw)
 
@@ -101,7 +101,7 @@ class AuthTest < Minitest::Test
 
   def test_redeem_includes_a_nil_redirect_to_when_absent
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
 
     session = Monk::Auth.redeem(raw)
 
@@ -110,7 +110,7 @@ class AuthTest < Minitest::Test
 
   def test_redeem_on_an_already_redeemed_token_returns_nil_and_creates_no_second_session
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
     first = Monk::Auth.redeem(raw)
 
     second = Monk::Auth.redeem(raw)
@@ -148,7 +148,7 @@ class AuthTest < Minitest::Test
 
   def test_verify_returns_the_subject_for_a_valid_session_token
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
     session = Monk::Auth.redeem(raw)
 
     assert_equal "a@b.com", Monk::Auth.verify(session[:token])
@@ -178,7 +178,7 @@ class AuthTest < Minitest::Test
 
   def test_revoke_sets_revoked_at_so_a_subsequent_verify_returns_nil
     setup_auth_tables(DB_NAME)
-    raw = Monk::Auth.request_login("a@b.com")
+    raw = Monk::Auth.request_login("a@b.com")[:token]
     session = Monk::Auth.redeem(raw)
 
     result = Monk::Auth.revoke(session[:token])
@@ -195,9 +195,9 @@ class AuthTest < Minitest::Test
 
   def test_revoke_all_revokes_every_live_session_for_a_subject_and_returns_the_count
     setup_auth_tables(DB_NAME)
-    session_a1 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
-    session_a2 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
-    session_b = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
+    session_a1 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
+    session_a2 = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
+    session_b = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com")[:token])
 
     count = Monk::Auth.revoke_all("a@b.com")
 
@@ -217,9 +217,9 @@ class AuthTest < Minitest::Test
 
   def test_sweep_bang_deletes_expired_rows_and_returns_the_counts
     setup_auth_tables(DB_NAME)
-    live_raw = Monk::Auth.request_login("a@b.com")
+    live_raw = Monk::Auth.request_login("a@b.com")[:token]
     insert_login_token(email: "old@b.com", raw: "expired-login-token", expires_at: Time.now - 1)
-    live_session = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com"))
+    live_session = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com")[:token])
     insert_session(subject: "old@c.com", raw: "expired-session-token", expires_at: Time.now - 1)
 
     counts = Monk::Auth.sweep!

@@ -46,7 +46,7 @@ class AuthHelpersTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/me") { |ctx| ctx.require_user! }
     end
-    valid_session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    valid_session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     Monk::Auth.revoke(valid_session[:token])
 
     unknown = env_for("GET", "/me")
@@ -63,7 +63,7 @@ class AuthHelpersTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/me") { |ctx| ctx.require_user! }
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("GET", "/me")
     request_env["HTTP_AUTHORIZATION"] = "Bearer #{session[:token]}"
 
@@ -77,7 +77,7 @@ class AuthHelpersTest < Minitest::Test
     setup_auth_tables(DB_NAME)
     app = Class.new(Monk::Base) do
       get("/x") do |ctx|
-        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
         ctx.set_session_cookie(session)
         ctx.json(ok: true)
       end
@@ -106,7 +106,7 @@ class AuthHelpersTest < Minitest::Test
     )
     app = Class.new(Monk::Base) do
       get("/x") do |ctx|
-        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
         ctx.set_session_cookie(session)
         ctx.json(ok: true)
       end
@@ -125,7 +125,7 @@ class AuthHelpersTest < Minitest::Test
     setup_auth_tables(DB_NAME)
     app = Class.new(Monk::Base) do
       get("/x") do |ctx|
-        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+        session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
         ctx.set_session_cookie(session)
         ctx.json(token: session[:token])
       end
@@ -144,7 +144,7 @@ class AuthHelpersTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/me") { |ctx| ctx.require_user! }
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("GET", "/me")
     request_env["HTTP_COOKIE"] = "session_token=#{session[:token]}"
 
@@ -159,8 +159,8 @@ class AuthHelpersTest < Minitest::Test
     app = Class.new(Monk::Base) do
       get("/me") { |ctx| ctx.require_user! }
     end
-    bearer_session = Monk::Auth.redeem(Monk::Auth.request_login("bearer@b.com"))
-    cookie_session = Monk::Auth.redeem(Monk::Auth.request_login("cookie@b.com"))
+    bearer_session = Monk::Auth.redeem(Monk::Auth.request_login("bearer@b.com")[:token])
+    cookie_session = Monk::Auth.redeem(Monk::Auth.request_login("cookie@b.com")[:token])
     request_env = env_for("GET", "/me")
     request_env["HTTP_AUTHORIZATION"] = "Bearer #{bearer_session[:token]}"
     request_env["HTTP_COOKIE"] = "session_token=#{cookie_session[:token]}"
@@ -181,7 +181,7 @@ class AuthHelpersTest < Minitest::Test
         end
       end
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     csrf_token = Monk::Auth.csrf_token_for(session[:token])
 
     %w[POST PUT PATCH DELETE].each do |verb|
@@ -206,7 +206,7 @@ class AuthHelpersTest < Minitest::Test
         ctx.json(ok: true)
       end
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("POST", "/x")
     request_env["HTTP_COOKIE"] = "session_token=#{session[:token]}"
     request_env["HTTP_X_CSRF_TOKEN"] = "wrong-token"
@@ -225,7 +225,7 @@ class AuthHelpersTest < Minitest::Test
         ctx.json(ok: true)
       end
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("POST", "/x")
     request_env["HTTP_AUTHORIZATION"] = "Bearer #{session[:token]}"
 
@@ -275,7 +275,7 @@ class AuthHelpersTest < Minitest::Test
         ctx.json(ok: true)
       end
     end
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("POST", "/auth/logout")
     request_env["HTTP_COOKIE"] = "session_token=#{session[:token]}"
 
@@ -288,7 +288,7 @@ class AuthHelpersTest < Minitest::Test
   def test_log_out_bang_revokes_a_bearer_session
     setup_auth_tables(DB_NAME)
     app = Class.new(Monk::Base) { post("/auth/logout", &LOG_OUT) }
-    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com"))
+    session = Monk::Auth.redeem(Monk::Auth.request_login("a@b.com")[:token])
     request_env = env_for("POST", "/auth/logout")
     request_env["HTTP_AUTHORIZATION"] = "Bearer #{session[:token]}"
 

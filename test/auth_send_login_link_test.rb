@@ -69,7 +69,7 @@ class AuthSendLoginLinkTest < Minitest::Test
 
       assert_equal 1, Monk::Jobs.drain!
 
-      assert_includes File.read(File.join(log_dir, "test.log")), "redirect_to=/invite/abc"
+      assert_match(%r{redirect_to=/invite/abc code=\d{6}}, File.read(File.join(log_dir, "test.log")))
     end
   end
 
