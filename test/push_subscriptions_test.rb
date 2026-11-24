@@ -3,7 +3,8 @@ require "monk/push"
 
 # Monk::Push's subscriptions (docs/history/plan-pwa-push.md, B3), on real
 # Postgres: each belongs to the auth session it was made in, and counts
-# only while that session is neither revoked nor expired.
+# until that session is revoked, or expired for longer than Monk::Auth's
+# expired_retention (docs/plan-onboarding.md, decision 10).
 class PushSubscriptionsTest < Minitest::Test
   include PersistenceTestHelpers
   include AuthTestHelpers
@@ -82,14 +83,33 @@ class PushSubscriptionsTest < Minitest::Test
     assert_nil Monk::Push.subscribe(session_token: @ann[:token], subscription: browser_subscription)
   end
 
-  def test_an_expired_session_stops_counting_and_auth_sweep_takes_its_rows
+  # An idle person keeps being notified after their session expires.
+  def test_an_expired_session_keeps_counting_within_expired_retention
     Monk::Push.subscribe(session_token: @ann[:token], subscription: browser_subscription)
     expire_sessions("ann@shop.test")
 
+    assert_equal 1, Monk::Push.subscriptions("ann@shop.test").size
+    assert Monk::Push.subscribed?("ann@shop.test")
+    assert_equal 0, Monk::Push.sweep!
+    Monk::Auth.sweep!
+    assert_equal 1, rows.size
+  end
+
+  def test_past_expired_retention_it_stops_counting_and_auth_sweep_takes_its_rows
+    Monk::Push.subscribe(session_token: @ann[:token], subscription: browser_subscription)
+    expire_sessions("ann@shop.test", ago: Monk::Auth.config[:expired_retention] + 60)
+
     assert_empty Monk::Push.subscriptions("ann@shop.test")
+    refute Monk::Push.subscribed?("ann@shop.test")
     assert_equal 1, rows.size
     Monk::Auth.sweep!
     assert_empty rows, "ON DELETE CASCADE"
+  end
+
+  def test_an_expired_session_cannot_subscribe
+    expire_sessions("ann@shop.test")
+
+    assert_nil Monk::Push.subscribe(session_token: @ann[:token], subscription: browser_subscription)
   end
 
   def test_a_subscription_past_the_browsers_expiration_time_stops_counting
@@ -129,7 +149,7 @@ class PushSubscriptionsTest < Minitest::Test
     cy = sign_in("cy@shop.test")
     Monk::Push.subscribe(session_token: cy[:token], subscription: browser_subscription)
     Monk::Auth.revoke(bob[:token])
-    expire_sessions("cy@shop.test")
+    expire_sessions("cy@shop.test", ago: Monk::Auth.config[:expired_retention] + 60)
 
     assert_equal 3, Monk::Push.sweep!(batch_size: 1)
     assert_equal(["ann@shop.test"], rows.map { |row| row["subject"] })
@@ -171,9 +191,10 @@ class PushSubscriptionsTest < Minitest::Test
     Monk::Persistence::Pg.checkout(DB_NAME) { |conn| conn.exec("SELECT * FROM push_subscriptions ORDER BY id").to_a }
   end
 
-  def expire_sessions(subject)
+  def expire_sessions(subject, ago: 60)
     Monk::Persistence::Pg.checkout(DB_NAME) do |conn|
-      conn.exec_params("UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE subject = $1", [subject])
+      conn.exec_params("UPDATE sessions SET expires_at = now() - $2::int * interval '1 second' WHERE subject = $1",
+        [subject, ago],)
     end
   end
 end

@@ -20,6 +20,7 @@ module Monk
   module Auth
     REQUIRED_CONFIG_KEYS = %i[db_name secret login_ttl session_ttl].freeze
     MIN_SECRET_LENGTH = 32
+    EXPIRED_RETENTION = 90 * 86_400
 
     # The scaffold's route giving the installed iPhone app its own session
     # (own_session!), named to register.js by monk_head.
@@ -87,7 +88,8 @@ module Monk
 
     # sweep!'s statements, one batch each. Tokens and sessions expire by
     # the app's clock, as redeem and verify check them; login requests by
-    # the database's, as allow_login_request? does.
+    # the database's, as allow_login_request? does. Sessions go only once
+    # expired for longer than expired_retention.
     SWEEP_LOGIN_TOKENS_SQL = <<~SQL.freeze
       DELETE FROM login_tokens WHERE id IN (SELECT id FROM login_tokens WHERE expires_at < $1 LIMIT $2)
     SQL
@@ -125,10 +127,13 @@ module Monk
       # Monk::Auth::SendLoginLink. login_request_interval: is the seconds
       # allow_login_request? makes an address wait between login emails.
       # session_max_age: caps a session's whole life, in seconds from its
-      # creation, however much it's used (nil: no cap).
+      # creation, however much it's used (nil: no cap). expired_retention:
+      # is the seconds an expired session is kept before sweep! deletes it
+      # (90 days): Monk::Push still notifies through it until then.
       def configure(
         db_name: nil, secret: nil, login_ttl: nil, session_ttl: nil, redirect_allowlist: [], secure: true,
-        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60, session_max_age: nil
+        deliver: nil, callback_path: "/auth/callback", login_request_interval: 60, session_max_age: nil,
+        expired_retention: EXPIRED_RETENTION
       )
         config = {
           db_name: db_name, secret: checked_secret(secret), login_ttl: login_ttl, session_ttl: session_ttl,
@@ -136,6 +141,7 @@ module Monk
           callback_path: checked_callback_path(callback_path),
           login_request_interval: checked_login_request_interval(login_request_interval),
           session_max_age: checked_session_max_age(session_max_age),
+          expired_retention: checked_expired_retention(expired_retention),
         }
 
         REQUIRED_CONFIG_KEYS.each do |key|
@@ -430,8 +436,9 @@ module Monk
         rows.size
       end
 
-      # Deletes expired login tokens and sessions, and login requests older
-      # than login_request_interval; returns how many of each. At most
+      # Deletes expired login tokens, sessions expired for longer than
+      # expired_retention, and login requests older than
+      # login_request_interval; returns how many of each. At most
       # batch_size rows per statement, so a large backlog (the first sweep of
       # an app that never swept) holds no lock for long. Run nightly by
       # Monk::Auth::Sweep. Deliberately not grown onto Model: a `<` comparison
@@ -447,7 +454,7 @@ module Monk
           now = Time.now
           {
             login_tokens: delete_in_batches(conn, SWEEP_LOGIN_TOKENS_SQL, [now], batch_size),
-            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now], batch_size),
+            sessions: delete_in_batches(conn, SWEEP_SESSIONS_SQL, [now - config[:expired_retention]], batch_size),
             login_requests: delete_in_batches(
               conn, SWEEP_LOGIN_REQUESTS_SQL, [config[:login_request_interval]], batch_size,
             ),
@@ -601,6 +608,13 @@ module Monk
           total += deleted
           return total if deleted < batch_size
         end
+      end
+
+      def checked_expired_retention(seconds)
+        return seconds if seconds.is_a?(Integer) && !seconds.negative?
+
+        raise Monk::InvalidAuthConfigError, "Monk::Auth.configure(expired_retention:) must be an Integer of " \
+                                            "seconds, 0 or more, got #{seconds.inspect}"
       end
 
       def checked_session_max_age(seconds)

@@ -216,11 +216,13 @@ class AuthTest < Minitest::Test
   end
 
   def test_sweep_bang_deletes_expired_rows_and_returns_the_counts
+    # Sessions: once expired for longer than expired_retention.
     setup_auth_tables(DB_NAME)
     live_raw = Monk::Auth.request_login("a@b.com")[:token]
     insert_login_token(email: "old@b.com", raw: "expired-login-token", expires_at: Time.now - 1)
     live_session = Monk::Auth.redeem(Monk::Auth.request_login("b@c.com")[:token])
-    insert_session(subject: "old@c.com", raw: "expired-session-token", expires_at: Time.now - 1)
+    insert_session(subject: "old@c.com", raw: "expired-session-token",
+      expires_at: Time.now - Monk::Auth.config[:expired_retention] - 1,)
 
     counts = Monk::Auth.sweep!
 

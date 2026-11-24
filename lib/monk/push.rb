@@ -112,8 +112,9 @@ module Monk
           Delivery.options(ttl: ttl, urgency: urgency, topic: topic),)
       end
 
-      # Deletes subscriptions that no longer count: a revoked or expired
-      # session's, and those past the browser's expirationTime. Returns how
+      # Deletes subscriptions that no longer count: a revoked session's, one
+      # expired past Monk::Auth's expired_retention, and those past the
+      # browser's expirationTime. Returns how
       # many. Run nightly by Monk::Push::Sweep.
       def sweep!(batch_size: 1000)
         unless batch_size.is_a?(Integer) && batch_size.positive?

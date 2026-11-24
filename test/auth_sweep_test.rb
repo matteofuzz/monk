@@ -11,6 +11,7 @@ class AuthSweepTest < Minitest::Test
   include JobsTestHelpers
 
   DB_NAME = :auth_sweep_test_db
+  RETENTION = 90 * 86_400
 
   def setup
     Monk::Persistence::Pg.reset!
@@ -30,16 +31,41 @@ class AuthSweepTest < Minitest::Test
     Monk::Auth.reset!
   end
 
-  # More expired rows than one batch: every one goes, and the live ones
-  # stay.
+  # More rows past expired_retention than one batch: every one goes, and
+  # the live ones stay.
   def test_sweep_deletes_more_than_a_batch
-    insert_sessions(25, expires_in: -60)
+    insert_sessions(25, expires_in: -(RETENTION + 60))
     insert_sessions(3, expires_in: 3600)
 
     counts = Monk::Auth.sweep!(batch_size: 10)
 
     assert_equal 25, counts[:sessions]
     assert_equal 3, count_rows(DB_NAME, "sessions")
+  end
+
+  # Kept a while after they expire, so push can still reach an idle
+  # person (docs/plan-onboarding.md, decision 10).
+  def test_sweep_keeps_sessions_expired_less_than_expired_retention_ago
+    insert_sessions(2, expires_in: -60)
+    insert_sessions(1, expires_in: -(RETENTION + 60))
+
+    assert_equal 1, Monk::Auth.sweep![:sessions]
+    assert_equal 2, count_rows(DB_NAME, "sessions")
+  end
+
+  def test_expired_retention_is_90_days_by_default_and_configurable
+    assert_equal RETENTION, Monk::Auth.config[:expired_retention]
+    Monk::Auth.configure(db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 600, expired_retention: 0)
+    insert_sessions(1, expires_in: -60)
+
+    assert_equal 1, Monk::Auth.sweep![:sessions]
+    [-1, 1.5, "90", nil].each do |bad|
+      error = assert_raises(Monk::InvalidAuthConfigError) do
+        Monk::Auth.configure(db_name: DB_NAME, secret: "s3cr3t", login_ttl: 600, session_ttl: 600,
+          expired_retention: bad,)
+      end
+      assert_includes error.message, "expired_retention:"
+    end
   end
 
   # Login requests older than login_request_interval no longer limit
@@ -68,7 +94,7 @@ class AuthSweepTest < Minitest::Test
   def test_the_sweep_job_deletes_expired_rows_and_logs_the_counts
     setup_jobs_tables(DB_NAME)
     Monk::Jobs.configure(db_name: DB_NAME)
-    insert_sessions(2, expires_in: -60)
+    insert_sessions(2, expires_in: -(RETENTION + 60))
 
     log = with_log do |dir|
       Monk::Auth::Sweep.enqueue
