@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.28.1 - unreleased
+
+Downloads the browser caches. Existing apps with storage: one line in
+each download route ([`upgrading.md`](docs/guides/upgrading.md#0281)).
+
+### Fixed
+
+- **A signed S3 link is cached by the browser.** A bucket sends no
+  `Cache-Control`, so an `<img>` behind a download route asked the bucket
+  again on every page load, and showed its placeholder first. `url` now
+  signs `response-cache-control=private, max-age=<expires_in>` into the
+  link, and the bucket answers with that header, as the file backend
+  already did. Checked on Hetzner (Ceph RGW) and floci; a provider that
+  ignores it sends no header, as before.
+- **The download route caches its redirect.** The storage guide's route
+  and the scaffold's `storage-download` example set
+  `cache-control: private, max-age=<expires_in>` before `redirect`, so
+  the browser skips the app's 302 too
+  ([`storage.md`](docs/guides/storage.md#caching)).
+
+A file replaced under the same key now stays cached up to `expires_in`
+(an hour by default), plus as long again for a cached redirect: write a
+new key when the content changes.
+
 ## 0.28.0 - 2026-11-24
 
 A smoother first sign-in, from walking a real app's invitation and

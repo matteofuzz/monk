@@ -1,8 +1,9 @@
-# Plan: downloads the browser caches (0.29)
+# Plan: downloads the browser caches (0.28.1)
 
 Status: planned 2026-11-25, from an app's staging check: avatars,
 `<img src="/photos/<name>">` redirecting to `Monk::Storage.url(key)`,
-showed their initials first on every page load. Nothing built yet.
+showed their initials first on every page load. Built 2026-11-25
+(both changes, tests, guide); left: the staging check in "Done when".
 
 ## The problem
 

@@ -68,6 +68,16 @@ class StorageS3IntegrationTest < Minitest::Test
     assert_equal "403", browser("GET", link.sub(/.\z/) { |c| c == "a" ? "b" : "a" }).code
   end
 
+  # docs/plan-storage-cache.md: the bucket answers with the Cache-Control
+  # the link asks for, and a link asking for another one is refused.
+  def test_a_signed_link_is_cached_for_expires_in
+    backend.put("media/a", "x")
+    link = backend.url("media/a", expires_in: 60, cache_window: 60)
+
+    assert_equal "private, max-age=60", browser("GET", link)["cache-control"]
+    assert_equal "403", browser("GET", link.sub("max-age%3D60", "max-age%3D99")).code
+  end
+
   def test_an_expired_link_is_refused
     backend.put("media/a", "x")
     link = backend.url("media/a", expires_in: 60, cache_window: 60, now: Time.now.to_i - 3600)

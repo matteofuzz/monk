@@ -61,6 +61,9 @@
 #   get("/media/*") do
 #     halt 404, "" unless params[:splat].match?(/\A[0-9a-f]{32}\z/)
 #
+#     # Cached as long as the link is valid at least: no placeholder on
+#     # every page load (docs/guides/storage.md, "Caching").
+#     headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"
 #     # The bucket is another host: allowed, since the app built the link.
 #     redirect Monk::Storage.url("media/#{params[:splat]}"), allow_other_host: true
 #   end

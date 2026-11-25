@@ -148,23 +148,21 @@ gets its own design doc and plan when work on it starts.
    agents, redacted bug-report output, and a `LISTEN` check through
    PgBouncer (Monk's deploy stack has none).
 
-7. **0.28: A smoother first sign-in.** Built (2026-11-24), not yet
-   released. From walking a real app's invitation and sign-up flows on
+7. **0.28: A smoother first sign-in.** Done (2026-11-24). From walking a real app's invitation and sign-up flows on
    phones: a 6-digit code beside the magic link, sessions renewed by use,
    the installed iPhone app's own session, push that outlives an idle
    session, `redirect_allowlist` patterns, and a helper to install the
    app. Left: the checks on devices, in the "Open checks" of
    `docs/plan-onboarding.md`.
+   - **0.28.1: Downloads the browser caches.** A fix, built (2026-11-25,
+     `docs/plan-storage-cache.md`). From a real app's staging: avatars
+     behind a download route showed a placeholder first on every page
+     load, because neither request was cached. An S3 signed link now
+     asks the bucket for `cache-control: private, max-age=<expires_in>`,
+     as the file backend already sends, and the storage guide's download
+     route caches its redirect. No new API. Left: the check on staging.
 
-8. **0.29: Downloads the browser caches.** Planned (2026-11-25,
-   `docs/plan-storage-cache.md`). From a real app's staging: avatars
-   behind a download route showed a placeholder first on every page
-   load, because neither request was cached. An S3 signed link now asks
-   the bucket for `cache-control: private, max-age=<expires_in>`, as the
-   file backend already sends, and the storage guide's download route
-   caches its redirect. No new API.
-
-9. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.
@@ -188,7 +186,7 @@ on the benchmark's VM rather than in code. Their plans are in
   - The VM run: the benchmark's S6 at a sweep of connect rates, 25K
     sockets held, on its 8-core VM.
   - The plan's item 10, on each Ruby 4.1 preview and on the release (with
-    release 9 above): held 0 / 5K / 15K sockets, `--server-cpus` 0 / 0-1
+    release 8 above): held 0 / 5K / 15K sockets, `--server-cpus` 0 / 0-1
     / 0-3, and a churn step, recording global GCs and RSS. If Ruby's
     #22454 and #22455 are fixed in 4.1, the WebSocket process recommends
     4.1 and the plan's items 6 and 9 are dropped; if not, item 6 for

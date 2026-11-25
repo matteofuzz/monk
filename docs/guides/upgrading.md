@@ -14,6 +14,27 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.28.1
+
+`bundle update monkrb`. S3 download links are then cached by the
+browser for `expires_in` (an hour by default), with nothing to change.
+
+### Cache the download redirect (apps with storage)
+
+In each route that redirects to `Monk::Storage.url`, set the header
+before `redirect`, so the browser doesn't ask the route again on every
+page load ([`storage.md`](storage.md#caching)):
+
+```ruby
+headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"
+redirect Monk::Storage.url(key), allow_other_host: true
+```
+
+A file replaced under the same key now stays cached up to `expires_in`,
+plus as long again for the redirect. If the app overwrites files in
+place (an avatar under `avatars/<user>`, say), give each new version a
+new key and point the record at it.
+
 ## 0.28
 
 In the `Gemfile`, `gem "monkrb", "~> 0.28", require: "monk"` (what a new
