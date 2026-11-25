@@ -94,10 +94,14 @@ module Monk
 
         # A signed GET link, the same for every call within one cache_window:
         # signed at the window's start, valid for the window plus expires_in.
+        # It asks the bucket to answer with Cache-Control for expires_in, the
+        # least the link has left whenever it's fetched (a bucket sends none
+        # of its own, so the browser would guess).
         def url(key, expires_in:, cache_window:, now: Time.now.to_i)
           Key.validate!(key)
           Input.link_times!(expires_in: expires_in, cache_window: cache_window)
           query = SigV4.presign(method: "GET", path: path_for(key), headers: { "host" => host },
+            query: { "response-cache-control" => "private, max-age=#{expires_in}" },
             expires_in: cache_window + expires_in, credentials: credentials, now: now - (now % cache_window),)
           "#{base_url}#{SigV4.encode_path(path_for(key))}?#{query}"
         end

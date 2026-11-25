@@ -260,6 +260,7 @@ class App
     end
     halt 404, "" unless key
 
+    headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"
     redirect Monk::Storage.url(key), allow_other_host: true
   end
 end
@@ -276,6 +277,35 @@ hour points at the same URL, so the browser's cache works, and each link
 is valid for at least `expires_in`. Together they stay within the 7
 days a signed S3 link allows. Pass either to `url` to change one link,
 or to `configure` to change the defaults.
+
+### Caching
+
+A download is two requests, the route's redirect and then the signed
+link, and the browser caches both only when told to. Without it, an
+`<img>` asks again on every page load, and the page shows its
+placeholder first each time.
+
+- **The signed link** is cached by itself. The file backend answers
+  `cache-control: private, max-age=` the seconds the link has left. An S3
+  link asks the bucket for `private, max-age=<expires_in>`, inside its
+  signature: the bucket sends no `Cache-Control` of its own, and a link
+  only knows the time it was signed, not when it's fetched. Checked on
+  Hetzner (Ceph RGW) and floci; AWS documents it. A provider that
+  ignores it sends no header, and the browser guesses.
+- **The redirect** is cached when the route says so, as above:
+  `redirect` keeps the headers already set. The link it points to is
+  valid at least `expires_in` longer, so the cached redirect never
+  outlives it.
+
+Two consequences, on both backends:
+
+- **Revoking access takes up to `expires_in`.** Someone who may no
+  longer see a file keeps the cached redirect and bytes until then, as a
+  signed link they already have would allow anyway.
+- **A file replaced under the same key stays cached** up to `expires_in`
+  for the bytes, plus `expires_in` for the redirect. Write a new key when
+  the content changes (a new avatar, a new version of a document), and
+  point the record at it.
 
 The bucket stays private. A signed link serves the stored
 `Content-Type`, and answers `Range` requests with 206, which `<audio>`

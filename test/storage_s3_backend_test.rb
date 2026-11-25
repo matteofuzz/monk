@@ -214,6 +214,14 @@ class StorageS3BackendTest < Minitest::Test
     assert_includes link, "X-Amz-SignedHeaders=host&"
   end
 
+  # docs/plan-storage-cache.md: the bucket sends no Cache-Control of its
+  # own, so the link asks for one (that it's signed: the integration test).
+  def test_url_asks_the_bucket_to_cache_for_expires_in
+    link = backend.url("media/a", expires_in: 1800, cache_window: 3600, now: 1_800_000_000)
+
+    assert_includes link, "&response-cache-control=private%2C%20max-age%3D1800&X-Amz-Signature="
+  end
+
   def test_presigned_put_signs_length_and_type
     upload = backend.presigned_put("tmp/a", content_type: "image/png", byte_size: 42, expires_in: 600, now: 0)
 
