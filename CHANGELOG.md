@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
-## 0.28.2 - unreleased
+## 0.28.2 - 2026-11-26
 
 The download route is never cached. Existing apps with storage: one line
 in each download route ([`upgrading.md`](docs/guides/upgrading.md#0282)).
