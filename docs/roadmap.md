@@ -159,8 +159,12 @@ gets its own design doc and plan when work on it starts.
      behind a download route showed a placeholder first on every page
      load, because neither request was cached. An S3 signed link now
      asks the bucket for `cache-control: private, max-age=<expires_in>`,
-     as the file backend already sends, and the storage guide's download
-     route caches its redirect. No new API. Left: the check on staging.
+     as the file backend already sends. No new API.
+   - **0.28.2: The download route is never cached.** A fix, built
+     (2026-11-25, same plan). 0.28.1's cached redirect failed in the
+     installed iPhone app; the route now sends `no-store`, its 404
+     included, and only the signed link's bytes are cached. Left: the
+     check on staging.
 
 8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and

@@ -26,9 +26,9 @@ claims; `Sniff.refuse_svg!(bytes)` raises on SVG.
   its final key, and `delete` the `tmp/` one after the copy, never before.
 - Check the viewer may see a file before redirecting to its `url`: a
   signed link works for anyone who has it, until it expires.
-- Set `headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"`
-  before the download redirect, or every page load asks again. A
-  replaced file gets a new key: the old one stays cached.
+- A download route sets `headers["cache-control"] = "no-store"` first,
+  for its 404 and its redirect: only the signed link's bytes are cached.
+  A replaced file gets a new key: the old one stays cached.
 - Large files go from the browser straight to the bucket with
   `presigned_put`. Don't stream them through a route: it holds a worker
   Ractor for the whole upload.

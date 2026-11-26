@@ -14,26 +14,40 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.28.2
+
+`bundle update monkrb`.
+
+### Never cache the download route (apps with storage)
+
+Each route that redirects to `Monk::Storage.url` sets `no-store` first,
+so neither its 404 nor its redirect is cached; only the signed link's
+bytes are ([`storage.md`](storage.md#caching)). If you followed 0.28.1's
+step, this replaces its `private, max-age=` line:
+
+```ruby
+get("/media/:id") do
+  headers["cache-control"] = "no-store"
+  # ... the access check, halt 404 ...
+  redirect Monk::Storage.url(key), allow_other_host: true
+end
+```
+
+A cached redirect failed in an iPhone app installed on the Home Screen,
+and a cached 404 can hide a file uploaded after it. If the app
+overwrites files in place (an avatar under `avatars/<user>`, say), give
+each new version a new key and point the record at it: the bytes stay
+cached under the old link up to `expires_in`.
+
 ## 0.28.1
 
 `bundle update monkrb`. S3 download links are then cached by the
 browser for `expires_in` (an hour by default), with nothing to change.
 
-### Cache the download redirect (apps with storage)
+### Cache the download redirect: replaced by 0.28.2
 
-In each route that redirects to `Monk::Storage.url`, set the header
-before `redirect`, so the browser doesn't ask the route again on every
-page load ([`storage.md`](storage.md#caching)):
-
-```ruby
-headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"
-redirect Monk::Storage.url(key), allow_other_host: true
-```
-
-A file replaced under the same key now stays cached up to `expires_in`,
-plus as long again for the redirect. If the app overwrites files in
-place (an avatar under `avatars/<user>`, say), give each new version a
-new key and point the record at it.
+0.28.1 recommended `cache-control: private, max-age=<expires_in>` on
+the download redirect. Don't add it: follow 0.28.2's step instead.
 
 ## 0.28
 

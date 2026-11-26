@@ -1,9 +1,10 @@
-# Plan: downloads the browser caches (0.28.1)
+# Plan: downloads the browser caches (0.28.1, 0.28.2)
 
 Status: planned 2026-11-25, from an app's staging check: avatars,
 `<img src="/photos/<name>">` redirecting to `Monk::Storage.url(key)`,
-showed their initials first on every page load. Built 2026-11-25
-(both changes, tests, guide); left: the staging check in "Done when".
+showed their initials first on every page load. 0.28.1 released
+2026-11-25. Its cached redirect failed in the installed iPhone app:
+0.28.2 below reverses it. Left: the staging check in "Done when".
 
 ## The problem
 
@@ -66,9 +67,40 @@ A download is two requests: the app's route (302), then the signed link.
   parameter; MinIO, R2 unchecked. One that ignores it is harmless (no
   header, as today). The guide promises caching only where checked.
 
+## 0.28.2: the route is never cached
+
+From the same app's staging (2026-11-25), Hetzner, iOS 26, installed on
+the Home Screen: with the route's 302 cached `private, max-age=3600`,
+photos failed after ~30 minutes in the background and after a
+swipe-close and reopen. The app sent no request to the route (it
+followed its cached 302), and the link that 302 pointed to still
+answered 200. Safari and desktop Chrome on the same photo worked. No
+WebKit bug matches exactly; its memory cache has a history with
+redirects (bugs 77538, 131757). Not yet confirmed with Web Inspector.
+
+The rule, from the person's side: reopening the app shows the current
+photos, without downloading the unchanged ones again.
+
+- The route sets `cache-control: no-store` first: its 404 and its
+  redirect alike (`halt` and `redirect` keep headers already set). A
+  404 without it may be cached heuristically and hide a file uploaded
+  after it.
+- Only the bytes are cached, at the signed link (0.28.1), the same URL
+  for a whole `cache_window`.
+- A changed file gets a new key, so the route redirects to a new link
+  and the browser fetches it fresh. A longer `cache_window` (a day) for
+  avatars, if the refetch each hour shows.
+
+Changed: `docs/guides/storage.md` (the example and "Caching"), the
+scaffold's `storage-download` example, the storage `agents.md`, the
+CHANGELOG, and `upgrading.md` (a 0.28.2 step; 0.28.1's step marked
+replaced). No code: the template ships in the gem, hence a release.
+
 ## Done when
 
-- Both changes in, tests pass, the guide updated.
-- On the app's staging, with the redirect cached (done app-side already,
-  `max-age=3600`) and the new link: avatars no longer flash their
-  initials on a page change. Checked before calling it done.
+- 0.28.1: both changes in, tests pass, the guide updated. Done.
+- On the app's staging, installed iPhone app, with the route `no-store`
+  and the bytes cached: photos show after time in the background and
+  after a swipe-close and reopen; a photo uploaded or replaced shows on
+  the next load; no initials flash on a page change within the hour.
+  Checked before calling it done.

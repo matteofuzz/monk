@@ -253,6 +253,7 @@ host (`redirect` refuses one otherwise):
 ```ruby
 class App
   get("/media/:id") do
+    headers["cache-control"] = "no-store" # asked every time: see "Caching"
     owner = require_user!
     key = Monk::Persistence::Pg.checkout(:primary) do |conn|
       conn.exec_params("SELECT key FROM attachments WHERE id = $1 AND owner = $2", [params[:id], owner])
@@ -260,7 +261,6 @@ class App
     end
     halt 404, "" unless key
 
-    headers["cache-control"] = "private, max-age=#{Monk::Storage.config[:expires_in]}"
     redirect Monk::Storage.url(key), allow_other_host: true
   end
 end
@@ -280,32 +280,38 @@ or to `configure` to change the defaults.
 
 ### Caching
 
-A download is two requests, the route's redirect and then the signed
-link, and the browser caches both only when told to. Without it, an
-`<img>` asks again on every page load, and the page shows its
-placeholder first each time.
+A download is two requests: the route, which answers who may see which
+file, and the signed link, which serves the bytes. Only the bytes are
+cached, so a page load costs one small request to the app per file and
+no download, and never shows an answer the app has since changed.
 
-- **The signed link** is cached by itself. The file backend answers
+- **The route is never cached.** It sets `cache-control: no-store`
+  first, as above, which covers its 404 and its redirect alike (`halt`
+  and `redirect` keep the headers already set). A browser may cache a
+  404 without being told to, which would hide a file uploaded after
+  it. And a cached cross-origin redirect failed in an iPhone app
+  installed on the Home Screen: after some time in the background, the
+  image no longer loaded, while the link it pointed to still worked.
+- **The signed link is cached by itself,** and is the same URL for a
+  whole `cache_window`. The file backend answers
   `cache-control: private, max-age=` the seconds the link has left. An S3
   link asks the bucket for `private, max-age=<expires_in>`, inside its
   signature: the bucket sends no `Cache-Control` of its own, and a link
   only knows the time it was signed, not when it's fetched. Checked on
   Hetzner (Ceph RGW) and floci; AWS documents it. A provider that
   ignores it sends no header, and the browser guesses.
-- **The redirect** is cached when the route says so, as above:
-  `redirect` keeps the headers already set. The link it points to is
-  valid at least `expires_in` longer, so the cached redirect never
-  outlives it.
+- **A changed file gets a new key.** Write the new version under a new
+  key and point the record at it: the route then redirects to a new
+  link, which the browser fetches fresh. A file replaced under the same
+  key stays cached up to `expires_in`.
 
-Two consequences, on both backends:
+When `cache_window` ends, the link changes and each file is fetched
+once more. For files that are viewed often and rarely change (avatars),
+a longer window makes that rarer: `url(key, cache_window: 86_400)`.
 
-- **Revoking access takes up to `expires_in`.** Someone who may no
-  longer see a file keeps the cached redirect and bytes until then, as a
-  signed link they already have would allow anyway.
-- **A file replaced under the same key stays cached** up to `expires_in`
-  for the bytes, plus `expires_in` for the redirect. Write a new key when
-  the content changes (a new avatar, a new version of a document), and
-  point the record at it.
+Revoking access stops the route at once. Someone who already fetched a
+file keeps the cached bytes up to `expires_in`, as the signed link they
+already have would allow anyway.
 
 The bucket stays private. A signed link serves the stored
 `Content-Type`, and answers `Range` requests with 206, which `<audio>`
