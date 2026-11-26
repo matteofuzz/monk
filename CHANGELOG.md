@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.28.2 - unreleased
+
+The download route is never cached. Existing apps with storage: one line
+in each download route ([`upgrading.md`](docs/guides/upgrading.md#0282)).
+
+### Changed
+
+- **0.28.1's advice to cache the download redirect is reversed.** In an
+  iPhone app installed on the Home Screen, an image behind a cached
+  cross-origin 302 stopped loading after the app was in the background,
+  while the link it pointed to still worked. The storage guide's route,
+  the scaffold's `storage-download` example and the storage `AGENTS.md`
+  section now set `cache-control: no-store` first, which also keeps a
+  404 from being cached and hiding a file uploaded after it. Only the
+  signed link's bytes are cached, as 0.28.1 made them on S3, so a page
+  load costs one small request to the app per file, not a download
+  ([`storage.md`](docs/guides/storage.md#caching)).
+
 ## 0.28.1 - 2026-11-25
 
 Downloads the browser caches. Existing apps with storage: one line in
