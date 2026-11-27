@@ -22,9 +22,10 @@ unless a rule's block returns a collection
 
 ### Changed
 
-- **A rule whose block returns an Array, a Set or a Hash denies.** Such
-  a result is truthy even when empty, so a batch block declared without
-  `batch: true` would have let every topic in. The denial is logged.
+- **A single-topic rule whose block returns an Array, a Set or a Hash
+  denies.** Such a result is truthy even when empty, so a batch block
+  declared without `batch: true` would have let every topic in. The
+  denial is logged.
 - **A rule block that raises is logged**, not only denied, with the rule
   and the exception.
 
