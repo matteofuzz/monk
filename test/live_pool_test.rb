@@ -11,6 +11,7 @@ require "monk/persistence/pg"
 module LivePoolRules
   RUNS_IN_THE_POOL = proc { |_subject, _topic| Ractor.current[:monk_pool] == :live }
   ROOM_EXISTS = proc { |_subject, topic| LivePoolQueries.room_exists?(topic) }
+  ROOMS_EXISTING = proc { |_subject, topics| LivePoolQueries.rooms_existing(topics) }
 end
 
 module LivePoolQueries
@@ -19,6 +20,16 @@ module LivePoolQueries
   def self.room_exists?(topic)
     Monk::Persistence::Pg.checkout(DB) do |conn|
       conn.exec_params("SELECT 1 FROM live_pool_rooms WHERE topic = $1", [topic]).ntuples.positive?
+    end
+  end
+
+  # One query for a batch rule's group, recorded in live_pool_calls so the
+  # test can count the calls made in the pool's worker.
+  def self.rooms_existing(topics)
+    Monk::Persistence::Pg.checkout(DB) do |conn|
+      conn.exec("INSERT INTO live_pool_calls DEFAULT VALUES")
+      conn.exec_params("SELECT topic FROM live_pool_rooms WHERE topic = ANY($1::text[])",
+        [PG::TextEncoder::Array.new.encode(topics)],).column_values(0)
     end
   end
 end
@@ -82,6 +93,37 @@ class LivePoolTest < Minitest::Test
     assert_match(/ERROR .*rooms:\*.*Monk::PoolNotStartedError/, log)
   end
 
+  def test_a_pooled_batch_rule_makes_one_pool_call_per_message
+    start_live_pool(size: 1)
+    create_rooms_table("rooms:1", "rooms:3")
+    Monk::Live.authorize("rooms:*", anonymous: true, db_pool: :live, batch: true, &LivePoolRules::ROOMS_EXISTING)
+
+    allowed = Monk::Live::Policy.allowed_topics(Monk::Live.rules, nil, %w[rooms:1 rooms:2 rooms:3 rooms:4])
+
+    assert_equal Set["rooms:1", "rooms:3"], allowed
+    assert_equal 1, calls_made
+  end
+
+  def test_a_pooled_batch_rule_whose_pool_is_not_started_denies_the_group_and_logs_once
+    skip_unless_postgres_available
+    Monk::Persistence::Pg.register(DB_NAME, **pg_test_opts)
+    Monk::Persistence::Pg.pool(:live, db: DB_NAME, size: 1)
+    Monk::Live.authorize("rooms:*", anonymous: true, db_pool: :live, batch: true, &LivePoolRules::ROOMS_EXISTING)
+
+    allowed, log = with_log do |dir|
+      with_settings do
+        Monk::Settings.freeze_registry!
+        Monk::Log.freeze_registry!
+        [Monk::Live::Policy.allowed_topics(Monk::Live.rules, nil, %w[rooms:1 rooms:2]),
+         File.read(File.join(dir, "test.log")),]
+      end
+    end
+
+    assert_empty allowed
+    assert_equal 1, log.lines.size
+    assert_match(/ERROR .*denied 2 topics \(rule rooms:\*\).*Monk::PoolNotStartedError/, log)
+  end
+
   def test_db_pool_must_be_a_pool_name
     assert_raises(ArgumentError) do
       Monk::Live.authorize("rooms:*", db_pool: "live", &LivePoolRules::ROOM_EXISTS)
@@ -122,6 +164,8 @@ class LivePoolTest < Minitest::Test
     conn = PG.connect(**pg_test_opts)
     drop_table_if_exists(conn, "live_pool_rooms")
     conn.exec("CREATE TABLE live_pool_rooms (topic text PRIMARY KEY)")
+    drop_table_if_exists(conn, "live_pool_calls")
+    conn.exec("CREATE TABLE live_pool_calls (id serial PRIMARY KEY)")
     topics.each { |topic| conn.exec_params("INSERT INTO live_pool_rooms VALUES ($1)", [topic]) }
   ensure
     conn&.close
@@ -130,6 +174,14 @@ class LivePoolTest < Minitest::Test
   def drop_rooms_table
     conn = PG.connect(**pg_test_opts)
     drop_table_if_exists(conn, "live_pool_rooms")
+    drop_table_if_exists(conn, "live_pool_calls")
+  ensure
+    conn&.close
+  end
+
+  def calls_made
+    conn = PG.connect(**pg_test_opts)
+    conn.exec("SELECT count(*) FROM live_pool_calls").getvalue(0, 0).to_i
   ensure
     conn&.close
   end

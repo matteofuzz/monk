@@ -182,7 +182,14 @@ gets its own design doc and plan when work on it starts.
      0022). Built.
    Left: the checks on devices, in `docs/plan-0-29.md`.
 
-9. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+9. **0.30: Batched topic authorization in Live.** Planned (2026-11-27,
+   `docs/plan-live-batch-authorize.md`). A page subscribing to many topics
+   of one kind (a status per person shown) runs its rule once per topic,
+   one pool call and one query each, on every page load and reconnect
+   since 0.29. `authorize(..., batch: true) { |subject, topics| ... }`
+   checks a subscribe message's matching topics in one call. Opt-in.
+
+10. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.

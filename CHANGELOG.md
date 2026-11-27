@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.30.0 - 2026-11-27
+
+Batched topic authorization in Live. Existing apps: nothing to change,
+unless a rule's block returns a collection
+([`upgrading.md`](docs/guides/upgrading.md#030)).
+
+### Added
+
+- **`Monk::Live.authorize(..., batch: true) { |subject, topics| ... }`.**
+  The block decides all of a subscribe message's topics that the rule
+  matches first, in one call, and returns the allowed ones (an Array or
+  a Set). With `db_pool:`, one pool call and one query per message
+  instead of one per topic: a page subscribing to a topic per row no
+  longer runs a query per row on every load and reconnect. Fails closed
+  for the whole group; `true` never means "all" (ADR 0009, amended).
+
+### Changed
+
+- **A rule whose block returns an Array, a Set or a Hash denies.** Such
+  a result is truthy even when empty, so a batch block declared without
+  `batch: true` would have let every topic in. The denial is logged.
+- **A rule block that raises is logged**, not only denied, with the rule
+  and the exception.
+
 ## 0.29.0 - 2026-11-27
 
 Live's first-connect resync, and a baseline for offline. Existing apps:

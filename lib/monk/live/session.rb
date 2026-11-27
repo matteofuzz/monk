@@ -84,29 +84,26 @@ module Monk
           topics.all? { |topic| topic.is_a?(String) && topic.valid_encoding? }
       end
 
-      # The new topics go to the registry in one ask, not one each: at a
-      # reconnect wave's rate, one ask per topic is most of the registry
-      # Ractor's work.
+      # One policy pass for the message's new topics, so a batch rule runs
+      # once (one query, not one per topic), and the new topics go to the
+      # registry in one ask: at a reconnect wave's rate, one ask per topic
+      # is most of the registry Ractor's work. The cap comes after the
+      # check, in the message's order: a denied topic takes no slot.
       def subscribe(topics)
+        fresh = topics.reject { |topic| @topics.key?(topic) }.grep(TOPIC_FORMAT)
+        permitted = fresh.empty? ? Set.new : Policy.allowed_topics(@rules, @connection.subject, fresh)
         added = {}
-        allowed, denied = topics.partition { |topic| try_subscribe?(topic, added) }
+        allowed, denied = topics.partition do |topic|
+          next true if @topics.key?(topic) || added.key?(topic)
+          next false unless permitted.include?(topic) && @topics.size + added.size < @max_topics
+
+          added[topic] = topic.to_sym
+        end
         unless added.empty?
           @registry.register_many(added.values, @port)
           @topics.merge!(added)
         end
         reply(op: "subscribed", topics: allowed, denied: denied)
-      end
-
-      def try_subscribe?(topic, added)
-        return true if @topics.key?(topic) || added.key?(topic)
-        return false unless permitted?(topic) && @topics.size + added.size < @max_topics
-
-        added[topic] = topic.to_sym
-        true
-      end
-
-      def permitted?(topic)
-        TOPIC_FORMAT.match?(topic) && Policy.allowed?(@rules, @connection.subject, topic)
       end
 
       def unsubscribe(topics)

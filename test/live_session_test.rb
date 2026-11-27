@@ -11,6 +11,21 @@ class LiveSessionTest < Minitest::Test
   OWN_CONTACTS = proc { |subject, topic| topic == "contacts:#{subject}" }
   ALLOW = proc { |_subject, _topic| true }
   RAISES = proc { |_subject, _topic| raise "boom" }
+  # A batch rule (the even p: topics) that reports what it was asked.
+  EVEN = proc do |_subject, topics|
+    BatchAsked.record(topics)
+    topics.select { |topic| topic.delete_prefix("p:").to_i.even? }
+  end
+
+  # Session runs its policy on the thread that reads the connection, so
+  # this is a queue, not a thread-local.
+  module BatchAsked
+    QUEUE = Queue.new
+    def self.record(topics) = QUEUE << topics
+    def self.take = QUEUE.pop(timeout: 3)
+    def self.empty? = QUEUE.empty?
+    def self.clear = QUEUE.clear
+  end
 
   # A connection stand-in: Session only needs #read, #write and #subject.
   class FakeConnection
@@ -155,6 +170,50 @@ class LiveSessionTest < Minitest::Test
     reply = next_json(connection)
     assert_equal %w[t:1 t:2], reply["topics"]
     assert_equal ["t:3"], reply["denied"]
+  end
+
+  def test_a_batch_rule_is_asked_once_about_the_new_well_formed_topics_only
+    Monk::Live.authorize("p:*", batch: true, &EVEN)
+    Monk::Live.authorize("q:*", &ALLOW)
+    BatchAsked.clear
+    connection = start_session("7")
+
+    connection.send_message(op: "subscribe", topics: %w[p:2])
+    next_json(connection)
+    BatchAsked.take
+    connection.send_message(op: "subscribe", topics: ["p:1", "p:2", "q:1", "p:*", "p:4", "p:4"])
+
+    assert_equal({ "op" => "subscribed", "topics" => %w[p:2 q:1 p:4 p:4], "denied" => ["p:1", "p:*"] },
+      next_json(connection),)
+    assert_equal %w[p:1 p:4], BatchAsked.take
+    assert BatchAsked.empty?
+    assert_equal 1, @registry.count(:"p:4")
+  end
+
+  def test_a_message_with_nothing_new_asks_no_rule
+    Monk::Live.authorize("p:*", batch: true, &EVEN)
+    BatchAsked.clear
+    connection = start_session("7")
+
+    connection.send_message(op: "subscribe", topics: %w[p:2])
+    next_json(connection)
+    BatchAsked.take
+    connection.send_message(op: "subscribe", topics: %w[p:2 p:*])
+
+    assert_equal({ "op" => "subscribed", "topics" => %w[p:2], "denied" => ["p:*"] }, next_json(connection))
+    assert BatchAsked.empty?
+  end
+
+  def test_the_cap_comes_after_a_batch_check_and_denied_topics_take_no_slot
+    Monk::Live.authorize("p:*", batch: true, &EVEN)
+    Monk::Live.configure(registry: @registry, max_topics: 2)
+    connection = start_session("7")
+
+    connection.send_message(op: "subscribe", topics: %w[p:1 p:2 p:3 p:4 p:6])
+
+    reply = next_json(connection)
+    assert_equal %w[p:2 p:4], reply["topics"]
+    assert_equal %w[p:1 p:3 p:6], reply["denied"]
   end
 
   def test_subscribing_twice_is_idempotent
