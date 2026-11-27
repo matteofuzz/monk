@@ -146,7 +146,9 @@ Postgres a message is capped at 8 KB, about 50 dots.
 
 `ALLOW_ALL` lets every signed-in person see everyone's dots. In a real app,
 publish to the topics your pages already use (a contact list, a chat's
-members) and authorize those.
+members) and authorize those. With one topic per person shown
+(`presence:<id>`), a rule that queries checks them all in one query with
+`batch: true` ([`live.md`](live.md#who-may-subscribe)).
 
 ## Deploying
 

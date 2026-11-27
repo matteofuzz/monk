@@ -1,6 +1,7 @@
 # Plan: 0.29, Live's first-connect resync and a baseline for offline
 
-Status: planned 2026-11-27. Both parts directly on the release branch
+Status: released in 0.29.0 (2026-11-27); left: the checks on devices,
+in each part below. Both parts directly on the release branch
 `main_dev/v_0_29`, no feature branches. Two parts, independent, in this
 order:
 

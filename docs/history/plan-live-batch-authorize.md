@@ -1,6 +1,6 @@
 # Plan: 0.30, batched topic authorization in Live
 
-Status: planned and agreed 2026-11-27. Release branch `main_dev/v_0_30`,
+Status: released in 0.30.0 (2026-11-27). Release branch `main_dev/v_0_30`,
 no feature branch (one change).
 
 Built (2026-11-27): steps 1 to 4, the suite green with 0 skips. One

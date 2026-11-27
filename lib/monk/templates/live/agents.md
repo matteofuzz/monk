@@ -8,7 +8,9 @@
 job or broadcast, `Monk::Live.patch(topic, to: "#id", partial: "live/_x",
 **locals)`, also `append`, `prepend`, `remove(topic, to:)`, `batch`. Rules:
 `Monk::Live.authorize("contacts:*") { |subject, topic| ... }` with a block
-built in a module, `anonymous: true` to let visitors in.
+built in a module, `anonymous: true` to let visitors in, `db_pool:` for a
+block that queries, `batch: true` to check a page's many topics of one
+kind in one call (`{ |subject, topics| allowed_topics }`).
 
 **Test:** `test/live_test.rb` publishes and checks a subscribed socket gets
 it. To test a page, render it and look for `data-live-topic`.
