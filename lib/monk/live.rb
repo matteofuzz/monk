@@ -81,8 +81,11 @@ module Monk
       # `anonymous: true`. The block must be Ractor-shareable. db_pool:
       # names a Monk::Persistence::Pg pool to run the block in, for a rule
       # that queries the database; the WebSocket process must start it.
-      def authorize(pattern, anonymous: false, db_pool: nil, &block)
-        @rules = Ractor.make_shareable([*@rules, Policy.build_rule(pattern, anonymous, block, db_pool)])
+      # batch: true makes the block decide a subscribe message's matching
+      # topics in one call, { |subject, topics| allowed_topics }, for a rule
+      # that queries on a page with many topics of one kind.
+      def authorize(pattern, anonymous: false, db_pool: nil, batch: false, &block)
+        @rules = Ractor.make_shareable([*@rules, Policy.build_rule(pattern, anonymous, block, db_pool:, batch:)])
       end
 
       def authorized?(subject, topic) = Policy.allowed?(rules, subject, topic)

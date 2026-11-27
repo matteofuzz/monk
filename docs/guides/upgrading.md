@@ -14,6 +14,21 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.30
+
+`bundle update monkrb`.
+
+### Batched topic authorization (apps with Live)
+
+Nothing to change: `batch: true` is opt-in ([`live.md`](live.md#who-may-subscribe)).
+Use it for a rule that queries the database on a page with many topics
+of one kind. Two things to check in `config/live.rb`:
+
+- **A rule's block that returns an Array, a Set or a Hash now denies**,
+  and logs why. Return `true`/`false` (or any other truthy value) from a
+  single-topic rule.
+- **A block that raises is now logged** in the WebSocket process's log.
+
 ## 0.29
 
 `bundle update monkrb`.

@@ -187,7 +187,8 @@ topic open to everyone.
   matching rule decides**, so put specific rules above general ones. A topic
   no rule matches is denied.
 - The block gets the verified subject (from `Monk::Auth`, when the WS server
-  authenticates) and the topic. A block that raises denies.
+  authenticates) and the topic. A block that raises denies, and the
+  reason is logged.
 - **Whether visitors get a socket at all** is the WS server's
   `authenticate:` ([`websocket.md`](websocket.md)). With `Monk::Auth`, the
   scaffolded `bin/websocket_server` uses `:optional`: a logged-in user's
@@ -206,6 +207,33 @@ topic open to everyone.
   `Monk::Live.authorize("rooms:*", db_pool: :live, &AppLive::MEMBER)`.
   If the pool fails (not started, timed out, full), the rule denies and
   the reason is logged.
+- **A rule that queries, on a page with many topics of one kind** (a status
+  per person shown, one topic each) costs one query per topic, on every
+  page load and reconnect. `batch: true` makes the block decide all of a
+  subscribe message's topics that this rule matches first, in one call
+  (one pool call with `db_pool:`), and return the allowed ones:
+
+  ```ruby
+  module AppLive
+    SHOWN = proc do |subject, topics|
+      keys = topics.map { |topic| topic.delete_prefix("presence:") }
+      Person.shown_keys(subject, keys).map { |key| "presence:#{key}" }
+    end
+  end
+  Monk::Live.authorize("presence:*", db_pool: :live, batch: true, &AppLive::SHOWN)
+  ```
+
+  where `Person.shown_keys` is one query, `... WHERE p.key = ANY($2::text[])`
+  with the keys as `PG::TextEncoder::Array.new.encode(keys)`, returning the
+  keys shown. The block gets at most 100 topics, frozen, and returns an
+  Array or a Set of the allowed ones; `nil` or `false` allows none, a
+  topic it wasn't asked about is ignored, and anything else (`true`
+  included) denies them all and is logged. Anonymous subjects, first
+  match wins and a block that raises work as for any rule; a block that
+  raises denies its whole batch. `Monk::Live.authorized?(subject, topic)`
+  calls it with `[topic]`, for tests. A block that returns a collection
+  without `batch: true` denies, and says so in the log: an Array is
+  truthy even when empty.
 - A client's topic must match `[\w:.\-/@]{1,200}`, and a connection holds at
   most 100 topics (`configure(registry:, max_topics:)`). Denials never say why
   or whether the topic exists.
