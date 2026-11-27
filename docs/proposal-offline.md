@@ -2,8 +2,8 @@
 
 Status: settled 2026-11-27, after discussion. **Monk ships level 0 only**
 (below), plus guidance, documentation and two small helpers to decide in
-the plan. Everything beyond it is the app's. Next: a plan
-(`docs/plan-offline.md`) and an ADR. Related:
+the plan. Everything beyond it is the app's. Planned in
+[`plan-0-29.md`](plan-0-29.md), part 2. Related:
 [`history/proposal-navigate.md`](history/proposal-navigate.md) (not pursued; independent of this one).
 
 ## Why
