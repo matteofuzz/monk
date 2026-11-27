@@ -3,8 +3,8 @@ module Monk
     # Mixed into Monk::Context when "monk/pwa" is required, before Boot.
     module Helpers
       # For the layout's <%= monk_head %>: the manifest, the theme colour,
-      # the Home Screen icon iOS uses, and Monk's script that registers
-      # /sw.js. Nothing until config/pwa.rb has called Monk::Pwa.configure.
+      # the Home Screen icon iOS uses, Monk's script that registers /sw.js,
+      # and its offline client. Nothing until config/pwa.rb has called Monk::Pwa.configure.
       #
       # The manifest and the service worker are linked by their plain
       # paths, never asset_path's ?v=: a service worker's URL is its
@@ -18,6 +18,7 @@ module Monk
           (%(<meta name="theme-color" content="#{h(theme_color)}">) if theme_color.is_a?(String)),
           %(<link rel="apple-touch-icon" href="#{h(asset_path(Monk::Pwa.apple_touch_icon))}">),
           %(<script type="module" src="#{h(asset_path("#{Pwa::CLIENT_PATH}/register.js"))}"></script>),
+          %(<script type="module" src="#{h(asset_path("#{Pwa::CLIENT_PATH}/offline.js"))}"></script>),
         ].compact
       end
 
@@ -57,6 +58,24 @@ module Monk
             </dialog>
           </div>
         HTML
+      end
+
+      # A banner saying the app is offline, and why, for a layout:
+      #   <%= monk_offline %>
+      # Hidden until offline.js shows it, with the text for the reason:
+      # no network, the server not answering (a deploy, a crash), or no
+      # answer at all. role="status", so screen readers announce it. BEM
+      # classes and no styles: the app styles it, and <html
+      # data-monk-offline> for the rest of the page. Every text can be
+      # overridden (another language, say).
+      def monk_offline(network: "You’re offline.", server: "Can’t reach the server, retrying…",
+                       unreachable: "Can’t connect.")
+        return raw("") unless Monk::Pwa.configured?
+
+        texts = { "network" => network, "server" => server, "unreachable" => unreachable }.map do |reason, text|
+          %(  <p class="monk-offline__text" data-monk-offline-reason="#{reason}" hidden>#{h(text)}</p>)
+        end
+        raw(%(<div class="monk-offline" data-monk-offline-banner role="status" hidden>\n#{texts.join("\n")}\n</div>))
       end
     end
   end

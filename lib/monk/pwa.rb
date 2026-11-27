@@ -16,9 +16,12 @@ module Monk
     # only control pages under its own path.
     SERVICE_WORKER_PATH = "/sw.js".freeze
     APPLE_TOUCH_ICON = "/icons/apple-touch-icon.png".freeze
+    # The app's own page the service worker shows when a page load fails
+    # (no network, or a 502/503/504): scaffolded static, the app's file.
+    OFFLINE_PAGE = "/offline.html".freeze
 
     CLIENT_DIR = File.expand_path("pwa/client", __dir__).freeze
-    # register.js, served from the gem like Live's client.
+    # register.js and offline.js, served from the gem like Live's client.
     CLIENT_PATH = "/_monk/pwa".freeze
     Monk::Assets.mount(CLIENT_PATH, CLIENT_DIR)
 
@@ -28,12 +31,13 @@ module Monk
 
       # Boot-time, main Ractor, from config/pwa.rb. Reads and checks the
       # manifest under the app's public/ (Monk::Assets.root), the icons it
-      # names, the service worker and the apple-touch-icon: anything
+      # names, the service worker, the offline page and the apple-touch-icon: anything
       # missing or not installable raises InvalidManifestError here.
       def configure(apple_touch_icon: APPLE_TOUCH_ICON, root: Monk::Assets.root)
         raise ArgumentError, "Monk::Pwa needs Monk to serve public/ (the app has `assets false`)" unless root
 
-        @manifest = Manifest.check!(root, MANIFEST_PATH.delete_prefix("/"), [SERVICE_WORKER_PATH, apple_touch_icon])
+        files = [SERVICE_WORKER_PATH, OFFLINE_PAGE, apple_touch_icon]
+        @manifest = Manifest.check!(root, MANIFEST_PATH.delete_prefix("/"), files)
         @apple_touch_icon = apple_touch_icon.dup.freeze
       end
 

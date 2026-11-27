@@ -20,6 +20,8 @@ reload (not pursued,
 
 ## Part 1: Live's first-connect resync
 
+Built (2026-11-27): the change, the race test, the existing tests adjusted, ADR 0021, the docs. Found while doing it: every resync reconciles topics, so a topic the server denied was asked for again after the load's resync; the client now remembers denied topics until its next connection. Left: the checks on staging (below).
+
 In short (the plan linked above has the problem, the options and the
 tests):
 
@@ -31,6 +33,14 @@ tests):
 - ADR 0021 (amends 0011).
 
 ## Part 2: offline, level 0
+
+Built (2026-11-27): `/_monk/up` with the deploy templates' health checks
+(compose's in Ruby, since the slim image has no `curl`), `offline_state.js`
+and `offline.js`, `monk_offline`, the boot check, the `sw.js` handler (with
+navigation preload) and `offline.html`, Node and browser tests, the docs
+and ADR 0022. Differences from below: a hidden page doesn't check (iOS
+drops a hidden page's socket within seconds), and `offline.html` opened
+at its own address goes to `/` once back. Left: the open checks.
 
 ### Decisions (the proposal's open details, settled here)
 

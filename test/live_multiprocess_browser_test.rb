@@ -64,7 +64,7 @@ class LiveMultiprocessBrowserTest < Minitest::Test
 
     Redis.new(url: redis_test_url).tap { |redis| redis.call("CLIENT", "KILL", "TYPE", "pubsub") }.close
 
-    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    wait_for("reconnect + resync") { later_resyncs.size == 1 }
     assert_equal "missed", evaluate("document.querySelector('#c-1').textContent")
 
     @publisher.remove(topic, to: "#c-1")

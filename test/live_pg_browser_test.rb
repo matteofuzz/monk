@@ -39,7 +39,7 @@ class LivePgBrowserTest < Minitest::Test
 
     terminate_backend(ws_listen_pid)
 
-    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    wait_for("reconnect + resync") { later_resyncs.size == 1 }
     assert_equal "missed", evaluate("document.querySelector('#c-1').textContent")
     assert_equal 1, events("disconnected").size
 

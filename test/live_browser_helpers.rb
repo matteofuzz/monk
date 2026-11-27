@@ -18,9 +18,21 @@ module LiveBrowserPage
     @page.go_to("http://127.0.0.1:#{@pages.port}/page")
     return unless topics_ready != false
 
-    wait_for("client subscribed") do
-      evaluate("window.__events.some(e => e.name === 'subscribed')")
+    wait_for_first_resync
+  end
+
+  # A page's client subscribes, then resyncs once (reason "first"): a test
+  # acts after that, so the first resync's fetch can't pick up the page it
+  # serves next.
+  def wait_for_first_resync
+    wait_for("client subscribed and resynced") do
+      evaluate("window.__events.some(e => e.name === 'resynced' && e.detail.reason === 'first')")
     end
+  end
+
+  # The resyncs after the page's first one: a reconnect's, a gap's.
+  def later_resyncs
+    events("resynced").reject { |detail| detail["reason"] == "first" }
   end
 
   def page_html(body_html)
@@ -115,8 +127,12 @@ module LiveBrowserHelpers
 
     # `delay:` holds the response back (seconds); `drop: true` closes the
     # connection without answering, which the browser sees as a network error.
-    def serve_page(body, status: 200, headers: {}, delay: 0, drop: false)
+    # `then_serve:` is what every later fetch gets once this page was served
+    # once: the server state changing right after the render, before the
+    # client could subscribe.
+    def serve_page(body, status: 200, headers: {}, delay: 0, drop: false, then_serve: nil)
       @page = [status, headers, body, delay, drop]
+      @then = then_serve
     end
 
     def close
@@ -153,6 +169,10 @@ module LiveBrowserHelpers
       else
         status, headers, body, delay, drop = @page
         @page_hits += 1
+        if @then
+          @page = [200, {}, @then, 0, false]
+          @then = nil
+        end
         sleep delay if delay.positive?
         return if drop
 

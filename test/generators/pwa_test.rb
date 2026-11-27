@@ -29,9 +29,22 @@ class GeneratorsPwaTest < Minitest::Test
     end
   end
 
-  # sw.js mustn't get between Live's resync and the network.
-  def test_the_service_worker_has_no_fetch_handler
-    refute_match(/addEventListener\(\s*["']fetch["']/, template("pwa/public/sw.js"))
+  # sw.js steps in for failed page loads only (test/js/sw_offline.test.js
+  # covers what it does): never between Live's resync and the network.
+  def test_the_service_worker_handles_page_loads_only
+    assert_includes template("pwa/public/sw.js"),
+      %(if (request.mode !== "navigate" || request.method !== "GET") return;)
+  end
+
+  def test_the_offline_page_carries_the_apps_name_and_retries_on_its_own
+    with_new_app(:pwa) do |dest|
+      page = generated(dest, "public/offline.html")
+
+      assert_includes page, "<title>shop: offline</title>"
+      assert_includes page, "<h1>shop is offline</h1>"
+      refute_includes page, "{{app}}"
+      assert_includes page, %(fetch("/_monk/up", { cache: "no-store" }))
+    end
   end
 
   def test_an_apps_own_icon_is_kept_and_reported_skipped

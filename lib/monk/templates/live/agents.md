@@ -19,6 +19,9 @@ it. To test a page, render it and look for `data-live-topic`.
 - A pushed partial sees only its locals (`locals[:text]`), never `params`
   or the session.
 - Each topic name must match what pages subscribe to, exactly.
+- A live page refetches and morphs itself once after every load (and
+  after a reconnect): JS that changes the page at load also runs on
+  `monk-live:resynced`, or its change is undone.
 - The demo (`/demo/live`) is development only; delete it when done.
 
 **Examples:** `live-rule` in `config/live.rb`; `live-broadcast` in

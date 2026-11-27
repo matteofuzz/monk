@@ -3,8 +3,13 @@
 # the app. Same host, not a subdomain, so the session cookie reaches the
 # WebSocket handshake. SITE_ADDRESS is PUBLIC_URL's host: Caddy gets its
 # certificate once the name points at this server (localhost gets one
-# from Caddy's own local CA).
+# from Caddy's own local CA). Caddy checks the app at /_monk/up every
+# 10 s: while it doesn't answer (a deploy, a crash), pages get a 502 or 503,
+# which the offline client shows as "server" (docs/guides/offline.md).
 {$SITE_ADDRESS} {
 	reverse_proxy /ws* ws:9293
-	reverse_proxy web:9292
+	reverse_proxy web:9292 {
+		health_uri /_monk/up
+		health_interval 10s
+	}
 }

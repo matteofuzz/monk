@@ -2,16 +2,17 @@ require_relative "test_helper"
 require "json"
 require "rack/mock_request"
 
-# The app is installable (monk add pwa): the manifest, the icons it names
-# and the service worker are served, and pages link them. SETUP.md, pwa.
+# The app is installable (monk add pwa): the manifest, the icons it names,
+# the service worker and the offline page are served, and pages link them. SETUP.md, pwa.
 class PwaTest < Minitest::Test
-  def test_the_manifest_its_icons_and_the_service_worker_are_served
+  def test_the_manifest_its_icons_the_service_worker_and_the_offline_page_are_served
     status, headers, body = get("/manifest.webmanifest")
     assert_equal 200, status
     assert_equal "application/manifest+json; charset=utf-8", headers["content-type"]
 
     JSON.parse(body)["icons"].each { |icon| assert_equal 200, get(icon["src"]).first, icon["src"] }
     assert_equal 200, get("/sw.js").first
+    assert_equal 200, get("/offline.html").first
   end
 
   def test_pages_link_the_manifest_and_register_the_service_worker
@@ -19,6 +20,7 @@ class PwaTest < Minitest::Test
 
     assert_includes body, %(<link rel="manifest" href="/manifest.webmanifest">)
     assert_match %r{<script type="module" src="/_monk/pwa/register\.js[^"]*"></script>}, body
+    assert_match %r{<script type="module" src="/_monk/pwa/offline\.js[^"]*"></script>}, body
   end
 
   private

@@ -4,6 +4,50 @@ All notable changes to this project are documented here. Format is loosely
 [Keep a Changelog](https://keepachangelog.com/); versions are as released
 in `lib/monk/version.rb`.
 
+## 0.29.0 - 2026-11-27
+
+Live's first-connect resync, and a baseline for offline. Existing apps:
+nothing to change for Live, a few files for pwa
+([`upgrading.md`](docs/guides/upgrading.md#029)).
+
+### Fixed
+
+- **A change published while a page loads is no longer lost.** Between
+  the server's render of a page and its socket's subscribe (hundreds of
+  milliseconds on a phone), a published patch reached nobody, and nothing
+  noticed: Live resynced only after a reconnect, and `seq` is per
+  connection. Every connect now resyncs once the server acknowledges the
+  subscriptions, the first included (ADR 0021, amending 0011). The cost:
+  one more request per load of a page with `data-live-topic`.
+
+### Changed
+
+- **`monk-live:resynced` carries a `reason`**: `"first"` (every page
+  load), `"reconnect"` or `"gap"`. Code that runs on it now runs right
+  after each load too.
+- **Live doesn't ask again for a topic the server denied** on the same
+  connection, now that every load reconciles topics.
+- **The scaffolded `sw.js` has a `fetch` handler**, for page loads only:
+  when one fails (no network, or 502/503/504), it answers with the app's
+  `public/offline.html`. Every other request passes through, and nothing
+  is stored (ADR 0022).
+
+### Added
+
+- **Offline, level 0, with `Monk::Pwa`.** After 2 s without a
+  connection, `/_monk/pwa/offline.js` sets `<html data-monk-offline>` to
+  `network`, `server` or `unreachable`, shows `<%= monk_offline %>`'s
+  banner and cancels links to the app's other pages, until the app
+  answers again; events `monk-offline:offline` and `monk-offline:online`,
+  and `monk-offline:check` for an app whose own `fetch` failed.
+  `public/offline.html` is scaffolded and checked at boot. Reading pages
+  and sending writes offline are the app's, with the new
+  [`offline.md`](docs/guides/offline.md).
+- **`GET /_monk/up`** in every app: `204` before routing, with no
+  session, database or log line. The offline client's "is it back?", and
+  the deploy's health check: the `Caddyfile` and `compose.yaml` that
+  `monk add deploy` writes now use it.
+
 ## 0.28.2 - 2026-11-26
 
 The download route is never cached. Existing apps with storage: one line

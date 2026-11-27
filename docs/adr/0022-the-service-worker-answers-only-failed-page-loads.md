@@ -1,0 +1,15 @@
+# The service worker answers only failed page loads, with the app's offline page; offline is a frozen page and a banner
+
+An installed app (`Monk::Pwa`) that loses the network showed the system's error page on launch or reload, and gave no sign of being offline while a page was open. An installed app on a phone is often closed in the background, so opening it offline is the usual case. Until 0.29 the scaffolded `sw.js` had no `fetch` handler, on purpose: nothing could answer Live's resync (ADR 0011) from a cache or replay a login redirect. The discussion that led here (`docs/proposal-offline.md`) separated four levels of offline: knowing it, reading pages already seen, sending writes later, and working offline on data no page showed.
+
+We decided that Monk ships the first level only. A page that's open stays as it is: after 2 s without a connection, a client (`offline.js`, with `Monk::Pwa`) checks `GET /_monk/up` and sets `<html data-monk-offline>` with a reason (`network`, `server` for a proxy's 502/503/504, `unreachable` for no answer), `<%= monk_offline %>` shows a banner, and links to the app's other pages are cancelled. A page load that fails (no network, or 502/503/504) is answered by the scaffolded service worker with the app's `public/offline.html`, stored when the worker installs; every other request, and every answer that came, goes through untouched and is never stored. `GET /_monk/up` answers `204` before routing, with no session or database, in every app: it's the client's "is it back?" and the deploy's health check, and it doesn't pretend to tell a dead connection from a host that's down, which only an outside endpoint could. Reading pages offline and sending later are the app's, on its own `sw.js` and `offline.html`, with Monk's guide (`docs/guides/offline.md`) for the rules: clearing on sign-out, never storing resync or redirects, assets of an older deploy, bounds, idempotent writes.
+
+The accepted cost is that an installed app opened offline shows a generic page, not the last state the person saw, until the app builds level 1, and that the service worker is now in the path of every page load (with navigation preload, so the request starts while the worker boots).
+
+## Considered Options
+
+- Store every page visited and answer from the cache offline, or cache first then Live's resync, in Monk (rejected for now: one person's data in a cache needs clearing at sign-out, assets of an older deploy, bounds; the rules depend on each app's routes, so an app proves them first, and Monk takes what proves generic)
+- An outbox for writes in the gem (rejected: its ordering and pending states are app logic, chat-shaped; Monk documents the pattern and the idempotency rule)
+- An overlay over the page while offline (rejected: offline, people want to read what they had)
+- Wrapping the page's `fetch` to notice failures (rejected: changing a global the app relies on; the app dispatches `monk-offline:check` instead)
+- A probe that tells a dead connection from a host that's down (rejected: the app's own server can't, and a third-party endpoint is a privacy cost)

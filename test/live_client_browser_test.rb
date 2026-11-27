@@ -21,6 +21,24 @@ class LiveClientBrowserTest < Minitest::Test
     end
   end
 
+  # The race: the server renders the page, then a change is published
+  # before the client's socket has subscribed, so no patch reaches it.
+  # The client resyncs once its first subscribe is acknowledged, and the
+  # page shows the change without a reconnect.
+  def test_a_change_published_between_the_render_and_the_first_subscribe_is_not_lost
+    @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">rendered</li></ul>)),
+      then_serve: page_html(%(<ul data-live-topic="t:1"><li id="contact-1">changed</li></ul>)),)
+    @page.go_to("http://127.0.0.1:#{@pages.port}/page")
+
+    wait_for("first resync") { events("resynced").size == 1 }
+    assert_equal "changed", evaluate("document.querySelector('#contact-1').textContent")
+    assert_equal [{ "reason" => "first" }], events("resynced")
+    assert_equal 1, events("connected").size
+    assert_operator evaluate("window.__events.findIndex(e => e.name === 'subscribed')"), :<,
+      evaluate("window.__events.findIndex(e => e.name === 'resynced')"),
+      "resynced before the subscribe was acknowledged"
+  end
+
   def test_a_patch_keeps_focus_text_and_selection_in_a_sibling_and_inside_the_patched_node
     row = %(<li id="contact-1">row <input id="inner" placeholder="x"> <%= locals[:tick] %></li>)
     with_frozen_views({ "row.erb" => row }) do
@@ -122,9 +140,10 @@ class LiveClientBrowserTest < Minitest::Test
       @publisher.remove("t:1", to: "#nothing")
       @publisher.remove("t:1", to: "#nothing")
 
-      wait_for("resync") { events("resynced").size == 1 }
+      wait_for("resync") { later_resyncs.size == 1 }
       assert_equal "fresh", evaluate("document.querySelector('#contact-1').textContent")
       assert_equal [{ "seq" => 3 }], events("gap")
+      assert_equal [{ "reason" => "gap" }], later_resyncs
     end
   end
 
@@ -134,8 +153,9 @@ class LiveClientBrowserTest < Minitest::Test
 
     @proxy.sever!
 
-    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    wait_for("reconnect + resync") { later_resyncs.size == 1 }
     assert_equal "after", evaluate("document.querySelector('#contact-1').textContent")
+    assert_equal [{ "reason" => "reconnect" }], later_resyncs
     assert_equal 1, events("disconnected").size
     assert_equal 2, events("connected").size
     assert_equal 1, @registry.count(:"t:1")
@@ -180,7 +200,7 @@ class LiveClientBrowserTest < Minitest::Test
 
     @proxy.sever!
 
-    wait_for("resync") { events("resynced").size == 1 }
+    wait_for("resync") { later_resyncs.size == 1 }
     assert_equal %w[after new],
       evaluate("[document.querySelector('#status').textContent, document.querySelector('#note').textContent]")
     assert_equal [true, "half-typed", 2, 6],
@@ -209,7 +229,7 @@ class LiveClientBrowserTest < Minitest::Test
 
     @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">recovered</li></ul>)))
 
-    wait_for("retry", timeout: 10) { events("resynced").size == 1 }
+    wait_for("retry", timeout: 10) { later_resyncs.size == 1 }
     assert_equal "recovered", evaluate("document.querySelector('#contact-1').textContent")
   end
 
@@ -231,10 +251,10 @@ class LiveClientBrowserTest < Minitest::Test
         wait_for("gap #{n + 1}") { events("gap").size == n + 1 } # one lost frame at a time
       end
 
-      wait_for("resyncs done", timeout: 10) { events("resynced").size >= 2 }
+      wait_for("resyncs done", timeout: 10) { later_resyncs.size >= 2 }
       sleep 1.5
       assert_equal 3, events("gap").size
-      assert_equal 2, events("resynced").size, "overlapping triggers were not coalesced"
+      assert_equal 2, later_resyncs.size, "overlapping triggers were not coalesced"
       assert_equal hits_before + 2, @pages.page_hits, "more page fetches than the in-flight one plus one follow-up"
     end
   end
@@ -251,10 +271,10 @@ class LiveClientBrowserTest < Minitest::Test
 
     @proxy.sever!
 
-    wait_for("large resync", timeout: 15) { events("resynced").size == 1 }
+    wait_for("large resync", timeout: 15) { later_resyncs.size == 1 }
     subscribed_at, resynced_at = evaluate(
       "[window.__events.filter(e => e.name === 'subscribed').at(-1).at, " \
-      "window.__events.find(e => e.name === 'resynced').at]",
+      "window.__events.find(e => e.name === 'resynced' && e.detail.reason !== 'first').at]",
     )
     puts "\n  [800-row resync: fetch+parse+morph #{(resynced_at - subscribed_at).round}ms]" if ENV["MONK_TEST_VERBOSE"]
     assert_equal ["new 800", 800],
@@ -284,7 +304,7 @@ class LiveClientBrowserTest < Minitest::Test
     @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">mine</li></ul>)))
     @page = LiveBrowserHelpers.browser.create_page
     @page.go_to("http://127.0.0.1:#{@pages.port}/page")
-    wait_for("client subscribed") { evaluate("window.__events.some(e => e.name === 'subscribed')") }
+    wait_for_first_resync
     yield
 
     @proxy.sever!

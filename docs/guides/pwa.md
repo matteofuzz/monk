@@ -16,12 +16,16 @@ needs no other module, and writes:
 - `public/icons/`: placeholder icons, 192 and 512 px, a maskable 512 px
   one, and a 180 px `apple-touch-icon.png` for iOS;
 - `public/sw.js`: the service worker;
+- `public/offline.html`: the page shown when a page can't load offline;
 - `config/pwa.rb`: `Monk::Pwa.configure`;
 - `test/pwa_test.rb`.
 
 There's nothing else to wire: the layout's `<%= monk_head %>` links the
 manifest, the theme colour and the iOS icon, and loads Monk's
-`/_monk/pwa/register.js`, which registers `/sw.js` for the whole site.
+`/_monk/pwa/register.js`, which registers `/sw.js` for the whole site,
+and `/_monk/pwa/offline.js`, which says when the page is offline
+([`offline.md`](offline.md)). Add `<%= monk_offline %>` to the layout for
+its banner.
 
 ## Make it yours
 
@@ -57,18 +61,23 @@ every deploy a new registration. It's served `must-revalidate`, and
 registered with `updateViaCache: "none"`, so an edited `sw.js` is picked
 up on the next page load and takes over open pages at once.
 
-It has **no `fetch` handler**, on purpose: every request goes to the
-network as if there were no service worker. So it never answers Live's
-resync (a refetch of the page) from a cache, never caches a login
-redirect, and never touches `/_monk/` paths. An offline page or caching
-needs one: keep those requests out of it.
+It steps in for **page loads only, and only when they fail**: no
+network, or the proxy answering for an app that's down (502, 503, 504).
+Then it shows `public/offline.html`, stored in a cache named
+`monk-offline` when the worker installs and refreshed once per start of
+the worker ([`offline.md`](offline.md#level-0-what-monk-does)). Every
+other request, and every answer that came, goes through untouched and is
+never stored: it never answers Live's resync (a fetch of the page, not a
+page load) from a cache, never caches a login redirect, and never touches
+`/_monk/` paths. Storing pages to read offline is the app's to add:
+keep those requests out of it ([`offline.md`](offline.md#level-1-a-page-stored-for-offline)).
 
 The end of the file shows web push messages as notifications; it does
 nothing until push is set up ([`push.md`](push.md)). For their clicks,
 each page running as the installed app (`display-mode: standalone`)
 tells the worker so, through `register.js`, and the worker keeps the
 note in a cache named `monk-pwa-app-windows`. Caching code that deletes
-the caches it doesn't know should keep that one.
+the caches it doesn't know should keep that one and `monk-offline`.
 
 `register.js` reports on `document`: `monk-pwa:registered` (`{ scope }`),
 `monk-pwa:unsupported` (`{ reason: "no-service-worker" | "insecure" }`),
@@ -166,8 +175,8 @@ https tunnel.
 
 ## Checking it
 
-`test/pwa_test.rb` requests the manifest, its icons and `sw.js`, and
-checks a page links them. By hand, in Chrome: DevTools › Application ›
+`test/pwa_test.rb` requests the manifest, its icons, `sw.js` and
+`offline.html`, and checks a page links them. By hand, in Chrome: DevTools › Application ›
 Manifest lists no errors, Service workers shows `/sw.js` activated, and
 the address bar offers to install the app. Monk's own suite does the same
 in headless Chrome (`test/pwa_browser_test.rb`), from the files exactly

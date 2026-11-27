@@ -1,11 +1,13 @@
-# An installable app (Monk::Pwa): the web app manifest, its icons and the
-# service worker, all the app's own files in public/, checked at boot.
+# An installable app (Monk::Pwa): the web app manifest, its icons, the
+# service worker and the offline page, all the app's own files in public/,
+# checked at boot.
 Monk::Generator.define(:pwa) do
-  summary "Installable app: web app manifest, icons, service worker"
+  summary "Installable app: web app manifest, icons, service worker, offline page"
   installed_if "config/pwa.rb"
 
   copy "config/pwa.rb", "public/sw.js", role: :wiring
   copy "public/manifest.webmanifest", role: :wiring, app_name: true
+  copy "public/offline.html", role: :view, app_name: true
   # Skipped, not a conflict, when the app already has its own.
   copy "public/icons/icon-192.png", "public/icons/icon-512.png", "public/icons/icon-maskable-512.png",
     "public/icons/apple-touch-icon.png", role: :view
