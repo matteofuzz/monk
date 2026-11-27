@@ -166,7 +166,21 @@ gets its own design doc and plan when work on it starts.
      included, and only the signed link's bytes are cached. Left: the
      check on staging.
 
-8. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
+8. **0.29: Live's first-connect resync, and a baseline for offline.**
+   Planned (2026-11-27, `docs/plan-0-29.md`).
+   - **Live resyncs after its first subscribe too.** A fix: a change
+     published between a page's render and its socket's subscribe was
+     lost. The page now refetches itself once after the server
+     acknowledges its subscriptions; `resynced` carries a `reason`
+     (ADR 0021). Built.
+   - **Offline, level 0.** In `Monk::Pwa`: the page freezes and a banner
+     says it's offline (`<%= monk_offline %>`, `data-monk-offline`), links
+     are blocked, and an installed app opened offline shows the app's
+     `offline.html` from the service worker. `GET /_monk/up` in core, also
+     the deploy's health check. Beyond that (cached pages, writes sent
+     later) is the app's, with a guide (`docs/proposal-offline.md`).
+
+9. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and
    4.1, Linux/Docker, a load test for per-Ractor GC, then the templates
    and the upgrade guide.

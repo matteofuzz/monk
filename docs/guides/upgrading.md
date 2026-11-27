@@ -14,6 +14,27 @@ timestamp of your own, so it runs after your existing migrations.
 
 An app made with the release named in a section needs none of its steps.
 
+## 0.29
+
+`bundle update monkrb`.
+
+### Live resyncs on every page load (apps with Live)
+
+Nothing to change in files. A page with `data-live-topic` now refetches
+itself once after its socket subscribes, so a change published between
+the render and the subscribe isn't lost (ADR 0021). What to check:
+
+- **One more request per load** of a live page: the page route runs
+  twice. Watch the heaviest one.
+- **`monk-live:resynced` fires on every load**, with
+  `{ reason: "first" }`, and `"reconnect"` or `"gap"` otherwise. Code
+  that runs on it (scrolling, marking read, local times) now runs right
+  after the load too; check `event.detail.reason` if the first one should
+  be skipped.
+- **What your JavaScript changes at load is morphed back** to the
+  server's markup by that resync, as after any resync: run it on
+  `resynced` too, or put it inside `data-live-ignore`.
+
 ## 0.28.2
 
 `bundle update monkrb`.

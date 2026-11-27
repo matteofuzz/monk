@@ -2,8 +2,9 @@
 
 Status: planned 2026-11-27, from the navigation discussion
 ([`history/proposal-navigate.md`](history/proposal-navigate.md), Decision):
-Monk fixes this race and leaves the navigation model to the app. Version
-to confirm (0.29: it changes what apps see on every page load).
+Monk fixes this race and leaves the navigation model to the app. In 0.29
+(`plan-0-29.md`, part 1). Built 2026-11-27 on `main_dev/v_0_29`; left: the
+staging checks in "Done when".
 
 ## The problem
 

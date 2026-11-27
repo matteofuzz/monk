@@ -20,6 +20,8 @@ reload (not pursued,
 
 ## Part 1: Live's first-connect resync
 
+Built (2026-11-27): the change, the race test, the existing tests adjusted, ADR 0021, the docs. Found while doing it: every resync reconciles topics, so a topic the server denied was asked for again after the load's resync; the client now remembers denied topics until its next connection. Left: the checks on staging (below).
+
 In short (the plan linked above has the problem, the options and the
 tests):
 

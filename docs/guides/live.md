@@ -117,7 +117,10 @@ What the client does for you:
   anything inside `data-live-ignore`.
 - **Recovers.** It counts messages per connection, and on a gap, a reconnect,
   or a failed refetch it re-fetches the current page and morphs it in, so the
-  page converges without a reload. If that refetch comes back as an error, a
+  page converges without a reload. It does the same once on every page load,
+  after the server acknowledges its subscriptions: a change published
+  between the server's render and the subscribe would otherwise be lost
+  (ADR 0021). That's one more request per load of a live page. If that refetch comes back as an error, a
   non-HTML response or any redirect (a login page, say) it stops rather than
   morph something wrong. Reconnects back off from 500ms to 30s.
 - **Notices a dead socket.** While the page is visible it pings the server
@@ -137,8 +140,15 @@ Everything it does is reported as DOM events on `document`; there is no JS
 API: `monk-live:connected`, `disconnected` (`{reason}`: `"closed"` with the
 close `code`, `"timeout"`, or `"restored"`), `stale` (a ping went
 unanswered), `subscribed` (`{topics, denied}`), `patched`
-(`{target, mode, matched}`), `gap`, `resynced`, `resync-failed`, `stopped`
+(`{target, mode, matched}`), `gap`, `resynced` (`{reason}`: `"first"` on
+every page load, `"reconnect"` or `"gap"`), `resync-failed`, `stopped`
 (`{reason}`).
+
+A resync morphs the whole page back to the server's markup, so whatever
+your JavaScript changes in the page when it loads (local times, a scroll
+to the newest message) also runs on `monk-live:resynced`. Since every load
+resyncs once, that's right after the load too; check the `reason` if the
+first one needs to be handled apart.
 
 ### On phones
 

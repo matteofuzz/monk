@@ -35,7 +35,7 @@ class LiveClientNetworkBrowserTest < Minitest::Test
 
     wait_for("stale") { events("stale").size == 1 }
     assert_equal [{ "reason" => "timeout" }], events("disconnected")
-    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    wait_for("reconnect + resync") { later_resyncs.size == 1 }
     assert_equal "after", evaluate("document.querySelector('#contact-1').textContent")
   end
 
@@ -124,7 +124,7 @@ class LiveClientNetworkBrowserTest < Minitest::Test
     show_page!
 
     wait_for("stale", timeout: 2) { events("stale").size == 1 }
-    wait_for("reconnect + resync", timeout: 3) { events("resynced").size == 1 }
+    wait_for("reconnect + resync", timeout: 3) { later_resyncs.size == 1 }
   end
 
   def test_offline_stops_reconnecting_and_online_reconnects_at_once
@@ -154,7 +154,7 @@ class LiveClientNetworkBrowserTest < Minitest::Test
     @page.back
 
     assert evaluate("window.__marker === 42"), "expected the page restored from the back/forward cache"
-    wait_for("reconnect + resync") { events("resynced").size == 1 }
+    wait_for("reconnect + resync") { later_resyncs.size == 1 }
     assert_includes events("disconnected"), { "reason" => "restored" }
     assert_equal "after", evaluate("document.querySelector('#contact-1').textContent")
   end
