@@ -182,8 +182,8 @@ gets its own design doc and plan when work on it starts.
      0022). Built.
    Left: the checks on devices, in `docs/plan-0-29.md`.
 
-9. **0.30: Batched topic authorization in Live.** Planned (2026-11-27,
-   `docs/plan-live-batch-authorize.md`). A page subscribing to many topics
+9. **0.30: Batched topic authorization in Live.** Done (2026-11-27,
+   `docs/history/plan-live-batch-authorize.md`). A page subscribing to many topics
    of one kind (a status per person shown) runs its rule once per topic,
    one pool call and one query each, on every page load and reconnect
    since 0.29. `authorize(..., batch: true) { |subject, topics| ... }`
