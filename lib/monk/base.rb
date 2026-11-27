@@ -33,6 +33,14 @@ module Monk
     # Sec-Fetch-Site values a state-changing request may carry: from a page
     # of this same origin, or typed or bookmarked by the user ("none").
     SAME_ORIGIN_SITES = Ractor.make_shareable(%w[same-origin none])
+
+    # "The process answers requests": a deploy's health check, and what the
+    # offline client probes to know the app is back. Answered before
+    # routing and logging, so no route, session or database runs, and a
+    # check every few seconds doesn't fill the log. Not a deep check: a
+    # slow database must not read as the app being down.
+    UP_PATH = "/_monk/up".freeze
+    UP_METHODS = Ractor.make_shareable(%w[GET HEAD])
     private_constant :SAME_ORIGIN_SITES
 
     OVERRIDABLE_VERBS = Ractor.make_shareable(%w[PATCH PUT DELETE])
@@ -165,6 +173,8 @@ module Monk
       end
 
       def call(env)
+        return up(env) if env["PATH_INFO"] == UP_PATH
+
         freeze! unless Ractor.shareable?(routes)
 
         start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -174,6 +184,14 @@ module Monk
       end
 
       private
+
+      def up(env)
+        unless UP_METHODS.include?(env["REQUEST_METHOD"])
+          return [405, SECURITY_HEADERS.merge("allow" => UP_METHODS.join(", ")), []]
+        end
+
+        [204, SECURITY_HEADERS.merge("cache-control" => "no-store"), []]
+      end
 
       def dispatch(env)
         # Assets before routes, the position Rack::Static would occupy in

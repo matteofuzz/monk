@@ -66,6 +66,7 @@ class PwaTest < Minitest::Test
   def test_every_file_it_links_must_exist
     with_public({ "icons/icon-512.png" => nil }) { |root| assert_invalid(root, "names icon /icons/icon-512.png") }
     with_public({ "sw.js" => nil }) { |root| assert_invalid(root, "links /sw.js") }
+    with_public({ "offline.html" => nil }) { |root| assert_invalid(root, "links /offline.html") }
     with_public({ "icons/apple-touch-icon.png" => nil }) do |root|
       assert_invalid(root, "links /icons/apple-touch-icon.png")
     end
@@ -98,6 +99,7 @@ class PwaTest < Minitest::Test
       assert_includes head, %(<meta name="theme-color" content="#1f2937">)
       assert_includes head, %(<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png)
       assert_match(%r{<script type="module" src="/_monk/pwa/register\.js(\?v=\h+)?"></script>}, head)
+      assert_match(%r{<script type="module" src="/_monk/pwa/offline\.js(\?v=\h+)?"></script>}, head)
     end
   end
 
@@ -155,6 +157,39 @@ class PwaTest < Minitest::Test
     assert_equal "", Monk::Context.new({}).monk_install.to_s
   end
 
+  # --- monk_offline ---
+
+  # Hidden until offline.js shows it, with the text for the reason.
+  def test_monk_offline_renders_a_hidden_banner_with_a_text_per_reason
+    with_public do |root|
+      Monk::Pwa.configure(root: root)
+      html = Monk::Context.new({}).monk_offline.to_s
+
+      assert_match(/\A<div class="monk-offline" data-monk-offline-banner role="status" hidden>/, html)
+      assert_includes html,
+        %(<p class="monk-offline__text" data-monk-offline-reason="network" hidden>You’re offline.</p>)
+      assert_includes html, %(data-monk-offline-reason="server" hidden>Can’t reach the server, retrying…</p>)
+      assert_includes html, %(data-monk-offline-reason="unreachable" hidden>Can’t connect.</p>)
+      refute_includes html, "style="
+    end
+  end
+
+  def test_monk_offline_texts_are_overridable_and_escaped
+    with_public do |root|
+      Monk::Pwa.configure(root: root)
+      html = Monk::Context.new({}).monk_offline(network: "Sei <offline>", server: "Server giù",
+        unreachable: "Niente",).to_s
+
+      assert_includes html, ">Sei &lt;offline&gt;</p>"
+      assert_includes html, ">Server giù</p>"
+      assert_includes html, ">Niente</p>"
+    end
+  end
+
+  def test_monk_offline_is_empty_until_configured
+    assert_equal "", Monk::Context.new({}).monk_offline.to_s
+  end
+
   # --- serving ---
 
   def test_the_manifest_is_served_as_a_web_app_manifest
@@ -192,7 +227,7 @@ class PwaTest < Minitest::Test
   # `files` overrides or (nil) removes one.
   def with_public(files = {}, manifest: MANIFEST, &)
     tree = {
-      "manifest.webmanifest" => JSON.generate(manifest), "sw.js" => "// sw\n",
+      "manifest.webmanifest" => JSON.generate(manifest), "sw.js" => "// sw\n", "offline.html" => "<p>offline</p>",
       "icons/icon-192.png" => "png", "icons/icon-512.png" => "png", "icons/apple-touch-icon.png" => "png",
     }.merge(files).compact
     with_tree("monk-pwa", tree, &)

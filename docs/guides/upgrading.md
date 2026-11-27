@@ -35,6 +35,30 @@ the render and the subscribe isn't lost (ADR 0021). What to check:
   server's markup by that resync, as after any resync: run it on
   `resynced` too, or put it inside `data-live-ignore`.
 
+### Offline (apps with pwa)
+
+[`offline.md`](offline.md) says what each piece does. `monk help pwa
+--file PATH` prints this Monk's version of each file.
+
+1. **`public/offline.html`**: copy it (`monk help pwa --file
+   public/offline.html`) and put the app's name where it says `{{app}}`.
+   `Monk::Pwa.configure` fails the boot without it.
+2. **`public/sw.js`**: replace the comment block and the `install` and
+   `activate` listeners at its top with this Monk's (everything from
+   `const OFFLINE_CACHE` to the end of `offlinePage`). If you changed the
+   worker, keep your changes out of page loads, and keep the
+   `monk-offline` cache if you delete caches.
+3. **The banner**: add `<%= monk_offline %>` to
+   `app/views/layouts/app.erb`, and style `.monk-offline` and
+   `[data-monk-offline]`.
+4. **Your own `fetch` calls**: on a network error, dispatch
+   `monk-offline:check` on `document`.
+5. **With `monk add deploy`**: in the `Caddyfile`, give `reverse_proxy
+   web:9292` a block with `health_uri /_monk/up` and `health_interval 10s`;
+   in `compose.yaml`, copy `web`'s `healthcheck` (`monk help deploy --file
+   compose.yaml`). On other platforms, point the health check at
+   `/_monk/up`.
+
 ## 0.28.2
 
 `bundle update monkrb`.

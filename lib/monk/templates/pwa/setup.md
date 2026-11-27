@@ -23,6 +23,14 @@ banner, hidden until it applies, inviting people to install the app. On
 iOS its button shows how to Add to Home Screen; on Android it opens
 Chrome's prompt. It has no styles: style its `monk-install` classes.
 
+### Offline
+
+Add `<%= monk_offline %>` to `app/views/layouts/app.erb`: a banner,
+hidden until the page is offline, saying why. Style its `monk-offline`
+classes, and the page with `[data-monk-offline]`. `public/offline.html`
+is what the installed app shows when a page can't load: put your look
+and words in it, keeping it self-contained.
+
 ### Before production
 
 Service workers need https (or localhost): a phone opening the dev server

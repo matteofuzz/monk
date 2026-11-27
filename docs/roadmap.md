@@ -178,7 +178,9 @@ gets its own design doc and plan when work on it starts.
      are blocked, and an installed app opened offline shows the app's
      `offline.html` from the service worker. `GET /_monk/up` in core, also
      the deploy's health check. Beyond that (cached pages, writes sent
-     later) is the app's, with a guide (`docs/proposal-offline.md`).
+     later) is the app's, with a guide (`docs/guides/offline.md`, ADR
+     0022). Built.
+   Left: the checks on devices, in `docs/plan-0-29.md`.
 
 9. **Ruby 4.1 support, after its release** (expected 2026-12-25). The
    recheck in `docs/plan-ruby-4-1.md` §7: final NEWS, the suite on 4.0 and

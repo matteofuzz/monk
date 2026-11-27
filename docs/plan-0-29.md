@@ -34,6 +34,14 @@ tests):
 
 ## Part 2: offline, level 0
 
+Built (2026-11-27): `/_monk/up` with the deploy templates' health checks
+(compose's in Ruby, since the slim image has no `curl`), `offline_state.js`
+and `offline.js`, `monk_offline`, the boot check, the `sw.js` handler (with
+navigation preload) and `offline.html`, Node and browser tests, the docs
+and ADR 0022. Differences from below: a hidden page doesn't check (iOS
+drops a hidden page's socket within seconds), and `offline.html` opened
+at its own address goes to `/` once back. Left: the open checks.
+
 ### Decisions (the proposal's open details, settled here)
 
 - **Where it lives:** `Monk::Pwa`, so on with `monk add pwa`, nothing to

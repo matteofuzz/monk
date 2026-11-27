@@ -20,5 +20,7 @@ in the monk repo.
 - `.env.production` lines are `KEY=value`, no comment after a value.
 - Logs are in the `log` volume (`docker compose exec web tail -f
   log/<MONK_ENV>.log`), not `docker compose logs`.
+- `web`'s health check, and Caddy's, call `GET /_monk/up` (204, no
+  database): a check of the database is a route of its own, never that one.
 - `Gemfile.lock` must list the host's platform (`x86_64-linux` or
   `aarch64-linux`); `monkrb` from a `path:` can't build in the image.

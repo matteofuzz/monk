@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  Shown by public/sw.js when a page can't load: no network, or the server
+  not answering (a deploy, say). It's this app's file: change the text and
+  the look as you like. Keep it self-contained (styles and script inline):
+  nothing else is stored for offline use. It may grow into a page of your
+  own stored for offline use (docs/guides/offline.md in Monk), never with
+  one person's data unless it's cleared at sign-out.
+
+  It tries again on its own, and from the button: when /_monk/up answers,
+  it reloads the page that couldn't load.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{app}}: offline</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; text-align: center; padding: 1.5rem; box-sizing: border-box; }
+    h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+    p { margin: 0 0 1.5rem; opacity: .75; }
+    button { font: inherit; padding: .6rem 1.4rem; border-radius: .5rem; border: 1px solid currentColor; background: none; color: inherit; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{{app}} is offline</h1>
+    <p>It will open again as soon as there’s a connection.</p>
+    <button type="button" data-retry>Try again</button>
+  </main>
+  <script>
+    (() => {
+      // Opened at its own address, it goes to the home page once back.
+      const back = () => (location.pathname === "/offline.html" ? location.assign("/") : location.reload());
+      let delay = 1000;
+      let timer;
+      const retry = async () => {
+        clearTimeout(timer);
+        try {
+          const response = await fetch("/_monk/up", { cache: "no-store" });
+          if (response.status === 204) return back();
+        } catch {
+          // Still offline.
+        }
+        timer = setTimeout(retry, delay * (0.5 + Math.random() / 2));
+        delay = Math.min(delay * 2, 30000);
+      };
+      addEventListener("online", retry);
+      document.querySelector("[data-retry]").addEventListener("click", () => {
+        delay = 1000;
+        retry();
+      });
+      timer = setTimeout(retry, delay);
+    })();
+  </script>
+</body>
+</html>

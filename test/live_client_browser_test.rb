@@ -27,7 +27,7 @@ class LiveClientBrowserTest < Minitest::Test
   # page shows the change without a reconnect.
   def test_a_change_published_between_the_render_and_the_first_subscribe_is_not_lost
     @pages.serve_page(page_html(%(<ul data-live-topic="t:1"><li id="contact-1">rendered</li></ul>)),
-      then_serve: page_html(%(<ul data-live-topic="t:1"><li id="contact-1">changed</li></ul>)))
+      then_serve: page_html(%(<ul data-live-topic="t:1"><li id="contact-1">changed</li></ul>)),)
     @page.go_to("http://127.0.0.1:#{@pages.port}/page")
 
     wait_for("first resync") { events("resynced").size == 1 }
@@ -35,7 +35,8 @@ class LiveClientBrowserTest < Minitest::Test
     assert_equal [{ "reason" => "first" }], events("resynced")
     assert_equal 1, events("connected").size
     assert_operator evaluate("window.__events.findIndex(e => e.name === 'subscribed')"), :<,
-      evaluate("window.__events.findIndex(e => e.name === 'resynced')"), "resynced before the subscribe was acknowledged"
+      evaluate("window.__events.findIndex(e => e.name === 'resynced')"),
+      "resynced before the subscribe was acknowledged"
   end
 
   def test_a_patch_keeps_focus_text_and_selection_in_a_sibling_and_inside_the_patched_node

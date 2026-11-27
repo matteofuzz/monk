@@ -115,6 +115,15 @@ If a host or pod vanishes without closing its connections, the reacting
 process's lock is freed in about 25 s (short TCP keepalives on that
 connection), and another process takes over within 5 s more.
 
+## Health check
+
+Every Monk app answers `GET /_monk/up` with `204`: before routing, with
+no session or database, and not logged. Point a platform's health check
+at it (Render's Health Check Path, Fly's `[[http_service.checks]]`). It
+means "the process answers requests"; a check of the database is a
+route of your own. The offline client checks it too, to know when the app
+is back ([`offline.md`](offline.md#get-_monkup)).
+
 ## 1. Render (native Ruby buildpack + managed Postgres)
 
 **Local setup**
@@ -316,9 +325,13 @@ backups and the firewall are yours.
 - `compose.yaml`: the app's image as `web`, and as `ws` and `jobs` with
   websocket and jobs; `postgres` and `redis` with theirs; Caddy in front.
   A `log` volume holds `log/<MONK_ENV>.log`, since Monk doesn't log to
-  stdout.
+  stdout. `web` has a health check on `/_monk/up` (with Ruby: the slim
+  image has no `curl`), so `docker compose up -d --wait` waits for it.
 - `Caddyfile`: `/ws*` to `ws:9293`, the rest to `web:9292`, on one host,
-  so the session cookie reaches the WebSocket handshake (section 3).
+  so the session cookie reaches the WebSocket handshake (section 3). Caddy
+  checks `web` at `/_monk/up` every 10 s; while it doesn't answer (a
+  deploy, a crash) pages get a 502 or 503, which an installed app shows as
+  its offline page ([`offline.md`](offline.md)).
 - `.env.production.example`: every setting the modules need, with
   Compose's service names (`DB_HOST=postgres`,
   `REDIS_URL=redis://redis:6379/0`).

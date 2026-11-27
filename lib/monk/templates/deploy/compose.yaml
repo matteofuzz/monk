@@ -21,6 +21,13 @@ services:
     volumes: [log:/app/log]
     stop_grace_period: 35s    # longer than kino's 30 s drain on TERM
     restart: unless-stopped
+    # GET /_monk/up answers 204 while the process serves requests (no
+    # database involved). Ruby, since the slim image has no curl.
+    healthcheck:
+      test: ["CMD", "ruby", "-rnet/http", "-e", "exit(Net::HTTP.get_response('127.0.0.1', '/_monk/up', ENV.fetch('PORT', '9292')).code == '204')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
   caddy:
     image: caddy:2
     env_file: .env.production # SITE_ADDRESS

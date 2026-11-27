@@ -66,8 +66,8 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
-  # With the worker in control, requests still reach the app: it has no
-  # fetch handler to get between Live's resync and the network.
+  # With the worker in control, requests still reach the app: its fetch
+  # handler takes page loads only, never a fetch like Live's resync.
   def test_a_controlled_page_still_fetches_from_the_app
     with_new_app(:pwa) do |dest|
       with_server(dest) do |port|
@@ -242,6 +242,99 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # --- offline, level 0 (docs/plan-0-29.md, part 2) ---
+
+  # The network gone with a page open: after the delay, <html> and the
+  # banner say "network", and a link to another page is cancelled. Back
+  # online, both go.
+  def test_offline_with_a_page_open_shows_the_banner_and_blocks_links
+    with_offline_probe do |origin|
+      @page.go_to("#{origin}/offline-probe")
+      wait_until { @page.evaluate("typeof window.__offline === 'object'") }
+
+      @page.network.offline_mode
+      wait_until(5) { root_data("monkOffline") }
+      assert_equal "network", root_data("monkOffline")
+      refute @page.evaluate("document.querySelector('[data-monk-offline-banner]').hidden")
+      assert_equal [false, true, true], visible_reason_hidden_flags
+      assert_equal [{ "name" => "offline", "reason" => "network" }], offline_events
+
+      @page.evaluate("document.querySelector('#away').click()")
+      wait_until { root_data("monkOfflineNudge") }
+      assert_equal "#{origin}/offline-probe", @page.current_url, "the click was cancelled"
+
+      @page.network.emulate_network_conditions(offline: false)
+      wait_until(5) { root_data("monkOffline").nil? }
+      assert @page.evaluate("document.querySelector('[data-monk-offline-banner]').hidden")
+      assert_equal "online", offline_events.last["name"]
+    end
+  end
+
+  # A drop shorter than the delay shows nothing.
+  def test_a_short_drop_shows_no_banner
+    with_offline_probe do |origin|
+      @page.go_to("#{origin}/offline-probe")
+      wait_until { @page.evaluate("typeof window.__offline === 'object'") }
+
+      @page.network.offline_mode
+      sleep 0.5
+      @page.network.emulate_network_conditions(offline: false)
+      sleep 2.5
+
+      assert_nil root_data("monkOffline")
+      assert_empty offline_events
+    end
+  end
+
+  # The proxy answering for an app that's down (/_monk/up gets a 503 here,
+  # from Chrome's request interception): "server". Live coming back
+  # probes at once, and the app answering clears it.
+  def test_the_server_down_behind_its_proxy_reads_as_server_and_live_coming_back_clears_it
+    with_offline_probe do |origin|
+      @page.go_to("#{origin}/offline-probe")
+      wait_until { @page.evaluate("typeof window.__offline === 'object'") }
+      down = true
+      @page.network.intercept(pattern: "*/_monk/up")
+      @page.on(:request) { |request| down ? request.respond(responseCode: 503, body: "") : request.continue }
+
+      @page.execute("document.dispatchEvent(new CustomEvent('monk-live:disconnected'))")
+      wait_until(5) { root_data("monkOffline") }
+      assert_equal "server", root_data("monkOffline")
+
+      down = false
+      @page.execute("document.dispatchEvent(new CustomEvent('monk-live:connected'))")
+      wait_until(5) { root_data("monkOffline").nil? }
+    end
+  end
+
+  # The app stopped: the app's check reads "unreachable"; a reload gets the
+  # stored offline.html from the worker; the app back, that page reloads
+  # itself into the page that couldn't load.
+  def test_the_app_unreachable_then_a_reload_shows_the_offline_page_until_it_is_back
+    with_offline_probe do |origin, restart, stop|
+      @page.go_to("#{origin}/offline-probe")
+      @page.evaluate_async("navigator.serviceWorker.ready.then(() => arguments[0](true))", 10)
+      wait_until(10) do
+        @page.evaluate_async("caches.open('monk-offline').then((c) => c.match('/offline.html'))" \
+                             ".then((r) => arguments[0](!!r))", 5,)
+      end
+      @page.refresh # now controlled by the worker
+      wait_until { @page.evaluate("navigator.serviceWorker.controller !== null") }
+
+      stop.call
+      @page.execute("document.dispatchEvent(new CustomEvent('monk-offline:check'))")
+      wait_until(5) { root_data("monkOffline") }
+      assert_equal "unreachable", root_data("monkOffline")
+
+      @page.refresh
+      wait_until(5) { @page.evaluate("document.title") == "shop: offline" }
+      assert_equal "#{origin}/offline-probe", @page.current_url
+
+      restart.call
+      wait_until(15) { @page.evaluate("document.querySelector('#away') !== null") }
+    end
+  end
+
   # push.js in a generated push app (monk add push): the page learns its
   # state at once, even with notifications allowed and a push service that
   # never answers -- headless Chrome reaches none, so subscribing itself is
@@ -316,6 +409,54 @@ class PwaBrowserTest < Minitest::Test
     end
   end
 
+  # A pwa app with a page holding <%= monk_offline %> and two links, its
+  # monk-offline events recorded on window.__offline. Yields the origin,
+  # and lambdas that start the app again on the same port, and stop it.
+  def with_offline_probe
+    @page.command("Page.addScriptToEvaluateOnNewDocument", source: <<~JS)
+      window.__offline = [];
+      for (const name of ["offline", "online"]) {
+        document.addEventListener("monk-offline:" + name, (e) => window.__offline.push({ name, ...e.detail }));
+      }
+    JS
+    with_new_app(:pwa) do |dest|
+      File.write(File.join(dest, "app/views/offline_probe.erb"),
+        %(<%= monk_offline %>\n<a id="away" href="/hello">away</a> <a id="here" href="#x">here</a>\n),)
+      File.write(File.join(dest, "app/routes/offline_probe.rb"), <<~RUBY)
+        class App
+          get("/offline-probe") { render "offline_probe" }
+        end
+      RUBY
+      port = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
+      pid = start_server(dest, port)
+      stop = lambda {
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+        pid = nil
+      }
+      restart = -> { pid = start_server(dest, port) }
+      begin
+        yield "http://127.0.0.1:#{port}", restart, stop
+      ensure
+        stop.call if pid
+      end
+    end
+  end
+
+  def start_server(dest, port)
+    env = { "PORT" => port.to_s, "MONK_ENV" => "test", "BUNDLE_GEMFILE" => File.expand_path("../Gemfile", __dir__) }
+    pid = Process.spawn(env, "bin/server", chdir: dest, out: File::NULL, err: File::NULL)
+    wait_for_port(port, pid)
+    pid
+  end
+
+  def offline_events = @page.evaluate("window.__offline")
+
+  # The banner's texts, in order (network, server, unreachable): hidden or not.
+  def visible_reason_hidden_flags
+    @page.evaluate("[...document.querySelectorAll('[data-monk-offline-reason]')].map((p) => p.hidden)")
+  end
+
   def user_agent(value) = @page.command("Emulation.setUserAgentOverride", userAgent: value)
 
   def root_data(name) = @page.evaluate("document.documentElement.dataset.#{name} ?? null")
@@ -330,8 +471,8 @@ class PwaBrowserTest < Minitest::Test
     @page.evaluate_async("navigator.serviceWorker.ready.then(() => setTimeout(() => arguments[0](true), 500))", 10)
   end
 
-  def wait_until
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+  def wait_until(timeout = 10)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     until yield
       flunk "timed out" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
       sleep 0.05
