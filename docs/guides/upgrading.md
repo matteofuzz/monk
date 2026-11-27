@@ -16,21 +16,26 @@ An app made with the release named in a section needs none of its steps.
 
 ## 0.30
 
+In the `Gemfile`, `gem "monkrb", "~> 0.30", require: "monk"` (what a new
+app gets; `"~> 0.29"` would also install 0.30, but not require it), then
 `bundle update monkrb`.
 
 ### Batched topic authorization (apps with Live)
 
 Nothing to change: `batch: true` is opt-in ([`live.md`](live.md#who-may-subscribe)).
 Use it for a rule that queries the database on a page with many topics
-of one kind. Two things to check in `config/live.rb`:
+of one kind. What changes for existing rules:
 
 - **A rule's block that returns an Array, a Set or a Hash now denies**,
-  and logs why. Return `true`/`false` (or any other truthy value) from a
-  single-topic rule.
-- **A block that raises is now logged** in the WebSocket process's log.
+  and logs why. Check `config/live.rb`: a single-topic rule returns
+  `true` or `false` (any other truthy value still allows).
+- **A block that raises is now logged** in the WebSocket process's log,
+  as well as denied.
 
 ## 0.29
 
+In the `Gemfile`, `gem "monkrb", "~> 0.29", require: "monk"` (what a new
+app gets; `"~> 0.28"` would also install 0.29, but not require it), then
 `bundle update monkrb`.
 
 ### Live resyncs on every page load (apps with Live)

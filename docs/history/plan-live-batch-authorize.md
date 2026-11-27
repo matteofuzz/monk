@@ -4,8 +4,10 @@ Status: released in 0.30.0 (2026-11-27). Release branch `main_dev/v_0_30`,
 no feature branch (one change).
 
 Built (2026-11-27): steps 1 to 4, the suite green with 0 skips. One
-difference: `build_rule` takes `db_pool:` and `batch:` as keywords. Step
-5, the bump to 0.30.0, done the same day.
+Differences: `build_rule` takes `db_pool:` and `batch:` as keywords; no
+`check_many`, the pool runs the same `Policy.check` with the group (point 9);
+of the pool failures, only "not started" is tested, the three share one
+rescue. Step 5, the bump to 0.30.0, done the same day.
 
 ## The problem
 
@@ -91,7 +93,7 @@ Found in review, not in the proposal:
    `allowed_topics(rules, subject, [topic]).include?(topic)`, which gives
    `Monk::Live.authorized?` the `[topic]` behavior for free. `Session`
    keeps only the order, the cap and `register_many`.
-9. **Pool call.** `pool.call(Policy, :check_many, rule.check, subject,
+9. **Pool call.** `pool.call(Policy, :check, rule.check, subject,
    group)`: the group crosses as a frozen Array of frozen Strings, the
    result comes back copied. One checkout holds a connection for one
    `ANY($2::text[])` query instead of up to 100 short ones; well inside
@@ -103,7 +105,7 @@ Found in review, not in the proposal:
 
 1. **Policy.** `Rule` gains `batch`; `build_rule` takes it (a boolean,
    checked); `allowed_topics` with the grouping, the return-value check
-   (points 3, 5), the logging (point 7); `check_many` for the pool;
+   (points 3, 5), the logging (point 7); `check` for the pool, given the group;
    `allowed?` on top of it. `Monk::Live.authorize(pattern, anonymous:,
    db_pool:, batch: false, &block)`.
 2. **Session.** `subscribe`: drop already-subscribed and malformed topics,
